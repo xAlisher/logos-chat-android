@@ -73,8 +73,34 @@ All decisions are made and specced — **do not re-litigate**:
      **Do NOT invent a figure** — only quote what's in the file. If the phone got re-plugged or
      driven by other work mid-window, discard and re-run the sampler.
 5. Human: run the #15 wetware check (physical QR scan — steps on the issue) → close #15 + #43.
-6. **M4** (#29–#33): mix build variant, Private routing toggle, MIX chrome, send gating with
-   **no silent fallback**, mix interop checklist.
+6. **M4** (#29–#33): **COMPLETE ✓ (2026-07-23)** — Mix / "Private routing", verified on-device.
+   - **#29 mix superset .so**: built from `logos-chat` `feat/logos-testnetv02-mix` (6b4d83a),
+     arm64, 13 exports incl `chat_get_mix_status`, 28.3 MB stripped. Sibling repo
+     `logos-libchat-android` v0.2.0 released; `scripts/build-android-arm64-mix.sh` +
+     `smoke-mix.c` + CI `variant:[standard,mix]` matrix; walls in that repo's
+     `docs/build-fork-tree.md` (§ MIX). Vendored as the app's SINGLE `.so` (superset:
+     mixEnabled:false == standard, re-verified no M1–M3 regression). App has the native
+     `chatGetMixStatus` verb; **rebuild the bridge after any `.so` swap** (symbol binds by name).
+   - **#30 toggle**: Settings "Private routing" → stop+recreate node with the desktop mix preset
+     (`src/config/mix.ts`; cluster 2, shard 0, minMixPoolSize 4, vaclab kad bootstrap nodes;
+     **no rlnKeystoreSource** — phone has no RLN membership). New epoch → sessions expire →
+     re-introduce (#23). Confirm dialog warns; flag persisted in kv. Round-trip proven on-device.
+   - **#31 chrome**: emerald outlined MIX pill on every screen (stack headerRight + Conversations
+     header); Settings "N/min mix nodes" polled by the **native ScheduledExecutor** (not a JS
+     timer) via `chat_get_mix_status` → `mix_status` events. Live pool tracked 0/4→2/4→5/4.
+   - **#32 send gate (the central AC)**: mix on + pool short ⇒ composer DISABLED "Waiting for mix
+     peers…", send disabled, banner "nothing will be sent over plain relay". Enforced at 3 layers
+     (UI `mixSendGated`, native `mixSendBlocked()`, the lib). Proven: composer/send `enabled=false`,
+     relay-leak harness got ZERO from the phone (`logs/m4-32-send-gate.png`). Gate lifts at ≥4.
+   - **#33 interop**: `docs/mix-interop-checklist.md`. **Honest state:** the anti-downgrade gate
+     is fully proven (holds when short, lifts when healthy). **E2E anonymous delivery FROM THE
+     PHONE is NOT network-provable** — the phone has no RLN membership so it can't generate the
+     mix spam-protection proof ("Spam protection not ready for proof generation"); the older
+     desktop mix build also rejected the harness config. **Gated-only pass** — no delivery faked.
+     Live phone→desktop mix delivery = **wetware-required** (provision a phone RLN membership +
+     a like-for-like desktop mix peer). Verified on the **Pixel 10** (`64150DLCR0028D`, arm64),
+     because the SM-G780G was reserved by the running #27 battery window.
+   - Evidence: `logs/m4-*`; build+walls: `docs/m4-log.md`.
 
 Build gotchas that keep mattering: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, node 22 via
 `~/.nvm/versions/node/v22.22.2/bin`, `TMPDIR=/extra/tmp`, bridge rebuilds via
