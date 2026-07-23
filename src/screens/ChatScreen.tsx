@@ -26,6 +26,7 @@ import {ErrorToast} from '../components/ErrorToast';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import type {Message} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
+import {useSettingsStore, mixSendGated} from '../stores/settingsStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -80,6 +81,8 @@ export function ChatScreen() {
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
+  const privateRouting = useSettingsStore(s => s.privateRouting);
+  const mix = useSettingsStore(s => s.mix);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -104,7 +107,11 @@ export function ChatScreen() {
   // Sending into an expired thread re-runs the intro with the stored bundle
   // (#23) — possible only when we have one and the node is up.
   const canReintroduce = expired && hasBundle && running;
-  const composerEnabled = running && (!expired || canReintroduce);
+  // #32 — ANTI-DOWNGRADE GATE: while Private routing is on and the mix pool is
+  // short, the composer is DISABLED — a message must NEVER leave over plain
+  // relay. This is the whole point of the mix mode (docs/ux-both-modes.md §3).
+  const mixGated = mixSendGated({privateRouting, mix});
+  const composerEnabled = running && (!expired || canReintroduce) && !mixGated;
   const canSend = composerEnabled && text.trim().length > 0 && !busy;
 
   const onSend = async () => {
@@ -179,6 +186,14 @@ export function ChatScreen() {
           </View>
         </View>
       )}
+      {mixGated && running && (
+        <View style={styles.mixGateBanner} testID="mix-gate-banner">
+          <Text style={[type.label, {color: colors.unread}]}>
+            Waiting for mix peers… {mix.mixPoolSize}/{mix.minPoolSize} mix nodes.
+            Private routing is on — nothing will be sent over plain relay.
+          </Text>
+        </View>
+      )}
       <View style={styles.composer}>
         <TextInput
           style={[styles.input, !composerEnabled && styles.inputDisabled]}
@@ -187,6 +202,8 @@ export function ChatScreen() {
           placeholder={
             !running
               ? 'node not running'
+              : mixGated
+              ? 'Waiting for mix peers…'
               : expired
               ? canReintroduce
                 ? 'message (re-introduces)…'
@@ -246,6 +263,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     padding: spacing.lg,
     gap: spacing.md,
+  },
+  mixGateBanner: {
+    backgroundColor: colors.panel,
+    borderTopColor: colors.unread,
+    borderTopWidth: 1,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   expiredActions: {flexDirection: 'row', gap: spacing.xl},
   expiredBtn: {
