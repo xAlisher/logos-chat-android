@@ -25,6 +25,9 @@ object ChatRepo {
   /** convoPk of the thread open in the UI (0 = none) — its inbound doesn't count unread. */
   @Volatile var activeConvoPk: Long = 0L
 
+  /** Is the app actually on screen? [activeConvoPk] only suppresses while true. */
+  @Volatile var appForeground: Boolean = true
+
   /** Outbound intro in flight: the next new_conversation push is OUR side of it. */
   private class PendingIntro(val convoPk: Long, val text: String, val at: Long)
   @Volatile private var pendingIntro: PendingIntro? = null

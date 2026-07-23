@@ -82,3 +82,40 @@ Running log of walls + exact fixes while executing M3 (#21–#28). Convention: e
 - Merge-into-active nuance covered by ChatDbTest.pendingInboundThenMerge: when the pending
   thread's session is in the CURRENT epoch and the target's isn't, the merged conversation
   becomes active (sessions move with the merge) — the fresh session serves the united thread.
+
+## #25 Foreground service + #26 notifications (2026-07-23, continued after the agent hit its budget)
+
+State picked up mid-refactor: `NodeBridge`/`NodeRuntime`/`ChatService` written and the JNI +
+module already delegating to them, but uncommitted and not building. Completed from there.
+
+- **Manifest was never wired** — `ChatService.kt` existed with no `<service>` element and none of
+  `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_DATA_SYNC` / `POST_NOTIFICATIONS`. Added; the service
+  then foregrounds correctly (`dumpsys activity services`: `isForeground=true`,
+  `color=0xff10b981`).
+- **Missing pieces the half-refactor referenced**: `R.drawable.ic_stat_chat` (added a white
+  speech-bubble vector — notification icons must be white-on-transparent silhouettes),
+  `MessageNotifier` (#26), `MainActivity.consumeLaunchConvoPk()` (statically held so a tap works
+  for both cold start and `onNewIntent`), and `ChatDb.displayNameFor()` for notification titles.
+- **Wall — Android 13+ `POST_NOTIFICATIONS` is runtime, not manifest.** With only the manifest
+  entry the app sits at `AppSettings: com.logoschat importance=NONE` and *every* notification is
+  dropped silently — including the FGS one. Fixed by requesting it in `App.tsx` on mount
+  (`Platform.Version >= 33`); denial is survivable (messages still arrive and persist).
+- **Wall — `LifecycleEventListener` is unreliable under Bridgeless.** `onHostPause` did not fire
+  on HOME, so `appForeground` stayed true and the last-opened thread stayed silent forever in the
+  background. Fix: read `reactContext.lifecycleState == RESUMED` at notify time
+  (`EventCallbackManager.isResumed()`) instead of trusting the callbacks.
+- **Wall (the real one) — the app cancelled its own notifications ~200ms after posting.**
+  Symptom: `NotificationService: Cannot find enqueued record for key: 0|com.logoschat|1003`, no
+  error anywhere in our logs, channel healthy, `notifyMessage` returning normally. Cause: a
+  backgrounded-but-alive `ChatScreen` re-renders on the inbound `db_changed` event and calls
+  `markRead`, which called `MessageNotifier.cancelFor` unconditionally. Fix: only dismiss when
+  `isResumed()` — i.e. the user is actually looking at the app. Instrumenting (a one-line
+  `notify check:` log) is what found this after two wrong guesses; the guesses cost two build
+  cycles, the instrument cost one.
+- **Verified on-device** (SM-G780G, screen OFF, app backgrounded, sender = the headless
+  desktop-peer harness): message persisted (`persisted inbound msg_pk=… BEFORE forward`) and the
+  notification posted and *stayed* (`cmd notification list` → `0|com.logoschat|1003`).
+  `logs/m3-25-26-notification-shade.png` shows both — `desktop-m3 · hello-while-you-were-asleep`
+  and `> λ chat — node running · epoch 8 · 2 conversations · 16 messages`.
+- Also confirmed incidentally: conversations + history survive an **APK reinstall** and show the
+  expired-session banner (#22/#23) — `logs/m3-23-expired-thread-history.png`.

@@ -7,6 +7,10 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <!-- Valid-scan haptic (RN Vibration API throws SecurityException without this) -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- ChatService (#25): the node keeps receiving with the app backgrounded. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
       android:name=".MainApplication"
@@ -29,5 +33,12 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!-- Owns the node + DB so messages keep arriving (and persisting) while the
+           app is backgrounded or swiped away; START_STICKY brings it back. -->
+      <service
+        android:name=".ChatService"
+        android:foregroundServiceType="dataSync"
+        android:exported="false" />
     </application>
 </manifest>

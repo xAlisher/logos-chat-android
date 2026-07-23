@@ -301,6 +301,21 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   // -- query surface for JS --------------------------------------------------
 
   /**
+   * Contact name for a conversation, or null when it's still pending (inbound,
+   * not yet attributed — #24). Used for notification titles (#26).
+   */
+  fun displayNameFor(convoPk: Long): String? =
+      readableDatabase
+          .rawQuery(
+              """SELECT ct.display_name FROM conversations c
+                   LEFT JOIN contacts ct ON ct.contact_id=c.contact_id
+                  WHERE c.convo_pk=?""",
+              arrayOf(convoPk.toString()))
+          .use { cur ->
+            if (cur.moveToFirst() && !cur.isNull(0)) cur.getString(0).ifEmpty { null } else null
+          }
+
+  /**
    * All conversations, newest-activity first. `expired` = no session bound in
    * [currentEpochId] (0 = node down ⇒ everything expired). `pending` = inbound
    * conversation not yet attached to a contact (#24).

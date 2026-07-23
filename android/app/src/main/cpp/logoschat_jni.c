@@ -236,7 +236,7 @@ static void chat_event_callback(int callerRet, const char *msg, size_t len, void
 // com.logoschat.LogosChatModule externals
 
 JNIEXPORT void JNICALL
-Java_com_logoschat_LogosChatModule_chatSetup(JNIEnv *env, jobject thiz) {
+Java_com_logoschat_NodeBridge_chatSetup(JNIEnv *env, jobject thiz) {
   (void)env; (void)thiz;
   logos_redirect_stdio_to_logcat();
   __android_log_write(ANDROID_LOG_INFO, BRIDGE_TAG,
@@ -244,7 +244,7 @@ Java_com_logoschat_LogosChatModule_chatSetup(JNIEnv *env, jobject thiz) {
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatNew(JNIEnv *env, jobject thiz, jstring configJson) {
+Java_com_logoschat_NodeBridge_chatNew(JNIEnv *env, jobject thiz, jstring configJson) {
   (void)thiz;
   const char *config = (*env)->GetStringUTFChars(env, configJson, 0);
   __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG, "chat_new config: %s", config);
@@ -259,7 +259,7 @@ Java_com_logoschat_LogosChatModule_chatNew(JNIEnv *env, jobject thiz, jstring co
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatStart(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatStart(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)thiz;
   cb_result *result = NULL;
   chat_start((void *)ctx, on_response, (void *)&result);
@@ -269,7 +269,7 @@ Java_com_logoschat_LogosChatModule_chatStart(JNIEnv *env, jobject thiz, jlong ct
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatStop(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatStop(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)thiz;
   cb_result *result = NULL;
   chat_stop((void *)ctx, on_response, (void *)&result);
@@ -279,7 +279,7 @@ Java_com_logoschat_LogosChatModule_chatStop(JNIEnv *env, jobject thiz, jlong ctx
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatDestroy(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatDestroy(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)thiz;
   cb_result *result = NULL;
   chat_destroy((void *)ctx, on_response, (void *)&result);
@@ -289,7 +289,7 @@ Java_com_logoschat_LogosChatModule_chatDestroy(JNIEnv *env, jobject thiz, jlong 
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatGetIdentity(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatGetIdentity(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)thiz;
   cb_result *result = NULL;
   chat_get_identity((void *)ctx, on_response, (void *)&result);
@@ -299,7 +299,7 @@ Java_com_logoschat_LogosChatModule_chatGetIdentity(JNIEnv *env, jobject thiz, jl
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatCreateIntroBundle(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatCreateIntroBundle(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)thiz;
   cb_result *result = NULL;
   chat_create_intro_bundle((void *)ctx, on_response, (void *)&result);
@@ -314,7 +314,7 @@ Java_com_logoschat_LogosChatModule_chatCreateIntroBundle(JNIEnv *env, jobject th
 // new_conversation push, and each side's id is different for the same
 // logical conversation.
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatNewPrivateConversation(
+Java_com_logoschat_NodeBridge_chatNewPrivateConversation(
     JNIEnv *env, jobject thiz, jlong ctx, jstring bundle, jstring contentHex) {
   (void)thiz;
   const char *bundleStr = (*env)->GetStringUTFChars(env, bundle, 0);
@@ -332,7 +332,7 @@ Java_com_logoschat_LogosChatModule_chatNewPrivateConversation(
 // Sends a message (hex content) into an existing conversation (this side's
 // local convoId). Response message is the messageId on success.
 JNIEXPORT jobject JNICALL
-Java_com_logoschat_LogosChatModule_chatSendMessage(
+Java_com_logoschat_NodeBridge_chatSendMessage(
     JNIEnv *env, jobject thiz, jlong ctx, jstring convoId, jstring contentHex) {
   (void)thiz;
   const char *convoStr = (*env)->GetStringUTFChars(env, convoId, 0);
@@ -350,7 +350,7 @@ Java_com_logoschat_LogosChatModule_chatSendMessage(
 // chatStart (invariant #1 — early pushes are lost otherwise); enforced on the
 // Kotlin side in startNode.
 JNIEXPORT void JNICALL
-Java_com_logoschat_LogosChatModule_chatSetEventCallback(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatSetEventCallback(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)env; (void)thiz;
   cb_env *c = (cb_env *)malloc(sizeof(cb_env)); // intentionally leaked: outlives the ctx
   c->chatPtr = ctx;

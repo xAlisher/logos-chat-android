@@ -1,0 +1,30 @@
+07-23 19:25:53.489  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:26:25.355 26474 26507 I logos-chat-db: persisted inbound msg_pk=10 convo=3 (24 chars) BEFORE forward
+07-23 19:28:12.423  2544 26739 D SecFgsManagerControllerImpl: onForegroundStateChanged: dialogShown:false, isForeground:false, packageName:com.logoschat , token:android.os.BinderProxy@46b1641, userId:0
+07-23 19:28:21.347 28895 28895 I logos-chat-db: db open: 2 conversations, 10 messages (schema v1)
+07-23 19:28:21.990  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:28:34.430  2544 20890 D SecFgsManagerControllerImpl: onForegroundStateChanged: dialogShown:false, isForeground:true, packageName:com.logoschat , token:android.os.BinderProxy@e028a2a, userId:0
+07-23 19:28:34.454 28895 29054 I logos-chat-db: epoch 6 opened (mix=false)
+07-23 19:29:06.991  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:29:07.577 28895 28914 I logos-chat-db: session bound (initiated): convo=3 epoch=6 lib=81883b91b42d884123ff5ad0d34f1266cc8a
+07-23 19:29:08.086  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:29:36.971 28895 28914 I logos-chat-db: persisted inbound msg_pk=12 convo=3 (30 chars) BEFORE forward
+07-23 19:30:57.830  2544 20890 D SecFgsManagerControllerImpl: onForegroundStateChanged: dialogShown:false, isForeground:false, packageName:com.logoschat , token:android.os.BinderProxy@e028a2a, userId:0
+07-23 19:31:10.592 29746 29746 I logos-chat-db: db open: 2 conversations, 12 messages (schema v1)
+07-23 19:31:11.226  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:31:23.673  2544  2869 D SecFgsManagerControllerImpl: onForegroundStateChanged: dialogShown:false, isForeground:true, packageName:com.logoschat , token:android.os.BinderProxy@6219b8f, userId:0
+07-23 19:31:23.693 29746 29830 I logos-chat-db: epoch 7 opened (mix=false)
+07-23 19:31:49.606  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:31:50.204 29746 29776 I logos-chat-db: session bound (initiated): convo=3 epoch=7 lib=ff61c38e7583fa2694816fb16212e25479b1
+07-23 19:31:50.711  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:32:15.274 29746 29776 I logos-chat-db: persisted inbound msg_pk=14 convo=3 (16 chars) BEFORE forward
+07-23 19:32:15.276 29746 29776 I logos-chat-bridge: notify check: convo=3 active=3 resumed=false rc=true state=BEFORE_RESUME
+07-23 19:34:16.486  2544 20890 D SecFgsManagerControllerImpl: onForegroundStateChanged: dialogShown:false, isForeground:false, packageName:com.logoschat , token:android.os.BinderProxy@6219b8f, userId:0
+07-23 19:34:27.470 30276 30276 I logos-chat-db: db open: 2 conversations, 14 messages (schema v1)
+07-23 19:34:28.088  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:34:40.531  2544  3492 D SecFgsManagerControllerImpl: onForegroundStateChanged: dialogShown:false, isForeground:true, packageName:com.logoschat , token:android.os.BinderProxy@7a9a32, userId:0
+07-23 19:34:40.555 30276 30351 I logos-chat-db: epoch 8 opened (mix=false)
+07-23 19:35:06.452  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:35:07.050 30276 30294 I logos-chat-db: session bound (initiated): convo=3 epoch=8 lib=767882a79bb70b4d2d750d133ca4dde2a394
+07-23 19:35:07.560  1257  1606 D SGM:SemGameManager: isForegroundGame(), ret=false
+07-23 19:35:38.643 30276 30294 I logos-chat-db: persisted inbound msg_pk=16 convo=3 (27 chars) BEFORE forward

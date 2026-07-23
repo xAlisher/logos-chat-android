@@ -63,6 +63,21 @@ Running log of walls + exact fixes while executing M2 (#14–#20). Convention: e
   orientation for driving sessions: `settings put system accelerometer_rotation 0` +
   `user_rotation 0`.
 
+## Phone↔phone addendum (2026-07-23, user request)
+
+- **Pixel 10 (`64150DLCR0028D`) = first non-Samsung device running the node.** Same release APK
+  installed clean; `chat_new → set_event_callback → chat_start` → Running in ~15ms wall-clock,
+  fleet dialed. The arm64 `.so` (built against NDK 27 / minSdk 24 on a Samsung r8q) has no
+  device-specific assumptions — good portability datapoint for the M3 release APK (#28).
+- Second-phone connection walls: a charge-only link shows NO new USB device on the host
+  (`lsusb` is the truth source, not `adb devices`); the laptop's own MediaTek MT7922 BT
+  (0e8d:e616) masquerades as a plausible "phone" in lsusb — don't chase it.
+- **Two agents, one device = dead taps.** My Samsung taps silently no-opped because a parallel
+  M3 session was driving the same phone (its screen showed M3 persistence-probe threads).
+  Detection: screenshot the device when taps stop landing + look for foreign
+  `adbd service requested … input …` lines in logcat. Protocol: don't drive a device another
+  agent holds — poll for quiet (no foreign input 3 min + stable app pid) before taking over.
+
 ## M2 exit state
 
 All flows verified live phone↔desktop-lib (see docs/interop-checklist.md for the executed
