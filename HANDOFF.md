@@ -60,12 +60,28 @@ All decisions are made and specced — **do not re-litigate**:
 
 ## Next steps (in order)
 
-1. Human: run the #15 wetware check (physical QR scan — steps on the issue) → then close #15 + #43.
-2. **M3 (#21–#28)**: persistence + resilience — the SQLite session-epoch schema
-   (architecture.md §4), ChatService dataSync FGS with persist-before-forward, durable
-   history across restarts, re-introduce banner/flow, contact naming. Build gotchas you need:
-   `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, node 22 via `~/.nvm/versions/node/v22.22.2/bin`,
-   `TMPDIR=/extra/tmp`, bridge rebuilds via `scripts/build-bridge.sh` only.
+4. **M3** (#21–#28): #21 SQLite persistence, #22 session epochs, #23 re-introduce flow,
+   #24 contact merge, #25 foreground service, #26 notifications — **all COMPLETE ✓** and closed
+   with on-device evidence. Remaining in M3: **#27** (error surfaces + battery measurement),
+   **#28** (signed v0.1 APK + release), **#49** (automated test suite: JS unit, Kotlin unit,
+   store logic), then epic #47.
+   - #25/#26 were finished by hand after the agent hit its budget mid-refactor. Three real bugs
+     found there, all in `docs/m3-log.md` and worth remembering: POST_NOTIFICATIONS is a
+     *runtime* permission on 13+ (manifest alone ⇒ `importance=NONE`, every notification
+     dropped); `LifecycleEventListener` doesn't fire reliably under Bridgeless (read
+     `reactContext.lifecycleState` instead); and `markRead` from a backgrounded-but-mounted
+     ChatScreen cancelled each notification ~200ms after it posted.
+   - Verified on-device with the screen off: message persisted before forward, notification
+     posted and stayed (`logs/m3-25-26-notification-shade.png`).
+5. Human: run the #15 wetware check (physical QR scan — steps on the issue) → close #15 + #43.
+6. **M4** (#29–#33): mix build variant, Private routing toggle, MIX chrome, send gating with
+   **no silent fallback**, mix interop checklist.
+
+Build gotchas that keep mattering: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, node 22 via
+`~/.nvm/versions/node/v22.22.2/bin`, `TMPDIR=/extra/tmp`, bridge rebuilds via
+`scripts/build-bridge.sh` only, `ANDROID_SERIAL`/`adb -s RF8RA0M127K` (a Pixel 10,
+`64150DLCR0028D`, is also attached and the node runs on it too — first non-Samsung device).
+Release APK: `cd android && ./gradlew assembleRelease` then `adb -s … install -r`.
 
 ## Key context that isn't in the docs
 
