@@ -103,6 +103,13 @@ android {
             keyPassword 'android'
         }
     }
+    testOptions {
+        unitTests {
+            // Robolectric drives the real SQLite framework classes in JVM unit
+            // tests (#21 schema tests run with plain `gradle test`).
+            includeAndroidResources = true
+        }
+    }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
@@ -120,6 +127,9 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

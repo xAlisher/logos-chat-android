@@ -24,6 +24,9 @@ class MainApplication : Application(), ReactApplication {
     // Load c++_shared -> logoschat -> logoschat_bridge at app start so a broken
     // bridge fails loudly here, not on first JS call (#11 AC: logcat 'ok').
     LogosChatModule.ensureLoaded()
+    // Durable store opens with the process — before RN, before the node — so the
+    // persist-before-forward path (#21) never races the JS bundle.
+    ChatRepo.init(this)
     loadReactNative(this)
   }
 }

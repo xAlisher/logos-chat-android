@@ -59,6 +59,16 @@ class EventCallbackManager {
 
     private fun deliverLibEvent(chatPtr: Long, evt: String) {
       Log.i(TAG, "lib event (ptr=$chatPtr): ${evt.take(300)}")
+      // PERSIST FIRST (docs/architecture.md §2.1): the SQLite write happens here,
+      // on the events HandlerThread, unconditionally — before any JS forwarding.
+      // If JS is dead/throttled the message is already durable.
+      val outcome =
+          try {
+            ChatRepo.handleLibEvent(evt)
+          } catch (t: Throwable) {
+            Log.e(TAG, "persist failed for lib event", t)
+            null
+          }
       val eventType =
           try {
             JSONObject(evt).optString("eventType", "unknown")
@@ -72,12 +82,23 @@ class EventCallbackManager {
             putString("event", evt)
           }
       emitToJs(params)
+      if (outcome != null) {
+        val repoParams =
+            Arguments.createMap().apply {
+              putString("source", "repo")
+              putString("eventType", "db_changed")
+              putString("kind", outcome.kind)
+              putDouble("convoPk", outcome.convoPk.toDouble())
+              putString("direction", outcome.direction)
+            }
+        emitToJs(repoParams)
+      }
     }
 
     private fun emitToJs(params: com.facebook.react.bridge.WritableMap) {
       val ctx = reactContext
       if (ctx == null || !ctx.hasActiveReactInstance()) {
-        Log.w(TAG, "JS not alive — event dropped (persist-before-forward lands with the M3 service)")
+        Log.w(TAG, "JS not alive — event already persisted, JS forward skipped")
         return
       }
       ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -168,6 +189,9 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
           return@execute
         }
         ctx = p.ptr
+        // One epoch row per chat_new (docs/architecture.md §4) — sessions bound
+        // from here on belong to this epoch.
+        ChatRepo.onNodeStarted(mixEnabled = false)
         chatSetEventCallback(ctx) // BEFORE chat_start — invariant #1
         setStatus("starting")
         val r = chatStart(ctx)
@@ -175,6 +199,7 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
           setStatus("error", r.message)
           chatDestroy(ctx)
           ctx = 0L
+          ChatRepo.onNodeStopped()
           promise.reject("chat_start", r.message)
           return@execute
         }
@@ -201,6 +226,7 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         val destroy = chatDestroy(c)
         if (destroy.error) Log.w(TAG, "chat_destroy error: ${destroy.message}")
         ctx = 0L
+        ChatRepo.onNodeStopped() // closes the epoch — all sessions now expired
         setStatus("stopped")
         promise.resolve(null)
       } catch (t: Throwable) {
@@ -254,19 +280,70 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
    */
   @ReactMethod
   fun newPrivateConversation(bundle: String, textUtf8: String, promise: Promise) {
+    startIntro(bundle, textUtf8, existingConvoPk = 0L, contactName = null, promise = promise)
+  }
+
+  /**
+   * Re-introduce with a FRESH bundle into an existing thread (#23): the new
+   * session attaches to the same convo_pk, so history continues in place.
+   */
+  @ReactMethod
+  fun newPrivateConversationFor(
+      convoPk: Double,
+      bundle: String,
+      textUtf8: String,
+      contactName: String?,
+      promise: Promise,
+  ) {
+    startIntro(bundle, textUtf8, convoPk.toLong(), contactName, promise)
+  }
+
+  /**
+   * Re-introduce into an expired thread using the contact's STORED bundle (#23).
+   * Rejects with code "no_bundle" when none is stored (inbound-only contact) —
+   * the UI then asks for a fresh QR.
+   */
+  @ReactMethod
+  fun reintroduce(convoPk: Double, textUtf8: String, promise: Promise) {
+    val bundle = ChatRepo.requireDb().contactBundle(convoPk.toLong())
+    if (bundle.isNullOrEmpty()) {
+      promise.reject("no_bundle", "no stored bundle for this contact — ask for a fresh QR")
+      return
+    }
+    startIntro(bundle, textUtf8, convoPk.toLong(), contactName = null, promise = promise)
+  }
+
+  /**
+   * Durable rows are written BEFORE the lib call (contact + conversation +
+   * armed pending-intro); on lib rejection the fresh rows are rolled back. The
+   * session binds when OUR new_conversation push lands (invariant #3). Resolves
+   * the STABLE convoPk.
+   */
+  private fun startIntro(
+      bundle: String,
+      textUtf8: String,
+      existingConvoPk: Long,
+      contactName: String?,
+      promise: Promise,
+  ) {
     executor.execute {
       val c = ctx
       if (c == 0L) {
         promise.reject("new_private_conversation", "node not started")
         return@execute
       }
+      val (convoPk, created) = ChatRepo.beginIntro(bundle, textUtf8, existingConvoPk, contactName)
       val r = chatNewPrivateConversation(c, bundle, hexEncode(textUtf8))
-      if (r.error) promise.reject("chat_new_private_conversation", r.message)
-      else promise.resolve(null) // empty response == accepted
+      if (r.error) {
+        ChatRepo.abortIntro(convoPk, created)
+        promise.reject("chat_new_private_conversation", r.message)
+      } else {
+        promise.resolve(convoPk.toDouble()) // empty response == accepted
+      }
     }
   }
 
-  /** Sends a message (hex-encoded UTF-8) into an existing local conversation. */
+  /** Sends a message (hex-encoded UTF-8) into an existing LIB conversation id. */
   @ReactMethod
   fun sendMessage(convoId: String, textUtf8: String, promise: Promise) {
     executor.execute {
@@ -275,9 +352,147 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         promise.reject("send_message", "node not started")
         return@execute
       }
+      // Persist first: bind to the session in the current epoch when known.
+      val session = ChatRepo.currentEpochId.let { epoch ->
+        if (epoch != 0L) ChatRepo.requireDb().findSessionByLibId(epoch, convoId) else null
+      }
+      val msgPk = session?.let { (sessionId, convoPk) ->
+        ChatRepo.recordOutgoing(convoPk, sessionId, textUtf8)
+      }
       val r = chatSendMessage(c, convoId, hexEncode(textUtf8))
+      if (msgPk != null) ChatRepo.finalizeOutgoing(msgPk, !r.error)
       if (r.error) promise.reject("chat_send_message", r.message)
       else promise.resolve(r.message) // messageId (may be empty)
+    }
+  }
+
+  /**
+   * Sends into a STABLE conversation (#22): resolves the current-epoch session;
+   * rejects with code "expired" when there is none (re-introduce required).
+   * Resolves {"msgPk":n,"status":"sent"|"failed"} — the message row is durable
+   * either way.
+   */
+  @ReactMethod
+  fun sendMessageTo(convoPk: Double, textUtf8: String, promise: Promise) {
+    executor.execute {
+      val c = ctx
+      if (c == 0L) {
+        promise.reject("send_message", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val session = ChatRepo.requireDb().currentSession(pk, ChatRepo.currentEpochId)
+      if (session == null) {
+        promise.reject("expired", "no session in the current epoch — re-introduce first")
+        return@execute
+      }
+      val (sessionId, libConvoId) = session
+      val msgPk = ChatRepo.recordOutgoing(pk, sessionId, textUtf8)
+      val r = chatSendMessage(c, libConvoId, hexEncode(textUtf8))
+      ChatRepo.finalizeOutgoing(msgPk, !r.error)
+      promise.resolve("""{"msgPk":$msgPk,"status":"${if (r.error) "failed" else "sent"}"}""")
+    }
+  }
+
+  /** Re-send a failed outbound message on its conversation's current session. */
+  @ReactMethod
+  fun retryMessage(msgPk: Double, promise: Promise) {
+    executor.execute {
+      val c = ctx
+      if (c == 0L) {
+        promise.reject("send_message", "node not started")
+        return@execute
+      }
+      val row = ChatRepo.requireDb().outboundMessage(msgPk.toLong())
+      if (row == null) {
+        promise.reject("retry_message", "unknown outbound message")
+        return@execute
+      }
+      val (convoPk, text) = row
+      val session = ChatRepo.requireDb().currentSession(convoPk, ChatRepo.currentEpochId)
+      if (session == null) {
+        promise.reject("expired", "no session in the current epoch — re-introduce first")
+        return@execute
+      }
+      val r = chatSendMessage(c, session.second, hexEncode(text))
+      ChatRepo.finalizeOutgoing(msgPk.toLong(), !r.error)
+      promise.resolve("""{"msgPk":${msgPk.toLong()},"status":"${if (r.error) "failed" else "sent"}"}""")
+    }
+  }
+
+  // -- DB query surface (docs/architecture.md §2.3) — reads are fast, run inline
+
+  @ReactMethod
+  fun listConversations(promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().listConversationsJson(ChatRepo.currentEpochId))
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
+  fun listMessages(convoPk: Double, beforeMsgPk: Double, limit: Double, promise: Promise) {
+    try {
+      promise.resolve(
+          ChatRepo.requireDb()
+              .listMessagesJson(convoPk.toLong(), beforeMsgPk.toLong(), limit.toInt().coerceIn(1, 500)))
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
+  fun listContacts(promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().listContactsJson())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
+  fun markRead(convoPk: Double, promise: Promise) {
+    try {
+      ChatRepo.requireDb().markRead(convoPk.toLong())
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /** The open thread (0 = none): its inbound messages don't count as unread. */
+  @ReactMethod
+  fun setActiveConversation(convoPk: Double) {
+    ChatRepo.activeConvoPk = convoPk.toLong()
+  }
+
+  /** Attach a pending inbound conversation to a NEW named contact (#24). */
+  @ReactMethod
+  fun nameConversation(convoPk: Double, name: String, promise: Promise) {
+    try {
+      val d = ChatRepo.requireDb()
+      val existing = d.contactIdForConvo(convoPk.toLong())
+      if (existing != null) {
+        d.setContactName(existing, name)
+      } else {
+        val cid = d.insertContact(name, null, 0L)
+        d.setConversationContact(convoPk.toLong(), cid)
+      }
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /** Merge a pending inbound conversation into an existing thread (#24). */
+  @ReactMethod
+  fun mergeConversation(pendingConvoPk: Double, targetConvoPk: Double, promise: Promise) {
+    try {
+      ChatRepo.requireDb().mergeConversation(pendingConvoPk.toLong(), targetConvoPk.toLong())
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
     }
   }
 

@@ -1,0 +1,82 @@
+dlopen OK /home/alisher/.local/share/Logos/LogosBasecamp/modules/chat_module/liblogoschat.so
+INF 2026-07-23 18:41:01.225+02:00 Initializing networking                    tid=3346282 addrs=@[/ip4/127.0.0.1/tcp/50022]
+INF 2026-07-23 18:41:01.225+02:00 Created WakuMetadata protocol              topics="waku node" tid=3346282 clusterId=2 shards=[]
+NTC 2026-07-23 18:41:01.227+02:00 Client started                             topics="chat client" tid=3346282
+NTC 2026-07-23 18:41:01.227+02:00 Chat client created                        topics="chat ffi client" tid=3346282 name=desktop-peer
+[RSP 18:41:01.228 new] statusCode=0 len=0 msg=
+set_event_callback OK
+INF 2026-07-23 18:41:01.227+02:00 mounting filter protocol                   topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.228+02:00 mounting filter client                     topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.228+02:00 Starting Waku node                         topics="waku node" tid=3346282 version=53302e43
+INF 2026-07-23 18:41:01.229+02:00 PeerInfo                                   topics="waku node" tid=3346282 peerId=16U*7MjAw7 addrs="[/ip4/127.0.0.1/tcp/50022]"
+INF 2026-07-23 18:41:01.229+02:00 Listening on                               topics="waku node" tid=3346282 full=[/ip4/0.0.0.0/tcp/50022/p2p/16Uiu2HAmMj3m5N6GVAwBV6XURRVZ3BLNeWQBxfzv8xZhUX7MjAw7] localIp=192.168.1.100 switchAddress=@[/ip4/192.168.1.100/tcp/50022]
+INF 2026-07-23 18:41:01.229+02:00 Announcing addresses                       topics="waku node" tid=3346282 full=[/ip4/192.168.1.100/tcp/50022/p2p/16Uiu2HAmMj3m5N6GVAwBV6XURRVZ3BLNeWQBxfzv8xZhUX7MjAw7]
+INF 2026-07-23 18:41:01.229+02:00 DNS: discoverable ENR                      topics="waku node" tid=3346282 enr=enr:-H64QAqzrnsXgDvFjIMVD3QzV2Ph2wlFih9qaHEfFHYAL8-kLCMLkfetg5VmyFty596DlEEmjm6VKFljjL7Nf7K04sABgmlkgnY0gnJzhQACAQABiXNlY3AyNTZrMaEDhsNchEL-EcqeKyAT0_3kkH4iyqHFhewEdc_kAytRdxY
+INF 2026-07-23 18:41:01.229+02:00 Node started successfully                  topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.229+02:00 mounting relay protocol                    topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.229+02:00 starting relay protocol                    topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.229+02:00 relay started successfully                 topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.229+02:00 relay mounted successfully                 topics="waku node" tid=3346282
+INF 2026-07-23 18:41:01.229+02:00 Relay peer connections                     topics="waku node peer_manager" tid=3346282 inRelayConns=0/20 outRelayConns=0/10 totalConnections=0/50 notConnectedPeers=0 outsideBackoffPeers=0
+INF 2026-07-23 18:41:01.230+02:00 Connecting to static peers                 topics="chat waku" tid=3346282 peerCount=6
+INF 2026-07-23 18:41:01.230+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=3346282 numOfPeers=6 nodes="@[16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby, 16Uiu2HAmMK7PYygBtKUQ8EHp7EfaD3bCEsJrkFooK8RQ2PVpJprH, 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397, 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH, 16Uiu2HAm8YokiNun9BkeA1ZRmhLbtNUvcwRr64F69tYj9fkGyuEP, 16Uiu2HAkvwhGHKNry6LACrB8TmEFoCJKEX29XR5dDUzk3UT3UNSE]"
+INF 2026-07-23 18:41:01.233+02:00 Message listener started                   topics="chat client" tid=3346282
+NTC 2026-07-23 18:41:01.233+02:00 Client start complete                      topics="chat client" tid=3346282 client=desktop-peer
+[RSP 18:41:01.233 start] statusCode=0 len=0 msg=
+READY
+WRN 2026-07-23 18:41:01.348+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:41:01.404+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby)"
+WRN 2026-07-23 18:41:01.705+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+INF 2026-07-23 18:41:02.231+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=3346282 numOfPeers=2 nodes="@[16Uiu2HAkvwhGHKNry6LACrB8TmEFoCJKEX29XR5dDUzk3UT3UNSE, 16Uiu2HAm8YokiNun9BkeA1ZRmhLbtNUvcwRr64F69tYj9fkGyuEP]"
+WRN 2026-07-23 18:41:02.266+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:41:02.403+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397)"
+WRN 2026-07-23 18:41:02.539+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+INF 2026-07-23 18:41:02.635+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=3346282 successfulConns=3 attempted=6
+INF 2026-07-23 18:41:02.635+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=3346282 successfulConns=2 attempted=2
+ERR 2026-07-23 18:41:02.679+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH)"
+WRN 2026-07-23 18:41:03.236+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+WRN 2026-07-23 18:41:04.492+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+NTC 2026-07-23 18:41:15.088+02:00 start publish Waku message                 topics="waku relay" tid=3346282 msg_hash=0x57bb3dea49d96d6be327156a89841e7005f1867d4eec1eb8c4cfbb0f8252ef37 pubsubTopic=/waku/2/rs/2/1
+ERR 2026-07-23 18:41:15.088+02:00 no subscribed peers found                  topics="waku filter" tid=3346282 pubsubTopic=/waku/2/rs/2/1 contentTopic=delivery_address msg_hash=0x57bb3dea49d96d6be327156a89841e7005f1867d4eec1eb8c4cfbb0f8252ef37
+NTC 2026-07-23 18:41:15.088+02:00 sent relay message                         topics="waku relay" tid=3346282 my_peer_id=16U*7MjAw7 msg_hash=0x57bb3dea49d96d6be327156a89841e7005f1867d4eec1eb8c4cfbb0f8252ef37 msg_id=c407655b7277...0caab34a0833 to_peer_id=16U*kGyuEP topic=/waku/2/rs/2/1 sentTime=1784824875089681152 payloadSizeBytes=458.0
+NTC 2026-07-23 18:41:15.088+02:00 sent relay message                         topics="waku relay" tid=3346282 my_peer_id=16U*7MjAw7 msg_hash=0x57bb3dea49d96d6be327156a89841e7005f1867d4eec1eb8c4cfbb0f8252ef37 msg_id=c407655b7277...0caab34a0833 to_peer_id=16U*T3UNSE topic=/waku/2/rs/2/1 sentTime=1784824875089991680 payloadSizeBytes=458.0
+NTC 2026-07-23 18:41:15.088+02:00 sent relay message                         topics="waku relay" tid=3346282 my_peer_id=16U*7MjAw7 msg_hash=0x57bb3dea49d96d6be327156a89841e7005f1867d4eec1eb8c4cfbb0f8252ef37 msg_id=c407655b7277...0caab34a0833 to_peer_id=16U*VpJprH topic=/waku/2/rs/2/1 sentTime=1784824875090058496 payloadSizeBytes=458.0
+NTC 2026-07-23 18:41:15.089+02:00 waku.relay published                       topics="waku node" tid=3346282 peerId=16U*7MjAw7 pubsubTopic=/waku/2/rs/2/1 msg_hash=0x70fd9e0839ee371ceb18bd8200c0f36c097719d58d91b7b5ca5aa64e802c4510 publishTime=1784824875090507264
+[EVT 18:41:15.090] ret=0 {"eventType":"new_conversation","conversationId":"dc7c37f43763f3f19a08db9aeaf0904ddbec","conversationType":"private"}
+NTC 2026-07-23 18:41:15.089+02:00 CREATED                                    topics="chat client" tid=3346282 client=desktop-peer convoId=dc7c37f43763f3f19a08db9aeaf0904ddbec
+[RSP 18:41:15.090 newconvo] statusCode=0 len=0 msg=
+WRN 2026-07-23 18:42:05.249+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:42:05.308+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby)"
+WRN 2026-07-23 18:42:05.561+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:42:05.696+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397)"
+WRN 2026-07-23 18:42:05.834+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:42:05.970+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH)"
+NTC 2026-07-23 18:42:53.964+02:00 start publish Waku message                 topics="waku relay" tid=3346282 msg_hash=0x6d41f40d47cbcc47877d82f1165074a6a2790ab6e8df4da660927eb3397331eb pubsubTopic=/waku/2/rs/2/1
+ERR 2026-07-23 18:42:53.964+02:00 no subscribed peers found                  topics="waku filter" tid=3346282 pubsubTopic=/waku/2/rs/2/1 contentTopic=delivery_address msg_hash=0x6d41f40d47cbcc47877d82f1165074a6a2790ab6e8df4da660927eb3397331eb
+NTC 2026-07-23 18:42:53.964+02:00 sent relay message                         topics="waku relay" tid=3346282 my_peer_id=16U*7MjAw7 msg_hash=0x6d41f40d47cbcc47877d82f1165074a6a2790ab6e8df4da660927eb3397331eb msg_id=18c14ea2abe0...16a3ca60eefa to_peer_id=16U*kGyuEP topic=/waku/2/rs/2/1 sentTime=1784824973965608192 payloadSizeBytes=438.0
+NTC 2026-07-23 18:42:53.964+02:00 sent relay message                         topics="waku relay" tid=3346282 my_peer_id=16U*7MjAw7 msg_hash=0x6d41f40d47cbcc47877d82f1165074a6a2790ab6e8df4da660927eb3397331eb msg_id=18c14ea2abe0...16a3ca60eefa to_peer_id=16U*T3UNSE topic=/waku/2/rs/2/1 sentTime=1784824973965680640 payloadSizeBytes=438.0
+NTC 2026-07-23 18:42:53.964+02:00 sent relay message                         topics="waku relay" tid=3346282 my_peer_id=16U*7MjAw7 msg_hash=0x6d41f40d47cbcc47877d82f1165074a6a2790ab6e8df4da660927eb3397331eb msg_id=18c14ea2abe0...16a3ca60eefa to_peer_id=16U*VpJprH topic=/waku/2/rs/2/1 sentTime=1784824973965724672 payloadSizeBytes=438.0
+NTC 2026-07-23 18:42:53.964+02:00 waku.relay published                       topics="waku node" tid=3346282 peerId=16U*7MjAw7 pubsubTopic=/waku/2/rs/2/1 msg_hash=0x20a269ee4518c9795e3f1effe75b1103aa52d459c2b961288727164e26a41175 publishTime=1784824973965751808
+[EVT 18:42:53.965] ret=0 {"eventType":"new_conversation","conversationId":"e7b86b61c9c826b4d81a4f283039245342a3","conversationType":"private"}
+NTC 2026-07-23 18:42:53.964+02:00 CREATED                                    topics="chat client" tid=3346282 client=desktop-peer convoId=e7b86b61c9c826b4d81a4f283039245342a3
+[RSP 18:42:53.965 newconvo] statusCode=0 len=0 msg=
+WRN 2026-07-23 18:43:07.147+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:43:07.201+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby)"
+WRN 2026-07-23 18:43:07.495+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:43:07.635+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397)"
+WRN 2026-07-23 18:43:07.773+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:43:07.911+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH)"
+INF 2026-07-23 18:43:08.652+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=3346282 numOfPeers=3 nodes="@[16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397, 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH, 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby]"
+INF 2026-07-23 18:43:08.791+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=3346282 successfulConns=0 attempted=3
+WRN 2026-07-23 18:44:09.293+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:44:09.349+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby)"
+WRN 2026-07-23 18:44:09.598+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:44:09.738+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397)"
+WRN 2026-07-23 18:44:09.879+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:44:10.017+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH)"
+WRN 2026-07-23 18:45:11.197+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:45:11.258+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby)"
+WRN 2026-07-23 18:45:11.514+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:45:11.656+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397)"
+WRN 2026-07-23 18:45:11.794+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=3346282
+ERR 2026-07-23 18:45:11.929+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=3346282 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH)"

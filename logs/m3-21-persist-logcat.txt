@@ -1,0 +1,19 @@
+--------- beginning of main
+07-23 18:39:51.141 14771 14771 I logos-chat-bridge: JNI_OnLoad ok (classes+ids cached)
+07-23 18:39:51.141 14771 14771 I logos-chat-bridge: loadLibrary ok: c++_shared -> logoschat -> logoschat_bridge
+07-23 18:39:51.177 14771 14771 I logos-chat-db: db open: 0 conversations, 0 messages (schema v1)
+07-23 18:40:20.067 14771 15873 I logos-chat-bridge: node_status: initializing
+07-23 18:40:20.068 14771 15873 I logos-chat-bridge: stdio redirected to logcat (tag: logos-chat-node)
+07-23 18:40:20.068 14771 15873 I logos-chat-bridge: chat_new config: {"name":"phone-m1"}
+07-23 18:40:20.078 14771 15873 I logos-chat-bridge: chat_new returned ctx=0x7de3796050 err=(none)
+07-23 18:40:20.081 14771 15873 I logos-chat-db: epoch 1 opened (mix=false)
+07-23 18:40:20.081 14771 15873 I logos-chat-bridge: event callback registered
+07-23 18:40:20.081 14771 15873 I logos-chat-bridge: node_status: starting
+07-23 18:40:20.093 14771 15873 I logos-chat-bridge: node_status: running
+07-23 18:42:55.692 14771 14799 I logos-chat-bridge: lib event (ptr=540687294544): {"eventType":"new_conversation","conversationId":"d7d333f349fda773c6a197516f58524adce7","conversationType":"private"}
+07-23 18:42:55.697 14771 14799 I logos-chat-db: pending inbound conversation: convo=1 epoch=1 lib=d7d333f349fda773c6a197516f58524adce7 session=1
+07-23 18:42:55.698 14771 14799 I logos-chat-bridge: lib event (ptr=540687294544): {"eventType":"new_message","conversationId":"d7d333f349fda773c6a197516f58524adce7","messageId":"","content":"6d332070657273697374656e63652070726f62652031","timestamp":1784824975000000000}
+07-23 18:42:55.701 14771 14799 I logos-chat-db: persisted inbound msg_pk=1 convo=1 (22 chars) BEFORE forward
+--------- beginning of main
+07-23 18:45:15.335 16178 16178 I logos-chat-db: db open: 1 conversations, 1 messages (schema v1)
+--- (above: relaunch after am force-stop com.logoschat — history survived)
