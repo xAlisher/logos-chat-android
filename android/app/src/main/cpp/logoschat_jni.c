@@ -308,6 +308,44 @@ Java_com_logoschat_LogosChatModule_chatCreateIntroBundle(JNIEnv *env, jobject th
   return response;
 }
 
+// Creates a new private conversation from a peer's intro bundle + a mandatory
+// opening message (hex). Returns EMPTY on success (invariant #3) — only
+// result->error means failure; the conversationId arrives via the
+// new_conversation push, and each side's id is different for the same
+// logical conversation.
+JNIEXPORT jobject JNICALL
+Java_com_logoschat_LogosChatModule_chatNewPrivateConversation(
+    JNIEnv *env, jobject thiz, jlong ctx, jstring bundle, jstring contentHex) {
+  (void)thiz;
+  const char *bundleStr = (*env)->GetStringUTFChars(env, bundle, 0);
+  const char *hexStr = (*env)->GetStringUTFChars(env, contentHex, 0);
+  cb_result *result = NULL;
+  chat_new_private_conversation((void *)ctx, on_response, (void *)&result,
+                                bundleStr, hexStr);
+  jobject response = to_jni_result(env, result);
+  (*env)->ReleaseStringUTFChars(env, bundle, bundleStr);
+  (*env)->ReleaseStringUTFChars(env, contentHex, hexStr);
+  free_cb_result(result);
+  return response;
+}
+
+// Sends a message (hex content) into an existing conversation (this side's
+// local convoId). Response message is the messageId on success.
+JNIEXPORT jobject JNICALL
+Java_com_logoschat_LogosChatModule_chatSendMessage(
+    JNIEnv *env, jobject thiz, jlong ctx, jstring convoId, jstring contentHex) {
+  (void)thiz;
+  const char *convoStr = (*env)->GetStringUTFChars(env, convoId, 0);
+  const char *hexStr = (*env)->GetStringUTFChars(env, contentHex, 0);
+  cb_result *result = NULL;
+  chat_send_message((void *)ctx, on_response, (void *)&result, convoStr, hexStr);
+  jobject response = to_jni_result(env, result);
+  (*env)->ReleaseStringUTFChars(env, convoId, convoStr);
+  (*env)->ReleaseStringUTFChars(env, contentHex, hexStr);
+  free_cb_result(result);
+  return response;
+}
+
 // Registers the persistent event callback for this ctx. MUST be called BEFORE
 // chatStart (invariant #1 — early pushes are lost otherwise); enforced on the
 // Kotlin side in startNode.

@@ -129,6 +129,8 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   external fun chatDestroy(ctx: Long): ChatResult
   external fun chatGetIdentity(ctx: Long): ChatResult
   external fun chatCreateIntroBundle(ctx: Long): ChatResult
+  external fun chatNewPrivateConversation(ctx: Long, bundle: String, contentHex: String): ChatResult
+  external fun chatSendMessage(ctx: Long, convoId: String, contentHex: String): ChatResult
   external fun chatSetEventCallback(ctx: Long)
 
   init {
@@ -241,6 +243,49 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       if (r.error) promise.reject("chat_create_intro_bundle", r.message)
       else promise.resolve(r.message)
     }
+  }
+
+  /**
+   * Creates a private conversation from a peer's intro bundle with a mandatory
+   * opening message. Content goes over the FFI HEX-encoded (invariant: content
+   * hex both directions); the call returns EMPTY on success — statusCode==0 is
+   * "accepted", and OUR local conversationId arrives via the new_conversation
+   * push (X3DH asymmetry: each side has a different id).
+   */
+  @ReactMethod
+  fun newPrivateConversation(bundle: String, textUtf8: String, promise: Promise) {
+    executor.execute {
+      val c = ctx
+      if (c == 0L) {
+        promise.reject("new_private_conversation", "node not started")
+        return@execute
+      }
+      val r = chatNewPrivateConversation(c, bundle, hexEncode(textUtf8))
+      if (r.error) promise.reject("chat_new_private_conversation", r.message)
+      else promise.resolve(null) // empty response == accepted
+    }
+  }
+
+  /** Sends a message (hex-encoded UTF-8) into an existing local conversation. */
+  @ReactMethod
+  fun sendMessage(convoId: String, textUtf8: String, promise: Promise) {
+    executor.execute {
+      val c = ctx
+      if (c == 0L) {
+        promise.reject("send_message", "node not started")
+        return@execute
+      }
+      val r = chatSendMessage(c, convoId, hexEncode(textUtf8))
+      if (r.error) promise.reject("chat_send_message", r.message)
+      else promise.resolve(r.message) // messageId (may be empty)
+    }
+  }
+
+  private fun hexEncode(textUtf8: String): String {
+    val bytes = textUtf8.toByteArray(Charsets.UTF_8)
+    val sb = StringBuilder(bytes.size * 2)
+    for (b in bytes) sb.append("%02x".format(b))
+    return sb.toString()
   }
 
   @ReactMethod
