@@ -32,3 +32,15 @@ Running log of walls + exact fixes while executing M1 (#8–#13). Convention: ea
 - Verify on-device (release build): `logs/m1-09-theme.png` (tokens + typography),
   `m1-09-theme-bottom.png` (all 5 StatusPill states, bubbles, Paper button/TextInput — emerald,
   no purple), `m1-09-theme-toast.png` (ErrorToast fired via on-device tap).
+
+## #10 navigation (2026-07-23)
+
+- @react-navigation/native 7.x + native-stack + react-native-screens 4.x on RN 0.86/React 19 —
+  no version walls, autolinked clean.
+- Nav `DarkTheme` overridden with our tokens (background=canvas, card=panel) — prevents white
+  flashes between native-stack screens; Conversations hides the stack header and draws its own
+  panel header (brand + StatusPill + `+ new`), wrapped in `SafeAreaView edges=['top']` because
+  RN 0.86 is edge-to-edge.
+- ThemeDemo kept as a dev route reachable from Settings.
+- Verify on-device: `logs/m1-10-conversations.png`, `m1-10-scan.png`, `m1-10-chat.png`,
+  `m1-10-settings.png`, `m1-10-introbundle.png` — all five screens reached by real taps.
