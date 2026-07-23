@@ -60,11 +60,14 @@ All decisions are made and specced — **do not re-litigate**:
 
 ## Next steps (in order)
 
-4. **M3** (#21–#28): #21 SQLite persistence, #22 session epochs, #23 re-introduce flow,
-   #24 contact merge, #25 foreground service, #26 notifications — **all COMPLETE ✓** and closed
-   with on-device evidence. Remaining in M3: **#27** (error surfaces + battery measurement),
-   **#28** (signed v0.1 APK + release), **#49** (automated test suite: JS unit, Kotlin unit,
-   store logic), then epic #47.
+4. **M3** (#21–#28): #21 persistence, #22 epochs, #23 re-introduce, #24 contact merge,
+   #25 foreground service, #26 notifications, #28 signed v0.1 APK — **COMPLETE ✓**, closed with
+   on-device evidence. **v0.1.0 released**:
+   github.com/xAlisher/logos-chat-android/releases/tag/v0.1.0 (R8 on, JNI keep rules verified
+   on the minified APK). Remaining in M3: **#27** (error surfaces reviewed and fine — only the
+   battery number is outstanding: a sampler is writing `logs/m3-27-battery.txt` every 10 min
+   from a 53%-unplugged, screen-off, node-running window; read that file, don't invent a
+   figure), **#49** (automated test suite), then epic #47.
    - #25/#26 were finished by hand after the agent hit its budget mid-refactor. Three real bugs
      found there, all in `docs/m3-log.md` and worth remembering: POST_NOTIFICATIONS is a
      *runtime* permission on 13+ (manifest alone ⇒ `importance=NONE`, every notification
