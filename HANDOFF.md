@@ -65,13 +65,8 @@ All decisions are made and specced — **do not re-litigate**:
    #49 test suite — all closed with on-device / green-CI evidence. **v0.1.0 released**:
    github.com/xAlisher/logos-chat-android/releases/tag/v0.1.0 (R8 on, JNI keep rules verified
    on the minified APK; APK attached). Tests: 11 JS logic + 19 Kotlin, CI workflow `test.yml`.
-   - **Only open M3 item: #27 battery number.** Everything else in #27 (error surfaces) is done
-     and reviewed. A bash sampler (`scratchpad/battery-sample.sh`, background task) is writing
-     `logs/m3-27-battery.txt` every 10 min from a window started 19:44 @ 53% unplugged, node
-     running under the FGS, screen off. When it finishes (~13 samples / ~2h): read that file,
-     write the drain rate into `docs/m3-log.md` #27 section, commit, close #27 + epic #47.
-     **Do NOT invent a figure** — only quote what's in the file. If the phone got re-plugged or
-     driven by other work mid-window, discard and re-run the sampler.
+   - #27 CLOSED: 2h battery window measured — **0% drain, node stable** (`logs/m3-27-battery.txt`);
+     idle-background floor < ~0.5%/h. Epic #47 closed. **M3 milestone fully closed (11/11).**
 5. Human: run the #15 wetware check (physical QR scan — steps on the issue) → close #15 + #43.
 6. **M4** (#29–#33): **COMPLETE ✓ (2026-07-23)** — Mix / "Private routing", verified on-device.
    - **#29 mix superset .so**: built from `logos-chat` `feat/logos-testnetv02-mix` (6b4d83a),
