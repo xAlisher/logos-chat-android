@@ -41,20 +41,21 @@ All decisions are made and specced — **do not re-litigate**:
    have no -mssse3 wall; patch nim-ffi only AFTER `make update` (it hard-resets submodules).
    Issues #1–#4, #6 closed. **Remaining M0**: CI run 30019377215 green (#5) → tag v0.1.0
    release + close #7, then M0 milestone done.
-3. **M1 agent**: IN FLIGHT (launched 2026-07-23) — executing issues #8–#13: RN 0.86 scaffold at
-   the repo root (package com.logoschat), theme, navigation, JNI bridge, LogosChatModule, Status
-   screen reaching Running on the SM-G780G. Its log: docs/m1-log.md. Closes each issue with
-   on-device evidence as it lands. If it stalled, the log + closed-issue trail says where.
+3. **M1 agent**: DONE ✓ (2026-07-23) — issues #8–#13 all closed with on-device evidence. RN 0.86
+   app at the repo root (package `com.logoschat`), full theme per docs/theme.md, 5-screen nav
+   shell, JNI bridge (out-of-band ndk-build via `scripts/build-bridge.sh`, prebuilts vendored in
+   jniLibs), LogosChatModule with invariant-ordered startNode (chat_new → set_event_callback →
+   chat_start) + HandlerThread event pipeline, live Status screen. **Node boots to Running on the
+   phone from JS**, dials the fleet (5/6 peers up), real `logos_chatintro_1_…` bundle fetched and
+   rendered. Walls + fixes: `docs/m1-log.md`; evidence: `logs/m1-*`. Verification workflow:
+   `assembleRelease` (release signs with debug keystore → self-contained bundled-JS APK, no metro).
 
-## Next steps (in order, after the agents report)
+## Next steps (in order)
 
-1. Verify both agents' output (above). Fix gaps; if M0 stalled, continue from the fork-tree log —
-   the proven wall playbook is `~/projects/logos-libdelivery-android/scripts/build-android-arm64.sh`
-   + its `docs/BUILD.md` + `PROJECT_KNOWLEDGE.md`.
-2. M0 exit: CI green + smoke bundle string captured → tag `logos-libchat-android` v0.1.0 release.
-3. Then M1 (issues #8–#13): RN scaffold `com.logoschat` → theme → bridge → node Running on-device.
-4. Interop from M2 onward needs desktop Basecamp running chat_module — use `~/basecamp` `/run`
-   tooling; device driving recipes in `~/android-skills/skills/INDEX.md`.
+1. M0 exit: CI green (#5) → tag `logos-libchat-android` v0.1.0 release + close #7.
+2. M2 (issues #14–#19): conversations + QR intro-bundle exchange + interop gate (#20) against
+   desktop Basecamp chat_module — needs `~/basecamp` `/run` tooling; device driving recipes in
+   `~/android-skills/skills/INDEX.md`.
 
 ## Key context that isn't in the docs
 
