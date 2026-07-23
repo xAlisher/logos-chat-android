@@ -1,0 +1,46 @@
+07-23 17:38:40.665   935   935 I logos-chat-bridge: JNI_OnLoad ok (classes+ids cached)
+07-23 17:38:40.665   935   935 I logos-chat-bridge: loadLibrary ok: c++_shared -> logoschat -> logoschat_bridge
+07-23 17:38:40.746   935  1004 I ReactNativeJS: Running "logoschat"
+07-23 17:38:57.727   935  1189 I logos-chat-bridge: node_status: initializing
+07-23 17:38:57.728   935  1004 I ReactNativeJS: '[LogosChatEvent]', '{"status":"initializing","eventType":"node_status","source":"module"}'
+07-23 17:38:57.728   935  1189 I logos-chat-bridge: stdio redirected to logcat (tag: logos-chat-node)
+07-23 17:38:57.729   935  1189 I logos-chat-bridge: chat_new config: {"name":"phone-m1"}
+07-23 17:38:57.738   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.731+02:00 Initializing networking                    tid=1191 addrs=@[/ip4/127.0.0.1/tcp/50178]
+07-23 17:38:57.738   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.731+02:00 Created WakuMetadata protocol              topics="waku node" tid=1191 clusterId=2 shards=[]
+07-23 17:38:57.738   935  1190 I logos-chat-node: NTC 2026-07-23 17:38:57.731+02:00 Client started                             topics="chat client" tid=1191
+07-23 17:38:57.738   935  1190 I logos-chat-node: NTC 2026-07-23 17:38:57.731+02:00 Chat client created                        topics="chat ffi client" tid=1191 name=phone-m1
+07-23 17:38:57.738   935  1189 I logos-chat-bridge: chat_new returned ctx=0x7d8ed80050 err=(none)
+07-23 17:38:57.739   935  1189 I logos-chat-bridge: event callback registered
+07-23 17:38:57.739   935  1189 I logos-chat-bridge: node_status: starting
+07-23 17:38:57.739   935  1004 I ReactNativeJS: '[LogosChatEvent]', '{"status":"starting","eventType":"node_status","source":"module"}'
+07-23 17:38:57.740   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 mounting filter protocol                   topics="waku node" tid=1191
+07-23 17:38:57.740   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 mounting filter client                     topics="waku node" tid=1191
+07-23 17:38:57.740   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Starting Waku node                         topics="waku node" tid=1191 version="\"53302e\""
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 PeerInfo                                   topics="waku node" tid=1191 peerId=16U*CC6ELZ addrs="[/ip4/127.0.0.1/tcp/50178]"
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Listening on                               topics="waku node" tid=1191 full=[/ip4/0.0.0.0/tcp/50178/p2p/16Uiu2HAm44y5vHFuFw6htfGb3CFwDkZFYMXWFUHgz99V4ACC6ELZ] localIp=192.168.1.47 switchAddress=@[/ip4/192.168.1.47/tcp/50178]
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Announcing addresses                       topics="waku node" tid=1191 full=[/ip4/192.168.1.47/tcp/50178/p2p/16Uiu2HAm44y5vHFuFw6htfGb3CFwDkZFYMXWFUHgz99V4ACC6ELZ]
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 DNS: discoverable ENR                      topics="waku node" tid=1191 enr=enr:-H64QKYSsVz20RhsrZDjmTPo_T88USjdwlcjc7R155cRSDRKTdDIAj_gqRSAdnMtrqsdQ88LqLESfTR4mNGZD5-sUrEBgmlkgnY0gnJzhQACAQABiXNlY3AyNTZrMaECgGtTpLcwS-z8e6rg56PdmdkEWlVNv7XrBhFNyKTcS1o
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Node started successfully                  topics="waku node" tid=1191
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 mounting relay protocol                    topics="waku node" tid=1191
+07-23 17:38:57.741   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 starting relay protocol                    topics="waku node" tid=1191
+07-23 17:38:57.742   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 relay started successfully                 topics="waku node" tid=1191
+07-23 17:38:57.742   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 relay mounted successfully                 topics="waku node" tid=1191
+07-23 17:38:57.742   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Relay peer connections                     topics="waku node peer_manager" tid=1191 inRelayConns=0/20 outRelayConns=0/10 totalConnections=0/50 notConnectedPeers=0 outsideBackoffPeers=0
+07-23 17:38:57.742   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Connecting to static peers                 topics="chat waku" tid=1191 peerCount=6
+07-23 17:38:57.742   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.735+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=1191 numOfPeers=6 nodes="@[16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby, 16Uiu2HAmMK7PYygBtKUQ8EHp7EfaD3bCEsJrkFooK8RQ2PVpJprH, 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397, 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH, 16Uiu2HAm8YokiNun9BkeA1ZRmhLbtNUvcwRr64F69tYj9fkGyuEP, 16Uiu2HAkvwhGHKNry6LACrB8TmEFoCJKEX29XR5dDUzk3UT3UNSE]"
+07-23 17:38:57.748   935  1190 I logos-chat-node: INF 2026-07-23 17:38:57.743+02:00 Message listener started                   topics="chat client" tid=1191
+07-23 17:38:57.748   935  1189 I logos-chat-bridge: node_status: running
+07-23 17:38:57.748   935  1190 I logos-chat-node: NTC 2026-07-23 17:38:57.743+02:00 Client start complete                      topics="chat client" tid=1191 client=phone-m1
+07-23 17:38:57.748   935  1004 I ReactNativeJS: '[LogosChatEvent]', '{"status":"running","eventType":"node_status","source":"module"}'
+07-23 17:38:57.955   935  1190 I logos-chat-node: WRN 2026-07-23 17:38:57.947+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=1191
+07-23 17:38:58.071   935  1190 I logos-chat-node: ERR 2026-07-23 17:38:58.067+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=1191 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAmTUbnxLGT9JvV6mu9oPyDjqHK4Phs1VDJNUgESgNSkuby)"
+07-23 17:38:58.617   935  1190 I logos-chat-node: WRN 2026-07-23 17:38:58.611+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=1191
+07-23 17:38:58.744   935  1190 I logos-chat-node: INF 2026-07-23 17:38:58.739+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=1191 numOfPeers=2 nodes="@[16Uiu2HAkvwhGHKNry6LACrB8TmEFoCJKEX29XR5dDUzk3UT3UNSE, 16Uiu2HAm8YokiNun9BkeA1ZRmhLbtNUvcwRr64F69tYj9fkGyuEP]"
+07-23 17:38:58.934   935  1190 I logos-chat-node: WRN 2026-07-23 17:38:58.931+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=1191
+07-23 17:38:59.078   935  1190 I logos-chat-node: ERR 2026-07-23 17:38:59.071+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=1191 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm4S1JYkuzDKLKQvwgAhZKs9otxXqt8SCGtB4hoJP1S397)"
+07-23 17:38:59.224   935  1190 I logos-chat-node: WRN 2026-07-23 17:38:59.219+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=1191
+07-23 17:38:59.373   935  1190 I logos-chat-node: ERR 2026-07-23 17:38:59.367+02:00 subscribe request failed. Skipping.        topics="chat waku" tid=1191 err="(kind: PEER_DIAL_FAILURE, address: 16Uiu2HAm8Y9kgBNtjxvCnf1X6gnZJW5EGE4UwwCL3CCm55TwqBiH)"
+07-23 17:38:59.647   935  1190 I logos-chat-node: INF 2026-07-23 17:38:59.639+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=1191 successfulConns=3 attempted=6
+07-23 17:38:59.647   935  1190 I logos-chat-node: INF 2026-07-23 17:38:59.639+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=1191 successfulConns=2 attempted=2
+07-23 17:39:00.450   935  1190 I logos-chat-node: WRN 2026-07-23 17:39:00.443+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=1191
+07-23 17:39:02.089   935  1190 I logos-chat-node: WRN 2026-07-23 17:39:02.083+02:00 no subscription found. Sending subscribe request topics="chat waku" tid=1191

@@ -65,3 +65,20 @@ Running log of walls + exact fixes while executing M1 (#8–#13). Convention: ea
 - Verify on-device: logcat `logos-chat-bridge: JNI_OnLoad ok (classes+ids cached)` +
   `loadLibrary ok: c++_shared -> logoschat -> logoschat_bridge`; APK contains all three .so
   (build log `logs/m1-11-gradle.log`, ndk log `logs/m1-11-ndk-build.log`).
+
+## #12 module + events (2026-07-23)
+
+- Order enforced in `startNode`: `chat_new` → `chatSetEventCallback` → `chat_start` (invariant #1),
+  all on a dedicated single-thread executor ("logoschat-node") — `chat_start` blocks while the
+  node boots and must never hold the JS thread.
+- Event pipeline: JNI (lib thread, already-copied string) → `EventCallbackManager.execEventCallback`
+  posts to HandlerThread "logoschat-events" → parse eventType → emit on the single `LogosChatEvent`
+  channel (DeviceEventEmitter on the JS side — works fine under Bridgeless, booth's pattern).
+  Module `node_status` transitions ride the same channel/thread.
+- Node ctx + status live in the module **companion** — survives JS reloads/module re-instantiation;
+  one node per process (M1).
+- Zero walls: first on-device run worked. `{"name":"phone-m1"}` → Running in ~20ms wall-clock
+  after chat_new; fleet dial: `Dialing multiple peers numOfPeers=6` → `successfulConns=3` + retry
+  `successfulConns=2` (5/6 fleet peers up); JS console shows the three node_status events.
+- Evidence: `logs/m1-12-logcat.txt` (bridge + node stdout + ReactNativeJS lines),
+  `logs/m1-12-settings-stopped.png`, `logs/m1-12-after.png` (running pill + stop button).
