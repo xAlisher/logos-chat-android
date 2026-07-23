@@ -44,3 +44,24 @@ Running log of walls + exact fixes while executing M1 (#8–#13). Convention: ea
 - ThemeDemo kept as a dev route reachable from Settings.
 - Verify on-device: `logs/m1-10-conversations.png`, `m1-10-scan.png`, `m1-10-chat.png`,
   `m1-10-settings.png`, `m1-10-introbundle.png` — all five screens reached by real taps.
+
+## #11 JNI bridge (2026-07-23)
+
+- Prebuilts vendored ONCE into `android/app/src/main/jniLibs/arm64-v8a/` (24.4 MB node +
+  libc++_shared) + header into `cpp/include/`; Android.mk's PREBUILT_SHARED_LIBRARY points AT
+  jniLibs, ndk-build outputs to `$TMPDIR/logoschat-bridge-build`, and `scripts/build-bridge.sh`
+  copies only `liblogoschat_bridge.so` back — avoids ndk-build "cp: same file" (NDK_LIBS_OUT ==
+  prebuilt source dir) and avoids committing the node .so twice.
+- Bridge built OUT-OF-BAND with ndk-build per plan (RN New Arch owns gradle CMake — [CXX1400]
+  if wired into externalNativeBuild). First build clean, 8 `Java_com_logoschat_*` symbols.
+- Ports from libdelivery with two deliberate upgrades: (1) event callback copies `(msg,len)`
+  with memcpy+NUL (libdelivery's `NewStringUTF(msg)` assumed NUL-termination — violates
+  invariant #2); (2) ChatPtr/ChatResult classes + ctor ids cached as GLOBAL refs in JNI_OnLoad
+  (libdelivery did FindClass per call).
+- `packagingOptions { jniLibs { pickFirsts '**/libc++_shared.so' } }` — RN AARs ship their own
+  copy; without pickFirst the merge fails.
+- `LogosChatModule.ensureLoaded()` from MainApplication.onCreate forces the loadLibrary chain at
+  app start → broken bridge fails loudly, and gives the #11 logcat evidence.
+- Verify on-device: logcat `logos-chat-bridge: JNI_OnLoad ok (classes+ids cached)` +
+  `loadLibrary ok: c++_shared -> logoschat -> logoschat_bridge`; APK contains all three .so
+  (build log `logs/m1-11-gradle.log`, ndk log `logs/m1-11-ndk-build.log`).

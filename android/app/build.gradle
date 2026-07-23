@@ -89,6 +89,12 @@ android {
             abiFilters "arm64-v8a"
         }
     }
+    packagingOptions {
+        jniLibs {
+            // We vendor libc++_shared.so (liblogoschat's DT_NEEDED); RN AARs ship their own copy.
+            pickFirsts += ['**/libc++_shared.so']
+        }
+    }
     signingConfigs {
         debug {
             storeFile file('debug.keystore')

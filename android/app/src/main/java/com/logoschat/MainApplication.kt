@@ -14,14 +14,16 @@ class MainApplication : Application(), ReactApplication {
       context = applicationContext,
       packageList =
         PackageList(this).packages.apply {
-          // Packages that cannot be autolinked yet can be added manually here, for example:
-          // add(MyReactNativePackage())
+          add(LogosChatPackage()) // the embedded liblogoschat node bridge
         },
     )
   }
 
   override fun onCreate() {
     super.onCreate()
+    // Load c++_shared -> logoschat -> logoschat_bridge at app start so a broken
+    // bridge fails loudly here, not on first JS call (#11 AC: logcat 'ok').
+    LogosChatModule.ensureLoaded()
     loadReactNative(this)
   }
 }
