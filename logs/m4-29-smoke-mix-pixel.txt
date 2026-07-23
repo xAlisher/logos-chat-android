@@ -1,0 +1,286 @@
+dlopen OK
+dlsym OK (+ chat_get_mix_status — mix superset confirmed)
+INF 2026-07-23 20:22:26.059+02:00 Initializing networking                    tid=7392 addrs=@[/ip4/127.0.0.1/tcp/50162]
+INF 2026-07-23 20:22:26.063+02:00 Created WakuMetadata protocol              topics="waku node" tid=7392 clusterId=2 shards="[0]"
+NTC 2026-07-23 20:22:26.067+02:00 Client started                             topics="chat client" tid=7392
+NTC 2026-07-23 20:22:26.067+02:00 Chat client created                        topics="chat ffi client" tid=7392 name=smoke-mix
+[cb:new] ret=0 len=0 msg=
+chat_new OK ctx=0xd8ae0ae95050
+set_event_callback OK
+INF 2026-07-23 20:22:26.071+02:00 mounting filter protocol                   topics="waku node filter api" tid=7392
+INF 2026-07-23 20:22:26.071+02:00 starting filter protocol                   topics="waku filter" tid=7392
+INF 2026-07-23 20:22:26.071+02:00 starting to maintain subscriptions         topics="waku filter" tid=7392
+INF 2026-07-23 20:22:26.071+02:00 maintaining subscriptions                  topics="waku filter" tid=7392
+INF 2026-07-23 20:22:26.071+02:00 cleanUp                                    topics="waku filter subscriptions" tid=7392 currentPeerIds=[]
+INF 2026-07-23 20:22:26.071+02:00 after cleanUp                              topics="waku filter subscriptions" tid=7392 currentPeerIds=[]
+INF 2026-07-23 20:22:26.075+02:00 mounting filter client                     topics="waku node filter api" tid=7392
+INF 2026-07-23 20:22:26.075+02:00 mounting auto sharding                     topics="waku node" tid=7392 clusterId=2 shardCount=1
+INF 2026-07-23 20:22:26.075+02:00 mounting light push client                 topics="waku node lightpush api" tid=7392
+INF 2026-07-23 20:22:26.079+02:00 mounting mix protocol                      topics="waku node" tid=7392INF 2026-07-23 20:22:26.079+02:00 node info                                  topics="waku node" tid=7392 wakuInfo="(listenAddresses: [/ip4/127.0.0.1/tcp/50162/p2p/16Uiu2HAmBzsTvQtmGnan5CyZuNixXETUWAV9QDHGAertY55kVJQy], enrUri: enr:-H64QIASCbGSiLdj4l0IyO_NlTEmpy9zhM7J02-PfwFKFjc1bVjC2h1kK9OaJT9YQCucAbwErTt0SM1E_rbZpLiOCTABgmlkgnY0gnJzhQACAQAAiXNlY3AyNTZrMaEC9jwkxBJ6vBkW_o11pB-LoxmUD3YyY-vJPwz8IdesYOI, mixPubKey: none(string))"
+ nodeId="(listenAddresses: [/ip4/127.0.0.1/tcp/50162/p2p/16Uiu2HAmBzsTvQtmGnan5CyZuNixXETUWAV9QDHGAertY55kVJQy], enrUri: enr:-H64QIASCbGSiLdj4l0IyO_NlTEmpy9zhM7J02-PfwFKFjc1bVjC2h1kK9OaJT9YQCucAbwErTt0SM1E_rbZpLiOCTABgmlkgnY0gnJzhQACAQAAiXNlY3AyNTZrMaEC9jwkxBJ6vBkW_o11pB-LoxmUD3YyY-vJPwz8IdesYOI, mixPubKey: none(string))"
+INF 2026-07-23 20:22:26.079+02:00 local addr                                 topics="waku node" tid=7392 localaddr=/ip4/127.0.0.1/tcp/50162
+WRN 2026-07-23 20:22:26.267+02:00 publishing with mix won't work until atleast 3 mix nodes in node pool topics="waku node" tid=7392
+INF 2026-07-23 20:22:26.267+02:00 Kademlia service discovery ready (clientMode, lookup-only, not mounted) topics="waku node" tid=7392
+INF 2026-07-23 20:22:26.267+02:00 Kademlia mix discovery mounted (clientMode, no XPR/advertise) topics="chat waku" tid=7392 bootstrapPeers=2
+INF 2026-07-23 20:22:26.267+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=0 required=4
+INF 2026-07-23 20:22:26.267+02:00 Starting Waku node                         topics="waku node" tid=7392 version="\"6b4d83\""
+INF 2026-07-23 20:22:26.271+02:00 starting waku mix protocol                 topics="waku mix" tid=7392
+INF 2026-07-23 20:22:26.271+02:00 Initializing MixRlnSpamProtection          topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:26.271+02:00 Offchain group manager initialized         topics="mix-rln-group-manager" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 Generated new credentials                  topics="mix-rln-spam-protection" tid=7392 commitment=64937820d5ba148a...
+INF 2026-07-23 20:22:26.507+02:00 MixRlnSpamProtection initialized, waiting for sync topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:26.507+02:00 Failed to read tree file                   topics="mix-rln-group-manager" tid=7392 path=rln_tree.db error="cannot open: rln_tree.db"
+INF 2026-07-23 20:22:26.507+02:00 Offchain group manager started             topics="mix-rln-group-manager" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 Nullifier log started                      topics="mix-rln-nullifier-log" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 MixRlnSpamProtection started               topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 waku mix protocol started                  topics="waku mix" tid=7392
+WRN 2026-07-23 20:22:26.507+02:00 Skipping DoS-protection registration: plugin not ready topics="waku mix" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 kademlia discovery started                 topics="waku service discovery" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 PeerInfo                                   topics="waku node" tid=7392 peerId=16U*5kVJQy addrs="[/ip4/127.0.0.1/tcp/50162]"
+INF 2026-07-23 20:22:26.507+02:00 Listening on                               topics="waku node" tid=7392 full=[/ip4/0.0.0.0/tcp/50162/p2p/16Uiu2HAmBzsTvQtmGnan5CyZuNixXETUWAV9QDHGAertY55kVJQy] localIp=192.168.1.39 switchAddress=@[/ip4/192.168.1.39/tcp/50162]
+INF 2026-07-23 20:22:26.507+02:00 Announcing addresses                       topics="waku node" tid=7392 full=[/ip4/192.168.1.39/tcp/50162/p2p/16Uiu2HAmBzsTvQtmGnan5CyZuNixXETUWAV9QDHGAertY55kVJQy]
+INF 2026-07-23 20:22:26.507+02:00 DNS: discoverable ENR                      topics="waku node" tid=7392 enr=enr:-H64QIASCbGSiLdj4l0IyO_NlTEmpy9zhM7J02-PfwFKFjc1bVjC2h1kK9OaJT9YQCucAbwErTt0SM1E_rbZpLiOCTABgmlkgnY0gnJzhQACAQAAiXNlY3AyNTZrMaEC9jwkxBJ6vBkW_o11pB-LoxmUD3YyY-vJPwz8IdesYOI
+INF 2026-07-23 20:22:26.507+02:00 Node started successfully                  topics="waku node" tid=7392
+INF 2026-07-23 20:22:26.507+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=7392 numOfPeers=2 nodes="@[16Uiu2HAm8PDGahpTZ86SKxBqFodPVxpGonXLucUR9bscFWxqJuZr, 16Uiu2HAmMgeAACqTTEKVuyBmbtyAqg6qznevmyF5k6qRcL6eXsqS]"
+INF 2026-07-23 20:22:26.507+02:00 Relay peer connections                     topics="waku node peer_manager" tid=7392 inRelayConns=0/17 outRelayConns=0/8 totalConnections=0/50 notConnectedPeers=2 outsideBackoffPeers=2
+INF 2026-07-23 20:22:26.507+02:00 Connecting to static peers                 topics="chat waku" tid=7392 peerCount=2
+INF 2026-07-23 20:22:26.507+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=7392 numOfPeers=2 nodes="@[16Uiu2HAm8PDGahpTZ86SKxBqFodPVxpGonXLucUR9bscFWxqJuZr, 16Uiu2HAmMgeAACqTTEKVuyBmbtyAqg6qznevmyF5k6qRcL6eXsqS]"
+INF 2026-07-23 20:22:26.987+02:00 Received WakuMetadata request              topics="waku metadata" tid=7392 remoteClusterId=some(2) remoteShards="[0]" localClusterId=2 localShards="[0]" peer=16U*xqJuZr
+INF 2026-07-23 20:22:27.007+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=7392 successfulConns=2 attempted=2
+INF 2026-07-23 20:22:27.007+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=7392 successfulConns=2 attempted=2
+INF 2026-07-23 20:22:27.007+02:00 Connected to static peers                  topics="chat waku" tid=7392
+INF 2026-07-23 20:22:27.071+02:00 Received WakuMetadata request              topics="waku metadata" tid=7392 remoteClusterId=some(2) remoteShards="[0]" localClusterId=2 localShards="[0]" peer=16U*6eXsqS
+INF 2026-07-23 20:22:27.271+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=0 required=4
+INF 2026-07-23 20:22:27.367+02:00 Waku client started                        topics="chat waku" tid=7392 relayMounted=false mixMounted=true connectedPeers=2
+INF 2026-07-23 20:22:27.367+02:00 Message listener started                   topics="chat client" tid=7392
+NTC 2026-07-23 20:22:27.367+02:00 Client start complete                      topics="chat client" tid=7392 client=smoke-mix
+[cb:start] ret=0 len=0 msg=
+chat_start OK
+[cb:mix_status] ret=0 len=68 msg={"mixEnabled":true,"mixReady":false,"mixPoolSize":0,"minPoolSize":4}
+MIX STATUS [0]: {"mixEnabled":true,"mixReady":false,"mixPoolSize":0,"minPoolSize":4}
+INF 2026-07-23 20:22:28.271+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=0 required=4
+INF 2026-07-23 20:22:29.271+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=0 required=4
+INF 2026-07-23 20:22:30.275+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=0 required=4
+INF 2026-07-23 20:22:31.275+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=0 required=4
+INF 2026-07-23 20:22:32.027+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=7392 numOfPeers=8 nodes="@[16Uiu2HAmLL7Ax8G6K42Ztdp7LcXhdx2aJa5vF11mLS4BMBieb9dk, 16Uiu2HAmABGXcXS4JL4CVQKpeo155MhxKCZ3bVnJNvoKNnJMBKFL, 16Uiu2HAm9bRAKmy3oRTbENbNaNuRdqUjJtWtAftigYE7ixxvFYxx, 16Uiu2HAmJEsiiRCW5Ear24DBmk93ptYcg4Y8ahXBx2tB9ZcCtBb1, 16Uiu2HAmEe1HArVTkgNsdp3jTkPof6erL2mTKxLYxMAwVLKfYdHM, 16Uiu2HAm3JTuzU82YFFE2k8KHc44zTE9KgnBZhVEe8oBkhKxP4Nb, 16Uiu2HAmB2kXMYEErVCKbHhZAroJTB5txhahTTUYvFUpPk67QbzV, 16Uiu2HAmEoUppt9mRMtvzSyiUXNA2ivZb1TMzok1T1Xj7BopnCEr]"
+INF 2026-07-23 20:22:32.279+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+INF 2026-07-23 20:22:32.475+02:00 Received WakuMetadata request              topics="waku metadata" tid=7392 remoteClusterId=some(2) remoteShards="[0]" localClusterId=2 localShards="[0]" peer=16U*KfYdHM
+WRN 2026-07-23 20:22:32.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:33.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:33.279+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:33.731+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:34.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:34.303+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:34.871+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:35.303+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:35.427+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:36.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:36.307+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:36.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:37.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:37.311+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+[cb:mix_status] ret=0 len=68 msg={"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+MIX STATUS [1]: {"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+WRN 2026-07-23 20:22:37.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:38.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:38.311+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:38.855+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:39.311+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:39.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:40.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:40.311+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:40.571+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:41.139+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:41.315+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:41.731+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:42.055+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=7392 successfulConns=1 attempted=8
+WRN 2026-07-23 20:22:42.307+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:42.315+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+INF 2026-07-23 20:22:42.375+02:00 Peer status                                topics="chat waku" tid=7392 pubsubTopic=/waku/2/rs/2/0 connectedPeers=3 mixReady=false mixPoolSize=2
+WRN 2026-07-23 20:22:42.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:43.067+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=7392 numOfPeers=8 nodes="@[16Uiu2HAmB18qGWSrr9T1bw9t172ktTdZiGPxB2MoCYwAPtZLNCDX, 16Uiu2HAm9hEz7sJKNX31KHWy6mb1bSaCix1FdCk8Tbfup7564o4Y, 16Uiu2HAmKPPiFpyC4cRbfcm5EpjhqrJu7xvFTYn9Dnper7GAGTkT, 16Uiu2HAmMMfkkiw1LuxCuShRhoKrsLgc3u5SLdAsRAUFa5P7boH1, 16Uiu2HAmNwpa8rMSXfo9zQaeqGtgPyqQJg5Jhdjtpj2rXPMMK1fp, 16Uiu2HAmGWp3EA3kmbLuDrrfKn5MofRfVg48o8TsH9ea1sttQpmd, 16Uiu2HAmNRUUA6gCScdZNm7DygrPBnKW2ovpb3DqQvnvJeuvfXi9, 16Uiu2HAmMetZhBouhFEcpQ8b9PA8jZNKuWYzSpEJ633mmawbnKKF]"
+INF 2026-07-23 20:22:43.319+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:43.451+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:44.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:44.319+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:44.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:45.163+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:45.319+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:45.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:46.307+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:46.323+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+ERR 2026-07-23 20:22:46.567+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*KxP4Nb msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:46.567+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*PFjZJq msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:46.567+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*cCtBb1 msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:46.567+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*mBGVvS msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:46.567+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*ZLNCDX msg="failed new dial: Unable to establish outgoing link in internalConnect"
+WRN 2026-07-23 20:22:46.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:47.135+02:00 Received WakuMetadata request              topics="waku metadata" tid=7392 remoteClusterId=some(2) remoteShards="[0]" localClusterId=2 localShards="[0]" peer=16U*immUru
+INF 2026-07-23 20:22:47.323+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:47.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+[cb:mix_status] ret=0 len=68 msg={"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+MIX STATUS [2]: {"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+WRN 2026-07-23 20:22:47.999+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:48.327+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:48.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:49.171+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:49.331+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:49.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:50.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:50.331+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:50.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:51.331+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:51.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+ERR 2026-07-23 20:22:51.611+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*uvfXi9 msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:51.611+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*wbnKKF msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:51.611+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*P7boH1 msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:51.611+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*ieb9dk msg="failed new dial: Unable to establish outgoing link in internalConnect"
+WRN 2026-07-23 20:22:52.023+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:52.335+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:52.587+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:53.091+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=7392 successfulConns=0 attempted=8
+WRN 2026-07-23 20:22:53.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:53.335+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:53.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:54.103+02:00 Dialing multiple peers                     topics="waku node peer_manager" tid=7392 numOfPeers=5 nodes="@[16Uiu2HAmPjZx1q6yrCczNMArNWgowZ9KhZq39ymAJhbzFBPFjZJq, 16Uiu2HAmQFKBF6HTQfujy9dMYqdPvGre1ySDisqE9whAe6Q36Y53, 16Uiu2HAm7JYBb5mM9EaAwGNiMoWi37kw4egVH4sgShPRYAJvw33J, 16Uiu2HAmUG8oagJXEs6pGCS5qDTBK53z8fTDguL7dM7BSCmBGVvS, 16Uiu2HAm9csWDDTsHS4huoFC7j3cuF843UkFuZPtv5VmXaX3m5PP]"
+WRN 2026-07-23 20:22:54.307+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:54.339+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:54.879+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:55.339+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:55.451+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:56.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:56.343+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:56.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+ERR 2026-07-23 20:22:56.643+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*Q36Y53 msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:56.647+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*ttQpmd msg="failed new dial: Unable to establish outgoing link in internalConnect"
+ERR 2026-07-23 20:22:56.647+02:00 Kad lookup: RPC error                      topics="kad-dht find" tid=7392 peer=16U*xvFYxx msg="failed new dial: Unable to establish outgoing link in internalConnect"
+WRN 2026-07-23 20:22:57.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:57.343+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+INF 2026-07-23 20:22:57.387+02:00 Peer status                                topics="chat waku" tid=7392 pubsubTopic=/waku/2/rs/2/0 connectedPeers=4 mixReady=false mixPoolSize=2
+[cb:mix_status] ret=0 len=68 msg={"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+MIX STATUS [3]: {"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+WRN 2026-07-23 20:22:57.711+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:22:58.307+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:58.347+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:58.879+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:22:59.347+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:22:59.451+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:00.027+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:00.351+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:00.567+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:01.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:01.351+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:01.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:02.307+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:02.355+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:02.871+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:03.355+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:03.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:04.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:04.139+02:00 Finished dialing multiple peers            topics="waku node peer_manager" tid=7392 successfulConns=0 attempted=5
+INF 2026-07-23 20:23:04.359+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:04.587+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:05.163+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:05.359+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:05.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:06.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:06.363+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:06.879+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:07.363+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:07.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+[cb:mix_status] ret=0 len=68 msg={"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+MIX STATUS [4]: {"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+WRN 2026-07-23 20:23:08.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:08.363+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:08.587+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:09.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:09.367+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:09.731+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:10.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:10.367+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:10.879+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:11.371+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:11.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:12.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:12.371+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+INF 2026-07-23 20:23:12.399+02:00 Peer status                                topics="chat waku" tid=7392 pubsubTopic=/waku/2/rs/2/0 connectedPeers=4 mixReady=false mixPoolSize=2
+WRN 2026-07-23 20:23:12.587+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:13.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:13.379+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:13.715+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:14.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:14.383+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:14.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:15.383+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:15.451+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:16.023+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:16.387+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:16.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:17.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:17.387+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+[cb:mix_status] ret=0 len=68 msg={"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+MIX STATUS [5]: {"mixEnabled":true,"mixReady":false,"mixPoolSize":2,"minPoolSize":4}
+NTC 2026-07-23 20:23:17.471+02:00 IntroBundleCreated                         topics="chat client" tid=7392 client=smoke-mix bundle="[108, 111, 103, 111, 115, 95, 99, 104, 97, 116, 105, 110, 116, 114, 111, 95, 49, 95, 67, 105, 66, 79, 100, 110, 95, 111, 119, 57, 102, 89, 48, 69, 77, 86, 65, 48, 116, 110, 79, 72, 97, 90, 73, 111, 55, 120, 57, 110, 57, 102, 113, 119, 56, 45, 53, 66, 50, 97, 114, 75, 81, 117, 79, 120, 73, 103, 67, 45, 68, 87, 113, 67, 79, 81, 103, 76, 114, 89, 106, 78, 117, 81, 72, 109, 50, 107, 65, 107, 113, 89, 78, 69, 103, 48, 112, 78, 113, 98, 71, 49, 103, 51, 107, 121, 116, 78, 122, 83, 119, 97, 81, 79, 118, 82, 80, 90, 95, 105, 79, 89, 109, 72, 75, 78, 102, 69, 49, 52, 75, 104, 121, 45, 51, 120, 74, 87, 116, 80, 48, 116, 95, 102, 73, 68, 73, 109, 76, 50, 115, 66, 77, 87, 83, 82, 71, 57, 103, 88, 73, 53, 69, 105, 86, 99, 99, 51, 87, 81, 99, 57, 51, 109, 56, 52, 79, 68, 66, 68, 82, 66, 113, 54, 48, 88, 85, 108, 65, 87, 122, 66, 111, 80, 83, 89, 52, 65, 69]"
+[cb:bundle] ret=0 len=197 msg=logos_chatintro_1_CiBOdn_ow9fY0EMVA0tnOHaZIo7x9n9fqw8-5B2arKQuOxIgC-DWqCOQgLrYjNuQHm2kAkqYNEg0pNqbG1g3kytNzSwaQOvRPZ_iOYmHKNfE14Khy-3xJWtP0t_fIDImL2sBMWSRG9gXI5EiVcc3WQc93m84ODBDRBq60XUlAWzBoPSY4AE
+SMOKE OK bundle=logos_chatintro_1_CiBOdn_ow9fY0EMVA0tnOHaZIo7x9n9fqw8-5B2arKQuOxIgC-DWqCOQgLrYjNuQHm2kAkqYNEg0pNqbG1g3kytNzSwaQOvRPZ_iOYmHKNfE14Khy-3xJWtP0t_fIDImL2sBMWSRG9gXI5EiVcc3WQc93m84ODBDRBq60XUlAWzBoPSY4AE
+WRN 2026-07-23 20:23:17.731+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:18.307+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:18.391+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:18.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:19.391+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:19.443+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:20.023+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:20.395+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:20.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:21.163+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:21.395+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:21.731+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:22.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:22.399+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:22.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:23.399+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:23.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:24.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:24.399+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:24.591+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:25.163+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:25.403+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:25.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:26.075+02:00 maintaining subscriptions                  topics="waku filter" tid=7392
+INF 2026-07-23 20:23:26.075+02:00 cleanUp                                    topics="waku filter subscriptions" tid=7392 currentPeerIds=[]
+INF 2026-07-23 20:23:26.075+02:00 after cleanUp                              topics="waku filter subscriptions" tid=7392 currentPeerIds=[]
+WRN 2026-07-23 20:23:26.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:26.411+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:26.879+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:27.411+02:00 Peer status                                topics="chat waku" tid=7392 pubsubTopic=/waku/2/rs/2/0 connectedPeers=4 mixReady=false mixPoolSize=2
+INF 2026-07-23 20:23:27.419+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:27.455+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:27.995+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:28.431+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:28.587+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:29.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:29.443+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:29.735+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:30.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:30.455+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:30.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:31.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:31.463+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:32.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:32.475+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:32.567+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:33.163+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:33.487+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:33.739+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:34.303+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:34.499+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:34.875+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:35.447+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:35.507+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:36.019+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:36.519+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+WRN 2026-07-23 20:23:36.587+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+WRN 2026-07-23 20:23:37.159+02:00 Spam protection not ready for proof generation topics="mix-rln-spam-protection" tid=7392
+INF 2026-07-23 20:23:37.531+02:00 Waiting for mix node pool                  topics="chat waku" tid=7392 current=2 required=4
+TIMEOUT waiting for callback
+[cb:destroy] ret=0 len=0 msg=

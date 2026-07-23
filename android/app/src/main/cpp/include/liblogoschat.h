@@ -97,6 +97,14 @@ int chat_get_identity(void *ctx, FFICallBack callback, void *userData);
 // Returns the intro bundle as an ASCII string (format: logos_chatintro_<version>_<base64url payload>)
 int chat_create_intro_bundle(void *ctx, FFICallBack callback, void *userData);
 
+//////////////////////////////////////////////////////////////////////////////
+// Mix Protocol Status (MIX BUILD ONLY — the superset .so)
+//////////////////////////////////////////////////////////////////////////////
+
+// Get mix protocol status.
+// Returns JSON: {"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,"minPoolSize":int}
+int chat_get_mix_status(void *ctx, FFICallBack callback, void *userData);
+
 #ifdef __cplusplus
 }
 #endif

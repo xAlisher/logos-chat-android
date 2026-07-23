@@ -33,4 +33,12 @@ object NodeBridge {
   external fun chatNewPrivateConversation(ctx: Long, bundle: String, contentHex: String): ChatResult
   external fun chatSendMessage(ctx: Long, convoId: String, contentHex: String): ChatResult
   external fun chatSetEventCallback(ctx: Long)
+
+  /**
+   * Mix build only (the superset .so): {"mixEnabled":bool,"mixReady":bool,
+   * "mixPoolSize":int,"minPoolSize":int}. Present as an export in both builds'
+   * headers we ship (the app always vendors the mix superset), so this binds
+   * cleanly; on a hypothetical non-mix .so it would be a missing symbol.
+   */
+  external fun chatGetMixStatus(ctx: Long): ChatResult
 }

@@ -346,6 +346,19 @@ Java_com_logoschat_NodeBridge_chatSendMessage(
   return response;
 }
 
+// Mix protocol status (mix superset .so). Returns the mix status JSON on success
+// ({"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,"minPoolSize":int}); the
+// ScheduledExecutor in ChatService polls this off the JS thread (#31).
+JNIEXPORT jobject JNICALL
+Java_com_logoschat_NodeBridge_chatGetMixStatus(JNIEnv *env, jobject thiz, jlong ctx) {
+  (void)thiz;
+  cb_result *result = NULL;
+  chat_get_mix_status((void *)ctx, on_response, (void *)&result);
+  jobject response = to_jni_result(env, result);
+  free_cb_result(result);
+  return response;
+}
+
 // Registers the persistent event callback for this ctx. MUST be called BEFORE
 // chatStart (invariant #1 — early pushes are lost otherwise); enforced on the
 // Kotlin side in startNode.
