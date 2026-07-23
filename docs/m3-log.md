@@ -28,3 +28,19 @@ Running log of walls + exact fixes while executing M3 (#21–#28). Convention: e
   `logs/m3-21-persist-logcat.txt` — `persisted inbound msg_pk=1 convo=1 … BEFORE forward`,
   then `am force-stop` + relaunch → `db open: 1 conversations, 1 messages` (history survived
   process death; the write never depended on JS).
+
+## #22 Session-epoch lifecycle (2026-07-23)
+
+- JS layer flipped from in-memory (M2 chatStore) to a live VIEW over SQLite: convoPk (stable)
+  replaces the ephemeral lib conversationId everywhere in the UI; the store re-queries
+  `listConversations`/`listMessages` on `db_changed` (emitted AFTER each native persist) and
+  on `node_status` flips (epoch changes flip the `expired` flags).
+- Expired = no `convo_sessions` row in the current epoch; epoch 0 (node down) ⇒ everything
+  expired. Banner per theme.md §4 with *show my QR* / *scan theirs*; composer disabled when
+  no re-introduce path (no stored bundle / node down).
+- **adb unauthorized wall**: mid-run the device dropped to `unauthorized` (no cable touch);
+  `adb kill-server` + wait ~40 s and it re-authorized itself — transient USB re-enumeration,
+  no wetware needed. Don't panic-debug the phone; poll `adb devices` first.
+- AC evidence: `logs/m3-22-conversations-restart.png` (history row after force-stop+relaunch,
+  unread badge persisted), `logs/m3-22-expired-banner.png` (banner + attribution bar +
+  disabled composer on the restored thread).

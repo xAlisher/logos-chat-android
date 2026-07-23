@@ -1,329 +1,199 @@
-// chatStore (zustand) — in-memory conversations + messages for M2 (#16/#17/#18/#19).
-// Persistence (SQLite session-epochs, docs/architecture.md §4) lands in M3; the lib
-// itself is ephemeral, so in-memory mirrors reality for a single node epoch.
+// chatStore (zustand) — M3 (#22): a live VIEW over the durable native store.
+// SQLite (docs/architecture.md §4) is the source of truth; the lib is ephemeral
+// (invariant #6) and every write happens native-side BEFORE JS sees the event
+// (persist-before-forward, #21). This store only queries + mirrors.
 //
-// Invariants encoded (docs/architecture.md §1):
-//   #3 chat_new_private_conversation returns EMPTY on success (statusCode==0 ==
-//      accepted); OUR local conversationId arrives via the new_conversation push,
-//      and it DIFFERS from the peer's id for the same logical conversation.
-//   #4 new_message content is HEX; messageId is always empty in the pinned rev.
-//   #5 delivery_ack is never emitted — messages go pending → sent (accepted by
-//      the lib), never "delivered".
+// Identity: the STABLE convoPk (survives restarts). Ephemeral lib conversation
+// ids never reach the UI — sessions bind them to convoPks natively.
 import {create} from 'zustand';
-import LogosChat, {addLogosChatListener, hexToUtf8} from '../native/LogosChat';
+import LogosChat, {addLogosChatListener} from '../native/LogosChat';
+import type {ConversationRow, MessageRow} from '../native/LogosChat';
 import {useNodeStore} from './nodeStore';
 
-export type MessageStatus = 'pending' | 'sent' | 'failed' | 'received';
-
-export interface Message {
-  key: string;
-  convoId: string;
-  direction: 'in' | 'out';
-  text: string;
-  at: number; // ms epoch
-  status: MessageStatus;
-}
-
-export interface Conversation {
-  id: string; // OUR local lib conversationId (valid this epoch only)
-  name: string;
-  direction: 'initiated' | 'accepted';
-  createdAt: number;
-  lastMessageAt: number;
-  lastPreview: string;
-  unread: number;
-}
-
-interface PendingInit {
-  text: string;
-  resolve: (convoId: string) => void;
-}
+export type {ConversationRow as Conversation, MessageRow as Message};
 
 interface ChatState {
-  conversations: Record<string, Conversation>;
-  messages: Record<string, Message[]>;
-  /** convoId of the open thread — its inbound messages don't count as unread. */
-  activeConvoId: string | null;
-  startConversation: (bundle: string, text: string) => Promise<string>;
-  send: (convoId: string, text: string) => Promise<void>;
-  setActive: (convoId: string | null) => void;
-  markRead: (convoId: string) => void;
+  conversations: Record<number, ConversationRow>;
+  /** Per-conversation pages, newest-first (as listed by the DB). */
+  messages: Record<number, MessageRow[]>;
+  /** convoPk of the open thread — its inbound messages don't count as unread. */
+  activeConvoPk: number | null;
+  refreshConversations: () => Promise<void>;
+  loadMessages: (convoPk: number) => Promise<void>;
+  /**
+   * Scan/paste → opening message → chat_new_private_conversation. When
+   * convoPk is given the fresh bundle re-introduces INTO that thread (#23).
+   * Resolves the stable convoPk.
+   */
+  startConversation: (
+    bundle: string,
+    text: string,
+    opts?: {convoPk?: number; name?: string},
+  ) => Promise<number>;
+  /** Send into the current-epoch session. Throws code 'expired' when none. */
+  send: (convoPk: number, text: string) => Promise<void>;
+  /** Re-introduce with the STORED bundle, opening message = text (#23). */
+  reintroduceSend: (convoPk: number, text: string) => Promise<void>;
+  /** Re-send a failed outbound message. */
+  retry: (convoPk: number, msgPk: number) => Promise<void>;
+  setActive: (convoPk: number | null) => void;
+  markRead: (convoPk: number) => void;
+  /** Attach a pending inbound conversation to a new named contact (#24). */
+  nameConversation: (convoPk: number, name: string) => Promise<void>;
+  /** Merge a pending inbound conversation into an existing thread (#24). */
+  merge: (pendingConvoPk: number, targetConvoPk: number) => Promise<number>;
 }
-
-let peerCounter = 0;
-let msgCounter = 0;
-let pendingInit: PendingInit | null = null;
-
-const nextMsgKey = () => `m${++msgCounter}`;
 
 /** Conversations sorted by last activity, newest first. */
 export function sortedConversations(
-  conversations: Record<string, Conversation>,
-): Conversation[] {
+  conversations: Record<number, ConversationRow>,
+): ConversationRow[] {
   return Object.values(conversations).sort(
     (a, b) => b.lastMessageAt - a.lastMessageAt,
   );
 }
 
+/** Display name with fallbacks — bundles are opaque, names optional/manual. */
+export function convoDisplayName(c: ConversationRow): string {
+  if (c.name != null && c.name.length > 0) {
+    return c.name;
+  }
+  return c.pending ? `unattributed #${c.convoPk}` : `peer #${c.convoPk}`;
+}
+
+const PAGE = 200;
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: {},
   messages: {},
-  activeConvoId: null,
+  activeConvoPk: null,
 
-  /**
-   * Scan/paste → opening message → chat_new_private_conversation. Resolves with
-   * our LOCAL convoId once the new_conversation push binds it (invariant #3).
-   */
-  startConversation: (bundle: string, text: string) => {
-    return new Promise<string>((resolve, reject) => {
-      if (pendingInit != null) {
-        reject(new Error('another conversation is being created'));
-        return;
-      }
-      const timeout = setTimeout(() => {
-        pendingInit = null;
-        reject(new Error('timed out waiting for new_conversation push'));
-      }, 30000);
-      pendingInit = {
-        text,
-        resolve: (convoId: string) => {
-          clearTimeout(timeout);
-          resolve(convoId);
-        },
-      };
-      LogosChat.newPrivateConversation(bundle, text).catch((e: any) => {
-        clearTimeout(timeout);
-        pendingInit = null;
-        reject(e);
-      });
-    });
+  refreshConversations: async () => {
+    const rows: ConversationRow[] = JSON.parse(
+      await LogosChat.listConversations(),
+    );
+    const conversations: Record<number, ConversationRow> = {};
+    for (const r of rows) {
+      conversations[r.convoPk] = r;
+    }
+    set({conversations});
   },
 
-  /** Optimistic pending → sent on statusCode 0, failed on error. NO delivered ticks. */
-  send: async (convoId: string, text: string) => {
-    const key = nextMsgKey();
-    const at = Date.now();
+  loadMessages: async (convoPk: number) => {
+    const rows: MessageRow[] = JSON.parse(
+      await LogosChat.listMessages(convoPk, 0, PAGE),
+    );
+    set(s => ({messages: {...s.messages, [convoPk]: rows}}));
+  },
+
+  startConversation: async (bundle, text, opts) => {
+    const convoPk =
+      opts?.convoPk != null
+        ? await LogosChat.newPrivateConversationFor(
+            opts.convoPk,
+            bundle,
+            text,
+            opts?.name ?? null,
+          )
+        : await LogosChat.newPrivateConversation(bundle, text);
+    if (opts?.name && opts.convoPk == null) {
+      await LogosChat.nameConversation(convoPk, opts.name);
+    }
+    await get().refreshConversations();
+    await get().loadMessages(convoPk);
+    return convoPk;
+  },
+
+  send: async (convoPk: number, text: string) => {
+    // Optimistic pending bubble; the durable row lands native-side and the
+    // reload below replaces this. NO "delivered" ticks ever (invariant #5).
+    const temp: MessageRow = {
+      msgPk: -Date.now(),
+      direction: 'out',
+      text,
+      at: Date.now(),
+      status: 'pending',
+    };
     set(s => ({
-      messages: {
-        ...s.messages,
-        [convoId]: [
-          ...(s.messages[convoId] ?? []),
-          {key, convoId, direction: 'out', text, at, status: 'pending'},
-        ],
-      },
-      conversations: touchConvo(s.conversations, convoId, text, at),
+      messages: {...s.messages, [convoPk]: [temp, ...(s.messages[convoPk] ?? [])]},
     }));
     try {
-      await LogosChat.sendMessage(convoId, text);
-      setMsgStatus(set, convoId, key, 'sent');
-    } catch (e: any) {
-      setMsgStatus(set, convoId, key, 'failed');
-      useNodeStore.setState({error: `send failed: ${e?.message ?? e}`});
-    }
-  },
-
-  setActive: (convoId: string | null) => {
-    set({activeConvoId: convoId});
-    if (convoId != null) {
-      get().markRead(convoId);
-    }
-  },
-
-  markRead: (convoId: string) => {
-    set(s => {
-      const c = s.conversations[convoId];
-      if (c == null || c.unread === 0) {
-        return s;
+      const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
+      if (res.status === 'failed') {
+        useNodeStore.setState({error: 'send failed — tap the message to retry'});
       }
-      return {
-        conversations: {...s.conversations, [convoId]: {...c, unread: 0}},
-      };
-    });
+    } catch (e: any) {
+      // 'expired' and node-down reject before any row exists — drop the temp
+      set(s => ({
+        messages: {
+          ...s.messages,
+          [convoPk]: (s.messages[convoPk] ?? []).filter(m => m.msgPk !== temp.msgPk),
+        },
+      }));
+      throw e;
+    }
+    await get().loadMessages(convoPk);
+    await get().refreshConversations();
+  },
+
+  reintroduceSend: async (convoPk: number, text: string) => {
+    await LogosChat.reintroduce(convoPk, text);
+    await get().refreshConversations();
+    await get().loadMessages(convoPk);
+  },
+
+  retry: async (convoPk: number, msgPk: number) => {
+    try {
+      const res = JSON.parse(await LogosChat.retryMessage(msgPk));
+      if (res.status === 'failed') {
+        useNodeStore.setState({error: 'send failed again — check the node'});
+      }
+    } finally {
+      await get().loadMessages(convoPk);
+    }
+  },
+
+  setActive: (convoPk: number | null) => {
+    set({activeConvoPk: convoPk});
+    LogosChat.setActiveConversation(convoPk ?? 0);
+    if (convoPk != null) {
+      get().markRead(convoPk);
+    }
+  },
+
+  markRead: (convoPk: number) => {
+    LogosChat.markRead(convoPk).then(() => get().refreshConversations());
+  },
+
+  nameConversation: async (convoPk: number, name: string) => {
+    await LogosChat.nameConversation(convoPk, name);
+    await get().refreshConversations();
+  },
+
+  merge: async (pendingConvoPk: number, targetConvoPk: number) => {
+    await LogosChat.mergeConversation(pendingConvoPk, targetConvoPk);
+    await get().refreshConversations();
+    await get().loadMessages(targetConvoPk);
+    return targetConvoPk;
   },
 }));
 
-function touchConvo(
-  conversations: Record<string, Conversation>,
-  convoId: string,
-  preview: string,
-  at: number,
-): Record<string, Conversation> {
-  const c = conversations[convoId];
-  if (c == null) {
-    return conversations;
-  }
-  return {
-    ...conversations,
-    [convoId]: {...c, lastPreview: preview, lastMessageAt: at},
-  };
-}
-
-function setMsgStatus(
-  set: (fn: (s: ChatState) => Partial<ChatState>) => void,
-  convoId: string,
-  key: string,
-  status: MessageStatus,
-) {
-  set(s => ({
-    messages: {
-      ...s.messages,
-      [convoId]: (s.messages[convoId] ?? []).map(m =>
-        m.key === key ? {...m, status} : m,
-      ),
-    },
-  }));
-}
-
 // ---------------------------------------------------------------------------
-// Lib event handling (single app-lifetime subscription).
-
-function onNewConversation(convoId: string) {
-  const now = Date.now();
-  if (pendingInit != null) {
-    // WE initiated: bind our local convoId, opening message is ours (sent —
-    // statusCode 0 already accepted it).
-    const init = pendingInit;
-    pendingInit = null;
-    peerCounter += 1;
-    const name = `peer-${peerCounter}`;
-    useChatStore.setState(s => ({
-      conversations: {
-        ...s.conversations,
-        [convoId]: {
-          id: convoId,
-          name,
-          direction: 'initiated',
-          createdAt: now,
-          lastMessageAt: now,
-          lastPreview: init.text,
-          unread: 0,
-        },
-      },
-      messages: {
-        ...s.messages,
-        [convoId]: [
-          {
-            key: nextMsgKey(),
-            convoId,
-            direction: 'out',
-            text: init.text,
-            at: now,
-            status: 'sent',
-          },
-        ],
-      },
-    }));
-    init.resolve(convoId);
-    return;
-  }
-  // Peer initiated: surface as a new (unread lights up when its opening
-  // new_message arrives right after).
-  peerCounter += 1;
-  const name = `peer-${peerCounter}`;
-  useChatStore.setState(s => ({
-    conversations: {
-      ...s.conversations,
-      [convoId]: {
-        id: convoId,
-        name,
-        direction: 'accepted',
-        createdAt: now,
-        lastMessageAt: now,
-        lastPreview: 'new conversation',
-        unread: 0,
-      },
-    },
-  }));
-}
-
-/**
- * The lib's new_message timestamp unit is NANOSECONDS in the pinned rev
- * (observed live: 1784822433000000000 for 2026-07-23). Normalize defensively to
- * ms whatever the magnitude (s / ms / µs / ns).
- */
-function normalizeLibTimestamp(timestamp: number): number {
-  if (!(timestamp > 0)) {
-    return Date.now();
-  }
-  let t = timestamp;
-  while (t > 3e12) {
-    // > ~year 2065 in ms — must be a finer unit
-    t = t / 1000;
-  }
-  if (t < 1e11) {
-    // seconds
-    t = t * 1000;
-  }
-  return Math.round(t);
-}
-
-function onNewMessage(convoId: string, contentHex: string, timestamp: number) {
-  const text = hexToUtf8(contentHex);
-  const at = normalizeLibTimestamp(timestamp);
-  useChatStore.setState(s => {
-    const active = s.activeConvoId === convoId;
-    const c = s.conversations[convoId];
-    const conversations =
-      c != null
-        ? {
-            ...s.conversations,
-            [convoId]: {
-              ...c,
-              lastPreview: text,
-              lastMessageAt: at,
-              unread: active ? 0 : c.unread + 1,
-            },
-          }
-        : // new_message for an unknown convo (shouldn't happen — new_conversation
-          // precedes it) — create a row so nothing is lost.
-          {
-            ...s.conversations,
-            [convoId]: {
-              id: convoId,
-              name: `peer-${++peerCounter}`,
-              direction: 'accepted' as const,
-              createdAt: at,
-              lastMessageAt: at,
-              lastPreview: text,
-              unread: active ? 0 : 1,
-            },
-          };
-    return {
-      conversations,
-      messages: {
-        ...s.messages,
-        [convoId]: [
-          ...(s.messages[convoId] ?? []),
-          {
-            key: nextMsgKey(),
-            convoId,
-            direction: 'in' as const,
-            text,
-            at,
-            status: 'received' as const,
-          },
-        ],
-      },
-    };
-  });
-}
+// Live refresh: every persisted change arrives as a db_changed event AFTER the
+// SQLite write. Epoch/status flips also change the expired flags, so refresh
+// on node_status too. Initial load happens on module import.
 
 addLogosChatListener(e => {
-  if (e.source === 'lib' && e.event != null) {
-    try {
-      const evt = JSON.parse(e.event);
-      if (evt.eventType === 'new_conversation' && evt.conversationId) {
-        onNewConversation(evt.conversationId);
-      } else if (evt.eventType === 'new_message' && evt.conversationId) {
-        onNewMessage(evt.conversationId, evt.content ?? '', evt.timestamp ?? 0);
-      }
-    } catch {
-      // unparsed lib event — nodeStore logs it
+  const s = useChatStore.getState();
+  if (e.source === 'repo' && e.eventType === 'db_changed') {
+    s.refreshConversations();
+    if (e.convoPk != null && e.convoPk === s.activeConvoPk) {
+      s.loadMessages(e.convoPk);
+      s.markRead(e.convoPk);
     }
-  } else if (e.eventType === 'node_status' && e.status === 'stopped') {
-    // The lib is ephemeral: conversationIds die with the node. In-memory M2
-    // mirrors that; M3 adds durable history + re-introduce.
-    pendingInit = null;
-    useChatStore.setState({conversations: {}, messages: {}, activeConvoId: null});
+  } else if (e.eventType === 'node_status') {
+    s.refreshConversations();
   }
 });
+
+useChatStore.getState().refreshConversations();

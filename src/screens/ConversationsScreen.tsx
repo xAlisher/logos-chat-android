@@ -1,11 +1,11 @@
-// Conversations list — #18, docs/theme.md §4. Header: brand left, live StatusPill +
-// '+ new' right. Rows: name (title), last-message preview (label, dim, 1 line),
-// timestamp (caption, faint), unread badge (#EF4444, capped 99+), online dot.
-// Empty state: "no conversations — scan a peer's QR to start". Live via chatStore.
-import React from 'react';
+// Conversations list — #18 + M3 #22, docs/theme.md §4. Rows come from the DURABLE
+// store (SQLite) so history is visible across restarts. Dot semantics: accent =
+// live session this epoch, faint = expired (re-introduce to continue), amber =
+// pending inbound awaiting attribution (#24). Unread badge (#EF4444, capped 99+).
+import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import {useNavigation} from '@react-navigation/native';
+import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, layout} from '../theme';
 import {Brand} from '../components/Brand';
@@ -13,7 +13,11 @@ import {StatusPill} from '../components/StatusPill';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
-import {useChatStore, sortedConversations} from '../stores/chatStore';
+import {
+  useChatStore,
+  sortedConversations,
+  convoDisplayName,
+} from '../stores/chatStore';
 import type {Conversation} from '../stores/chatStore';
 import type {RootStackParamList} from '../navigation/types';
 
@@ -44,14 +48,28 @@ function ConversationRow({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.row} onPress={onPress} testID={`convo-${convo.name}`}>
-      <View style={styles.dot} />
+    <Pressable
+      style={styles.row}
+      onPress={onPress}
+      testID={`convo-${convo.convoPk}`}>
+      <View
+        style={[
+          styles.dot,
+          convo.pending
+            ? styles.dotPending
+            : convo.expired
+            ? styles.dotExpired
+            : null,
+        ]}
+      />
       <View style={styles.rowBody}>
         <Text style={[type.title, {color: colors.text}]} numberOfLines={1}>
-          {convo.name}
+          {convoDisplayName(convo)}
         </Text>
         <Text style={styles.preview} numberOfLines={1}>
-          {convo.lastPreview}
+          {convo.expired && !convo.pending
+            ? 'session expired — re-introduce to continue'
+            : convo.lastText || 'new conversation'}
         </Text>
       </View>
       <View style={styles.rowRight}>
@@ -68,7 +86,15 @@ export function ConversationsScreen() {
   const error = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
   const conversations = useChatStore(s => s.conversations);
+  const refreshConversations = useChatStore(s => s.refreshConversations);
   const list = sortedConversations(conversations);
+
+  // DB is the source of truth — re-query whenever the list gains focus.
+  useFocusEffect(
+    useCallback(() => {
+      refreshConversations();
+    }, [refreshConversations]),
+  );
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
@@ -109,14 +135,14 @@ export function ConversationsScreen() {
       ) : (
         <FlatList
           data={list}
-          keyExtractor={c => c.id}
+          keyExtractor={c => String(c.convoPk)}
           renderItem={({item}) => (
             <ConversationRow
               convo={item}
               onPress={() =>
                 navigation.navigate('Chat', {
-                  convoId: item.id,
-                  convoName: item.name,
+                  convoPk: item.convoPk,
+                  convoName: convoDisplayName(item),
                 })
               }
             />
@@ -171,6 +197,8 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: colors.accent,
   },
+  dotExpired: {backgroundColor: colors.textFaint},
+  dotPending: {backgroundColor: colors.pulse},
   rowBody: {flex: 1, gap: 2},
   preview: {...type.label, color: colors.textDim},
   rowRight: {alignItems: 'flex-end', gap: spacing.xs},

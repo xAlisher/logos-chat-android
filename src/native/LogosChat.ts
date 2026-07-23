@@ -12,11 +12,46 @@ export type NodeStatus =
   | 'error';
 
 export interface LogosChatEvent {
-  source: 'module' | 'lib';
-  eventType: string; // node_status | new_message | new_conversation | delivery_ack | error | …
+  source: 'module' | 'lib' | 'repo';
+  eventType: string; // node_status | new_message | new_conversation | delivery_ack | error | db_changed | …
   status?: NodeStatus; // when eventType === 'node_status'
   detail?: string;
   event?: string; // raw lib event JSON when source === 'lib'
+  kind?: string; // 'message' | 'conversation_ready' when eventType === 'db_changed'
+  convoPk?: number; // stable conversation id for db_changed events
+  direction?: string;
+}
+
+/** Durable conversation row (SQLite, docs/architecture.md §4) as JSON. */
+export interface ConversationRow {
+  convoPk: number;
+  contactId: number | null;
+  name: string | null;
+  hasBundle: boolean;
+  createdAt: number;
+  lastMessageAt: number;
+  unread: number;
+  lastText: string;
+  lastDirection: string;
+  /** No session bound in the current epoch — re-introduce to continue (#22). */
+  expired: boolean;
+  /** Inbound conversation not yet attached to a contact — attribution is manual (#24). */
+  pending: boolean;
+}
+
+export interface MessageRow {
+  msgPk: number;
+  direction: 'in' | 'out';
+  text: string;
+  at: number; // ms epoch
+  status: 'pending' | 'sent' | 'failed' | 'received';
+}
+
+export interface ContactRow {
+  contactId: number;
+  name: string | null;
+  hasBundle: boolean;
+  convoPk: number | null;
 }
 
 interface LogosChatNative {
@@ -26,10 +61,32 @@ interface LogosChatNative {
   getIdentity(): Promise<string>; // {"name":"…"}
   createIntroBundle(): Promise<string>; // logos_chatintro_1_…
   // Hex-encoding happens native-side (content is HEX over the FFI, both
-  // directions). Resolves null on statusCode==0 — the local conversationId
-  // arrives via the new_conversation push (each side's id differs).
-  newPrivateConversation(bundle: string, textUtf8: string): Promise<null>;
-  sendMessage(convoId: string, textUtf8: string): Promise<string>; // messageId (may be empty)
+  // directions). Resolves the STABLE convoPk on statusCode==0 — the ephemeral
+  // lib conversationId arrives via the new_conversation push and is bound to
+  // the convoPk natively (each side's lib id differs).
+  newPrivateConversation(bundle: string, textUtf8: string): Promise<number>;
+  /** Fresh-bundle re-introduce into an existing thread — same convoPk (#23). */
+  newPrivateConversationFor(
+    convoPk: number,
+    bundle: string,
+    textUtf8: string,
+    contactName: string | null,
+  ): Promise<number>;
+  /** Stored-bundle re-introduce (#23). Rejects code 'no_bundle' when none. */
+  reintroduce(convoPk: number, textUtf8: string): Promise<number>;
+  /** DEPRECATED (M2): send by ephemeral lib conversationId. */
+  sendMessage(convoId: string, textUtf8: string): Promise<string>;
+  /** Send into a stable conversation. Rejects code 'expired' when no session
+   * in the current epoch. Resolves '{"msgPk":n,"status":"sent"|"failed"}'. */
+  sendMessageTo(convoPk: number, textUtf8: string): Promise<string>;
+  retryMessage(msgPk: number): Promise<string>;
+  listConversations(): Promise<string>; // JSON ConversationRow[]
+  listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
+  listContacts(): Promise<string>; // JSON ContactRow[]
+  markRead(convoPk: number): Promise<null>;
+  setActiveConversation(convoPk: number): void;
+  nameConversation(convoPk: number, name: string): Promise<null>;
+  mergeConversation(pendingConvoPk: number, targetConvoPk: number): Promise<null>;
 }
 
 /** Decodes the hex `content` of new_message pushes into a UTF-8 string. */

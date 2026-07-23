@@ -12,7 +12,8 @@ import {
   StyleSheet,
   Vibration,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
+import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {
   Camera,
@@ -30,6 +31,8 @@ const BRACKET = 240;
 
 export function ScanScreen() {
   const navigation = useNavigation<Nav>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Scan'>>();
+  const reintroduceConvoPk = route.params?.reintroduceConvoPk;
   const device = useCameraDevice('back');
   const {hasPermission, requestPermission} = useCameraPermission();
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -45,9 +48,12 @@ export function ScanScreen() {
       }
       acceptedRef.current = true;
       Vibration.vibrate(60); // valid-scan haptic
-      navigation.replace('NewConversation', {bundle: bundle.trim()});
+      navigation.replace('NewConversation', {
+        bundle: bundle.trim(),
+        reintroduceConvoPk, // fresh-bundle re-introduce path (#23)
+      });
     },
-    [navigation],
+    [navigation, reintroduceConvoPk],
   );
 
   const codeScanner = useCodeScanner({

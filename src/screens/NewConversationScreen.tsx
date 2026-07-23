@@ -17,7 +17,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
-import {useChatStore} from '../stores/chatStore';
+import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
 
@@ -26,10 +26,11 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 export function NewConversationScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteProp<RootStackParamList, 'NewConversation'>>();
-  const {bundle} = route.params;
+  const {bundle, reintroduceConvoPk} = route.params;
   const status = useNodeStore(s => s.status);
   const startConversation = useChatStore(s => s.startConversation);
   const [text, setText] = useState('');
+  const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = status === 'running';
@@ -42,10 +43,15 @@ export function NewConversationScreen() {
     setBusy(true);
     setError(null);
     try {
-      const convoId = await startConversation(bundle, text.trim());
-      const name =
-        useChatStore.getState().conversations[convoId]?.name ?? 'peer';
-      navigation.replace('Chat', {convoId, convoName: name});
+      const convoPk = await startConversation(bundle, text.trim(), {
+        convoPk: reintroduceConvoPk,
+        name: name.trim() || undefined,
+      });
+      const convo = useChatStore.getState().conversations[convoPk];
+      navigation.replace('Chat', {
+        convoPk,
+        convoName: convo != null ? convoDisplayName(convo) : name.trim() || 'peer',
+      });
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setBusy(false);
@@ -55,7 +61,11 @@ export function NewConversationScreen() {
   return (
     <View style={styles.root}>
       <View style={styles.card}>
-        <Text style={[type.label, {color: colors.textDim}]}>peer bundle</Text>
+        <Text style={[type.label, {color: colors.textDim}]}>
+          {reintroduceConvoPk != null
+            ? 're-introducing into an existing thread — fresh peer bundle'
+            : 'peer bundle'}
+        </Text>
         <Text style={styles.bundle} selectable numberOfLines={3}>
           {bundle}
         </Text>
@@ -65,6 +75,24 @@ export function NewConversationScreen() {
         <Text style={[type.label, {color: colors.unread}]}>
           node not running — start it in settings first
         </Text>
+      )}
+
+      {reintroduceConvoPk == null && (
+        <View style={styles.card}>
+          <Text style={[type.label, {color: colors.textDim}]}>
+            contact name (optional — bundles are opaque; names are yours, not
+            authenticated)
+          </Text>
+          <TextInput
+            style={[styles.input, styles.nameInput]}
+            value={name}
+            onChangeText={setName}
+            placeholder="name this contact…"
+            placeholderTextColor={colors.textFaint}
+            editable={!busy}
+            testID="contact-name-input"
+          />
+        </View>
       )}
 
       <View style={styles.card}>
@@ -132,6 +160,7 @@ const styles = StyleSheet.create({
     minHeight: 72,
     textAlignVertical: 'top',
   },
+  nameInput: {minHeight: 44, textAlignVertical: 'center'},
   sendBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
