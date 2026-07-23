@@ -1,40 +1,286 @@
-// Scanner — themed stub (M1 #10). Camera + code scanning land in M2; the paste
-// fallback path is sketched (always reachable per docs/theme.md §4).
-import React from 'react';
-import {Text, View, StyleSheet} from 'react-native';
+// Scanner — #15, docs/theme.md §4. Full-bleed vision-camera preview + useCodeScanner
+// (QR), emerald corner brackets ~240dp, inline validation of the logos_chatintro_1_
+// prefix (invalid QR → unread-colored caption). Paste bundle is ALWAYS reachable —
+// it is the permission-denied / no-camera fallback AND a visible text button under
+// the preview. Valid bundle → haptic + NewConversation (opening-message composer).
+import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {
+  Text,
+  TextInput,
+  View,
+  Pressable,
+  StyleSheet,
+  Vibration,
+} from 'react-native';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
+import {
+  Camera,
+  useCameraDevice,
+  useCameraPermission,
+  useCodeScanner,
+} from 'react-native-vision-camera';
 import {colors, type, spacing, radii} from '../theme';
+import {isIntroBundle} from '../native/LogosChat';
+import type {RootStackParamList} from '../navigation/types';
+
+type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+const BRACKET = 240;
 
 export function ScanScreen() {
+  const navigation = useNavigation<Nav>();
+  const device = useCameraDevice('back');
+  const {hasPermission, requestPermission} = useCameraPermission();
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [pasteMode, setPasteMode] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [invalid, setInvalid] = useState<string | null>(null);
+  const acceptedRef = useRef(false);
+
+  const accept = useCallback(
+    (bundle: string) => {
+      if (acceptedRef.current) {
+        return;
+      }
+      acceptedRef.current = true;
+      Vibration.vibrate(60); // valid-scan haptic
+      navigation.replace('NewConversation', {bundle: bundle.trim()});
+    },
+    [navigation],
+  );
+
+  const codeScanner = useCodeScanner({
+    codeTypes: ['qr'],
+    onCodeScanned: codes => {
+      for (const code of codes) {
+        const value = code.value ?? '';
+        if (isIntroBundle(value)) {
+          accept(value);
+          return;
+        }
+      }
+      setInvalid('not an intro bundle');
+    },
+  });
+
+  useEffect(() => {
+    if (!hasPermission && !permissionDenied) {
+      requestPermission().then(granted => {
+        if (!granted) {
+          setPermissionDenied(true);
+          setPasteMode(true); // denied path lands on Paste bundle (AC #15)
+        }
+      });
+    }
+  }, [hasPermission, permissionDenied, requestPermission]);
+
+  useEffect(() => {
+    if (invalid == null) {
+      return undefined;
+    }
+    const t = setTimeout(() => setInvalid(null), 2500);
+    return () => clearTimeout(t);
+  }, [invalid]);
+
+  const cameraAvailable = hasPermission && device != null;
+  const showCamera = cameraAvailable && !pasteMode;
+
   return (
     <View style={styles.root}>
-      <View style={styles.frame}>
-        <Text style={[type.label, {color: colors.textDim}]}>
-          camera preview (M2)
-        </Text>
-      </View>
-      <Text style={styles.caption}>scan a logos_chat intro bundle</Text>
-      <Text style={styles.paste}>paste bundle instead</Text>
+      {showCamera ? (
+        <View style={styles.cameraWrap}>
+          <Camera
+            style={StyleSheet.absoluteFill}
+            device={device}
+            isActive={!pasteMode}
+            codeScanner={codeScanner}
+          />
+          <View style={styles.overlay} pointerEvents="none">
+            <View style={styles.bracketBox}>
+              <View style={[styles.corner, styles.tl]} />
+              <View style={[styles.corner, styles.tr]} />
+              <View style={[styles.corner, styles.bl]} />
+              <View style={[styles.corner, styles.br]} />
+            </View>
+            <Text style={styles.caption}>scan a logos_chat intro bundle</Text>
+            {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
+          </View>
+        </View>
+      ) : (
+        <View style={styles.noCamera}>
+          {permissionDenied ? (
+            <Text style={styles.rationale}>
+              camera permission denied — paste the peer's bundle below instead.
+              {'\n'}(grant camera access in system settings to scan QR codes)
+            </Text>
+          ) : !hasPermission ? (
+            <Text style={styles.rationale}>
+              camera access is used only to scan a peer's intro-bundle QR — nothing
+              is recorded.
+            </Text>
+          ) : device == null ? (
+            <Text style={styles.rationale}>
+              no camera available — paste the peer's bundle below instead
+            </Text>
+          ) : null}
+          {!pasteMode && !hasPermission && !permissionDenied && (
+            <Pressable
+              style={styles.grantBtn}
+              onPress={() =>
+                requestPermission().then(granted => {
+                  if (!granted) {
+                    setPermissionDenied(true);
+                    setPasteMode(true);
+                  }
+                })
+              }>
+              <Text style={[type.title, {color: colors.onAccent}]}>
+                grant camera access
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
+      {/* Paste path — ALWAYS reachable (docs/theme.md §4) */}
+      {pasteMode || !showCamera ? (
+        <View style={styles.pasteCard}>
+          <Text style={[type.label, {color: colors.textDim}]}>paste bundle</Text>
+          <TextInput
+            style={styles.pasteInput}
+            value={pasteText}
+            onChangeText={t => {
+              setPasteText(t);
+              setInvalid(null);
+            }}
+            placeholder="logos_chatintro_1_…"
+            placeholderTextColor={colors.textFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            multiline
+            testID="paste-bundle-input"
+          />
+          {invalid != null && !showCamera && (
+            <Text style={styles.invalid}>{invalid}</Text>
+          )}
+          <View style={styles.pasteRow}>
+            <Pressable
+              style={styles.useBtn}
+              testID="paste-bundle-use"
+              onPress={() => {
+                if (isIntroBundle(pasteText)) {
+                  accept(pasteText);
+                } else {
+                  setInvalid('not an intro bundle');
+                }
+              }}>
+              <Text style={[type.title, {color: colors.onAccent}]}>
+                use bundle
+              </Text>
+            </Pressable>
+            {cameraAvailable && (
+              <Pressable
+                style={styles.switchBtn}
+                onPress={() => setPasteMode(false)}>
+                <Text style={[type.label, {color: colors.accent}]}>
+                  back to camera
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      ) : (
+        <Pressable
+          style={styles.pasteLink}
+          testID="paste-bundle-link"
+          onPress={() => setPasteMode(true)}>
+          <Text style={[type.label, {color: colors.accent}]}>
+            paste bundle instead
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 }
 
+const CORNER = 28;
+const THICK = 3;
+
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.canvas,
+  root: {flex: 1, backgroundColor: colors.canvas},
+  cameraWrap: {flex: 1},
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.lg,
   },
-  frame: {
-    width: 240,
-    height: 240,
+  bracketBox: {width: BRACKET, height: BRACKET},
+  corner: {
+    position: 'absolute',
+    width: CORNER,
+    height: CORNER,
     borderColor: colors.accent,
-    borderWidth: 2,
-    borderRadius: radii.card,
+  },
+  tl: {top: 0, left: 0, borderTopWidth: THICK, borderLeftWidth: THICK},
+  tr: {top: 0, right: 0, borderTopWidth: THICK, borderRightWidth: THICK},
+  bl: {bottom: 0, left: 0, borderBottomWidth: THICK, borderLeftWidth: THICK},
+  br: {bottom: 0, right: 0, borderBottomWidth: THICK, borderRightWidth: THICK},
+  caption: {...type.caption, color: colors.text},
+  invalid: {...type.caption, color: colors.unread},
+  noCamera: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    padding: spacing.xl,
+    gap: spacing.lg,
   },
-  caption: {...type.caption, color: colors.textDim},
-  paste: {...type.label, color: colors.accent, padding: spacing.md},
+  rationale: {...type.label, color: colors.textDim, textAlign: 'center'},
+  grantBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  pasteLink: {
+    padding: spacing.lg,
+    alignItems: 'center',
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  pasteCard: {
+    backgroundColor: colors.panel,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  pasteInput: {
+    ...type.code,
+    color: colors.text,
+    backgroundColor: colors.pane,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    padding: spacing.md,
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+  pasteRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg},
+  useBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  switchBtn: {minHeight: 44, justifyContent: 'center'},
 });
