@@ -134,7 +134,12 @@ module already delegating to them, but uncommitted and not building. Completed f
   bundle); send failures → a `failed — tap to retry` bubble in the thread (`ChatScreen`). No
   unhandled path found while exercising restart, re-introduce, background receive and the
   R8 build.
-- **Battery (#27)**: a 6-minute observation is meaningless, so a proper window was started
-  (unplugged at 53%, node running under the FGS, screen off, app backgrounded) with a sampler
-  writing `logs/m3-27-battery.txt` every 10 minutes. Read that file for the numbers — do not
-  quote a drain figure that isn't in it.
+- **Battery (#27)** — 2-hour window measured (`logs/m3-27-battery.txt`): SM-G780G unplugged,
+  node running under the dataSync FGS, screen off, app backgrounded, no message traffic (idle
+  node). 13 samples 10 min apart, 19:44 → 21:44: battery **held at 53% throughout, 0% measurable
+  drain**, and the node PID stayed 32679 the whole time (never crashed or restarted — a restart
+  would have changed it). Honest reading: idle-background drain is **below the 1% readout
+  resolution over 2h (< ~0.5%/h)** — an excellent floor, but it is the *idle* cost; active
+  messaging or a live mix pool would draw more and isn't captured here. No wakelock abuse in
+  `batterystats` (the FGS holds no persistent wakelock; the node's libp2p keepalive is the only
+  periodic work). Good enough to ship v0.1.0 as-is.
