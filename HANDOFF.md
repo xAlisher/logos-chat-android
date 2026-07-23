@@ -31,7 +31,7 @@ All decisions are made and specced — **do not re-litigate**:
 
 ## In flight right now (2026-07-23, background agents — check their results!)
 
-1. **Backlog agent**: creating labels/milestones/epics/~38 issues in xAlisher/logos-chat-android
+1. **Backlog agent**: DONE ✓ (48 issues live: #1–#38 children, #39–#48 epics, all milestones/labels verified; docs/backlog.md committed 14fb73e).
    + committing `docs/backlog.md`. Verify: `gh issue list -R xAlisher/logos-chat-android
    --limit 50` — every issue has milestone+labels+AC; epic task-lists reference real numbers.
 2. **M0 agent**: scaffolding + building `xAlisher/logos-libchat-android` — cross-compiling
