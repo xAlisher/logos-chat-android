@@ -1,0 +1,32 @@
+[RSP 18:00:21.689 new] statusCode=0 len=0 msg=
+[RSP 18:00:21.694 start] statusCode=0 len=0 msg=
+[EVT 18:00:31.716] ret=0 {"eventType":"new_conversation","conversationId":"607a2fb0608cf4977115b464ed735bb4cf3c","conversationType":"private"}
+[RSP 18:00:31.716 newconvo] statusCode=0 len=0 msg=
+[RSP 18:02:52.676 bundle] statusCode=0 len=197 msg=logos_chatintro_1_CiAtmTYugaYLS2wNYS9K3Hh6rivEtDqgpVSkLG7jyQSKJhIgvW75QOeFVDC8azYerlaWlSs7x71wli0An6tedWcSMzsaQLU03lCZJ4Bb5rataH-sbF_NIsj4dz2b9nM1mt1DDn4NRTwVyg8HMGDTlL9NN2kXNj103xbrtI-_VVhulB_ScQc
+[RSP 18:06:30.487 bundle] statusCode=0 len=197 msg=logos_chatintro_1_CiAtmTYugaYLS2wNYS9K3Hh6rivEtDqgpVSkLG7jyQSKJhIgB6Hpg4req4gTLBOVJP38eUw5WqC7m5PtqCyG7-792V4aQHpkadRwjuQHRxsZzzuKvvIS28um2qt66vWzgwHN17Do3fntHEnzYN4mshgau4ac7lQk7w9QY7XriyLfp5hNNAY
+[EVT 18:07:59.169] ret=0 {"eventType":"new_conversation","conversationId":"ecfa534c56bd061aa10393f9bd25de7f3666","conversationType":"private"}
+[EVT 18:07:59.169] ret=0 {"eventType":"new_message","conversationId":"ecfa534c56bd061aa10393f9bd25de7f3666","messageId":"","content":"68656c6c6f206465736b746f702066726f6d2070686f6e65206d32","timestamp":1784822879000000000}
+[RSP 18:08:27.995 send] statusCode=0 len=0 msg=
+[EVT 18:09:00.742] ret=0 {"eventType":"new_message","conversationId":"ecfa534c56bd061aa10393f9bd25de7f3666","messageId":"","content":"70686f6e65207265706c792076696120636861745f73656e645f6d657373616765","timestamp":1784822940000000000}
+[EVT 18:10:01.525] ret=0 {"eventType":"new_conversation","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","conversationType":"private"}
+[RSP 18:10:01.525 newconvo] statusCode=0 len=0 msg=
+[RSP 18:10:43.896 send] statusCode=0 len=0 msg=
+[RSP 18:10:45.897 send] statusCode=0 len=0 msg=
+[RSP 18:10:47.900 send] statusCode=0 len=0 msg=
+[RSP 18:10:49.901 send] statusCode=0 len=0 msg=
+[RSP 18:10:51.903 send] statusCode=0 len=0 msg=
+[RSP 18:10:53.905 send] statusCode=0 len=0 msg=
+[RSP 18:10:55.906 send] statusCode=0 len=0 msg=
+[RSP 18:10:57.907 send] statusCode=0 len=0 msg=
+[RSP 18:10:59.908 send] statusCode=0 len=0 msg=
+[RSP 18:11:01.909 send] statusCode=0 len=0 msg=
+[EVT 18:13:35.716] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642031","timestamp":1784823215000000000}
+[EVT 18:13:36.815] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642032","timestamp":1784823216000000000}
+[EVT 18:13:39.720] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642033","timestamp":1784823219000000000}
+[EVT 18:13:42.817] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642034","timestamp":1784823222000000000}
+[EVT 18:13:45.835] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642035","timestamp":1784823225000000000}
+[EVT 18:13:49.355] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642036","timestamp":1784823229000000000}
+[EVT 18:13:50.572] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642037","timestamp":1784823230000000000}
+[EVT 18:13:52.357] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642038","timestamp":1784823232000000000}
+[EVT 18:13:56.814] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b207032642039","timestamp":1784823236000000000}
+[EVT 18:13:58.355] ret=0 {"eventType":"new_message","conversationId":"c9569ad308229b09ba5fe5a302b78861f37e","messageId":"","content":"736f616b20703264203130","timestamp":1784823238000000000}
