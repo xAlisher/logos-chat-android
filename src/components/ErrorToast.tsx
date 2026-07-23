@@ -1,7 +1,8 @@
-// Error toast — docs/theme.md §5. Bottom, errorFill/errorBorder, #EF4444 mono text,
-// 4s auto-dismiss.
-import React, {useEffect} from 'react';
-import {Text, View, StyleSheet} from 'react-native';
+// Error toast — docs/theme.md §5. Bottom, errorFill/errorBorder, #EF4444 mono text.
+// Persistent (no auto-dismiss) with a manual ✕ close top-left, so an error stays
+// readable during testing/debugging until dismissed (#52). Full text wraps.
+import React from 'react';
+import {Pressable, Text, View, StyleSheet} from 'react-native';
 import {colors, type, radii, spacing} from '../theme';
 
 export function ErrorToast({
@@ -11,20 +12,21 @@ export function ErrorToast({
   message: string | null;
   onDismiss: () => void;
 }) {
-  useEffect(() => {
-    if (message == null) {
-      return undefined;
-    }
-    const t = setTimeout(onDismiss, 4000);
-    return () => clearTimeout(t);
-  }, [message, onDismiss]);
-
   if (message == null) {
     return null;
   }
   return (
-    <View style={styles.wrap} pointerEvents="none">
+    // Only the toast itself is interactive; the surrounding area stays passthrough.
+    <View style={styles.wrap} pointerEvents="box-none">
       <View style={styles.toast}>
+        <Pressable
+          onPress={onDismiss}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="dismiss error"
+          style={styles.close}>
+          <Text style={styles.closeText}>✕</Text>
+        </Pressable>
         <Text style={styles.text}>{message}</Text>
       </View>
     </View>
@@ -45,8 +47,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.card,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingTop: spacing.lg + spacing.xs, // room for the top-left ✕
+    paddingBottom: spacing.md,
     marginHorizontal: spacing.lg,
+  },
+  close: {
+    position: 'absolute',
+    top: spacing.xs,
+    left: spacing.xs,
+    paddingHorizontal: spacing.xs,
+    zIndex: 1,
+  },
+  closeText: {
+    ...type.label,
+    color: colors.unread,
+    fontWeight: '700',
   },
   text: {
     ...type.label,
