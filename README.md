@@ -5,9 +5,20 @@ embeds [Logos Chat](https://github.com/logos-messaging/logos-chat) (`liblogoscha
 with **both** transport modes in one app: standard relay messaging and anonymous
 routing over the AnonComms mixnet.
 
-No app code yet — this repo currently holds the exploration that scopes it.
+No app code yet — specs and backlog are in place; implementation starts with M0
+(cross-compiling `liblogoschat` for arm64).
 
-## Docs
+## Specs
+
+- [**Architecture**](docs/architecture.md) — the library contract (FFI surface, config, events,
+  hard-won invariants), native/JS architecture (`ChatService` FGS, JNI bridge, `LogosChatModule`),
+  SQLite session-epoch persistence model, lib build plan, reuse matrix, verification story.
+- [**Visual system**](docs/theme.md) — Material (react-native-paper MD3) dark theme on the
+  terminal-emerald palette, JetBrains Mono, screen-by-screen specs, states & signature moves.
+- [**Backlog**](docs/backlog.md) — milestones M0–M4 → epics → issues (mirror of the
+  [GitHub backlog](../../issues)).
+
+## Exploration docs
 
 - [**Chat vs Chat (Mix)** — what's actually different](docs/chat-vs-chat-mix.md) —
   analysis of the two Basecamp chat module pairs down to the binary level: same
