@@ -3,13 +3,19 @@
 import {create} from 'zustand';
 import LogosChat, {addLogosChatListener} from '../native/LogosChat';
 import type {NodeStatus} from '../native/LogosChat';
+import {buildNodeConfig} from '../config/mix';
 
 interface NodeState {
   status: NodeStatus;
   identityName: string | null;
   introBundle: string | null;
   error: string | null;
-  start: (name: string) => Promise<void>;
+  /** Start the node. `mixEnabled` selects Private routing (#30) — a new epoch. */
+  start: (name: string, mixEnabled?: boolean) => Promise<void>;
+  /** Flip Private routing (#30): tear the node down and recreate it in the new
+   * mode — a NEW EPOCH, so open sessions expire and need re-introduction (§4/§7).
+   * Unlike start(), bypasses the status guard so the mode flip always applies. */
+  restart: (name: string, mixEnabled: boolean) => Promise<void>;
   stop: () => Promise<void>;
   fetchIntroBundle: () => Promise<void>;
   clearError: () => void;
@@ -21,7 +27,7 @@ export const useNodeStore = create<NodeState>((set, get) => ({
   introBundle: null,
   error: null,
 
-  start: async (name: string) => {
+  start: async (name: string, mixEnabled: boolean = false) => {
     if (get().status !== 'stopped' && get().status !== 'error') {
       return;
     }
@@ -29,10 +35,29 @@ export const useNodeStore = create<NodeState>((set, get) => ({
     try {
       // chat_new → set_event_callback → chat_start happens native-side, in that
       // order (invariant #1). Status transitions arrive as node_status events.
-      await LogosChat.startNode(JSON.stringify({name}));
+      // Mix mode carries the AnonComms preset (docs/config/mix.ts) — flipping it
+      // is a NEW EPOCH (§4/§7): sessions expire, re-introduce (#23).
+      await LogosChat.startNode(buildNodeConfig(name, mixEnabled));
       const identityJson = await LogosChat.getIdentity();
       const identityName = JSON.parse(identityJson).name ?? name;
       set({identityName});
+    } catch (e: any) {
+      set({error: String(e?.message ?? e)});
+    }
+  },
+
+  restart: async (name: string, mixEnabled: boolean) => {
+    set({error: null, introBundle: null, identityName: null});
+    // stopNode is a no-op natively when the node is already down (ctx == 0).
+    try {
+      await LogosChat.stopNode();
+    } catch {
+      // ignore — we're about to recreate anyway
+    }
+    try {
+      await LogosChat.startNode(buildNodeConfig(name, mixEnabled));
+      const identityJson = await LogosChat.getIdentity();
+      set({identityName: JSON.parse(identityJson).name ?? name});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }

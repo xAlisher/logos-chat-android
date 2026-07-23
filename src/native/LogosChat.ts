@@ -13,13 +13,25 @@ export type NodeStatus =
 
 export interface LogosChatEvent {
   source: 'module' | 'lib' | 'repo';
-  eventType: string; // node_status | new_message | new_conversation | delivery_ack | error | db_changed | …
+  eventType: string; // node_status | new_message | new_conversation | delivery_ack | error | db_changed | mix_status | …
   status?: NodeStatus; // when eventType === 'node_status'
   detail?: string;
-  event?: string; // raw lib event JSON when source === 'lib'
+  event?: string; // raw lib/mix JSON when source === 'lib' or eventType === 'mix_status'
   kind?: string; // 'message' | 'conversation_ready' when eventType === 'db_changed'
   convoPk?: number; // stable conversation id for db_changed events
   direction?: string;
+}
+
+/**
+ * Mix ("Private routing") status — chat_get_mix_status (mix superset .so, #31).
+ * `mixReady` false or `mixPoolSize < minPoolSize` ⇒ send is gated (#32, no relay
+ * fallback). See docs/chat-vs-chat-mix.md.
+ */
+export interface MixStatus {
+  mixEnabled: boolean;
+  mixReady: boolean;
+  mixPoolSize: number;
+  minPoolSize: number;
 }
 
 /** Durable conversation row (SQLite, docs/architecture.md §4) as JSON. */
@@ -87,6 +99,11 @@ interface LogosChatNative {
   setActiveConversation(convoPk: number): void;
   nameConversation(convoPk: number, name: string): Promise<null>;
   mergeConversation(pendingConvoPk: number, targetConvoPk: number): Promise<null>;
+  /** Latest mix status JSON (MixStatus). Cached from the native poller (#31). */
+  getMixStatus(): Promise<string>;
+  /** Persisted app setting (native kv) — e.g. 'privateRouting' (#30). */
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<null>;
 }
 
 /** Decodes the hex `content` of new_message pushes into a UTF-8 string. */

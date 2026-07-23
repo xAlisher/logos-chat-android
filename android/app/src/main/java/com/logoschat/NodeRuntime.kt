@@ -2,6 +2,7 @@ package com.logoschat
 
 import android.util.Log
 import java.util.concurrent.Executors
+import org.json.JSONObject
 
 /**
  * Process-wide node lifecycle owner — shared by LogosChatModule (JS RPC) and
@@ -22,6 +23,15 @@ object NodeRuntime {
   @Volatile var ctx: Long = 0L; private set
   @Volatile var status: String = "stopped"; private set
   private var setupDone = false
+
+  /** Mix ("Private routing", #30): the mode this epoch was opened in. */
+  @Volatile var mixEnabled: Boolean = false; private set
+  /** Latest mix status JSON from chat_get_mix_status (#31), "" when unknown. */
+  @Volatile var mixStatusJson: String = ""; private set
+  /** Parsed pool state for the send guard (#32) — updated with every poll. */
+  @Volatile var mixReady: Boolean = false; private set
+  @Volatile var mixPoolSize: Int = 0; private set
+  @Volatile var minMixPoolSize: Int = 4; private set
 
   val executor = Executors.newSingleThreadExecutor { r ->
     Thread(r, "logoschat-node").apply { isDaemon = true }
@@ -49,8 +59,15 @@ object NodeRuntime {
       return why
     }
     ctx = p.ptr
+    // Toggling Private routing = chat_new with mixEnabled flipped = a NEW EPOCH
+    // (docs/architecture.md §4/§7): read it straight off the config we booted with.
+    mixEnabled = parseMixEnabled(configJson)
+    minMixPoolSize = parseMinMixPoolSize(configJson)
+    mixReady = false
+    mixPoolSize = 0
+    mixStatusJson = ""
     // One epoch row per chat_new (docs/architecture.md §4).
-    ChatRepo.onNodeStarted(mixEnabled = false)
+    ChatRepo.onNodeStarted(mixEnabled = mixEnabled)
     NodeBridge.chatSetEventCallback(ctx) // BEFORE chat_start — invariant #1
     setStatus("starting")
     val r = NodeBridge.chatStart(ctx)
@@ -74,9 +91,55 @@ object NodeRuntime {
     val destroy = NodeBridge.chatDestroy(c)
     if (destroy.error) Log.w(TAG, "chat_destroy error: ${destroy.message}")
     ctx = 0L
+    mixEnabled = false
+    mixReady = false
+    mixPoolSize = 0
+    mixStatusJson = ""
     ChatRepo.onNodeStopped() // closes the epoch — all sessions now expired
     setStatus("stopped")
   }
+
+  /**
+   * Poll chat_get_mix_status (#31). MUST run on the node executor — the lib is
+   * single-threaded per the FFI contract. Called from ChatService's native
+   * ScheduledExecutor (never a JS timer — background-throttle lesson §2.1).
+   * Updates the parsed pool fields (feeding the #32 send guard) and emits the
+   * status to JS.
+   */
+  fun pollMixStatus() {
+    executor.execute {
+      val c = ctx
+      if (c == 0L || !mixEnabled) return@execute
+      val r = try {
+        NodeBridge.chatGetMixStatus(c)
+      } catch (t: Throwable) {
+        Log.w(TAG, "chat_get_mix_status failed: ${t.message}")
+        return@execute
+      }
+      if (r.error) {
+        Log.w(TAG, "chat_get_mix_status error: ${r.message}")
+        return@execute
+      }
+      mixStatusJson = r.message
+      try {
+        val j = JSONObject(r.message)
+        mixReady = j.optBoolean("mixReady", false)
+        mixPoolSize = j.optInt("mixPoolSize", 0)
+        minMixPoolSize = j.optInt("minPoolSize", minMixPoolSize)
+      } catch (_: Exception) {}
+      EventCallbackManager.emitMixStatus(r.message)
+    }
+  }
+
+  /** Is a mix send allowed right now? Anti-downgrade guard (#32): mix on but the
+   * pool is short ⇒ NO send (never over relay). Non-mix mode always allows. */
+  fun mixSendBlocked(): Boolean = mixEnabled && (!mixReady || mixPoolSize < minMixPoolSize)
+
+  private fun parseMixEnabled(configJson: String): Boolean =
+      try { JSONObject(configJson).optBoolean("mixEnabled", false) } catch (_: Exception) { false }
+
+  private fun parseMinMixPoolSize(configJson: String): Int =
+      try { JSONObject(configJson).optInt("minMixPoolSize", 4) } catch (_: Exception) { 4 }
 
   /** Async start; [onDone] gets null on success or the error message. */
   fun start(configJson: String, onDone: (String?) -> Unit) {

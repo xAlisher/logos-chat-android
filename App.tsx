@@ -4,6 +4,7 @@ import {PaperProvider} from 'react-native-paper';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {paperTheme, colors} from './src/theme';
 import {RootNavigator} from './src/navigation/RootNavigator';
+import {useSettingsStore} from './src/stores/settingsStore';
 
 /**
  * Android 13+ blocks every notification until POST_NOTIFICATIONS is granted at
@@ -27,6 +28,9 @@ async function requestNotificationPermission() {
 function App() {
   useEffect(() => {
     requestNotificationPermission();
+    // Load the persisted Private routing flag + current mix status so the MIX
+    // chrome + send gate reflect the real mode on cold start (#30/#31).
+    useSettingsStore.getState().load();
   }, []);
 
   return (

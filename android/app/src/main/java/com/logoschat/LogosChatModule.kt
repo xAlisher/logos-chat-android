@@ -42,6 +42,19 @@ class EventCallbackManager {
       handler.post { deliverLibEvent(chatPtr, copy) }
     }
 
+    /** Mix pool status (#31) — polled natively, pushed to JS on the same channel. */
+    fun emitMixStatus(statusJson: String) {
+      handler.post {
+        val params =
+            Arguments.createMap().apply {
+              putString("source", "module")
+              putString("eventType", "mix_status")
+              putString("event", statusJson)
+            }
+        emitToJs(params)
+      }
+    }
+
     /** Module-level status events go through the same HandlerThread + JS channel. */
     fun emitNodeStatus(status: String, detail: String?) {
       handler.post {
@@ -216,6 +229,43 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     promise.resolve(NodeRuntime.status)
   }
 
+  /**
+   * Latest mix status (#31): {"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,
+   * "minPoolSize":int}. Returns the cached value from the native poller; when the
+   * node is down or not in mix mode, a synthesized mixEnabled:false snapshot.
+   */
+  @ReactMethod
+  fun getMixStatus(promise: Promise) {
+    val cached = NodeRuntime.mixStatusJson
+    if (cached.isNotEmpty() && NodeRuntime.mixEnabled) {
+      promise.resolve(cached)
+    } else {
+      promise.resolve(
+          """{"mixEnabled":${NodeRuntime.mixEnabled},"mixReady":false,"mixPoolSize":0,"minPoolSize":${NodeRuntime.minMixPoolSize}}""")
+    }
+  }
+
+  /** Persisted app setting (kv) — e.g. the "privateRouting" flag so the mode and
+   * the MIX chrome survive process death / cold start (#30). */
+  @ReactMethod
+  fun getSetting(key: String, promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().kvGet(key))
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
+  fun setSetting(key: String, value: String, promise: Promise) {
+    try {
+      ChatRepo.requireDb().kvSet(key, value)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /** Resolves the identity JSON, e.g. {"name":"phone-m1"}. */
   @ReactMethod
   fun getIdentity(promise: Promise) {
@@ -300,6 +350,12 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         promise.reject("new_private_conversation", "node not started")
         return@execute
       }
+      // The intro carries an opening message over the transport — gate it too
+      // while mix is on and the pool is short (#32, no relay leak).
+      if (NodeRuntime.mixSendBlocked()) {
+        promise.reject("mix_not_ready", "waiting for mix peers — not sending over relay")
+        return@execute
+      }
       val (convoPk, created) = ChatRepo.beginIntro(bundle, textUtf8, existingConvoPk, contactName)
       val r = NodeBridge.chatNewPrivateConversation(c, bundle, hexEncode(textUtf8))
       if (r.error) {
@@ -349,6 +405,14 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         return@execute
       }
       val pk = convoPk.toLong()
+      // ANTI-DOWNGRADE GUARD (#32): while Private routing is on, a message must
+      // NEVER leave over plain relay. If the mix pool is short we refuse the send
+      // natively — before chat_send_message — so the guarantee never depends on
+      // JS timing. (The mix lib itself also refuses relay fallback.)
+      if (NodeRuntime.mixSendBlocked()) {
+        promise.reject("mix_not_ready", "waiting for mix peers — not sending over relay")
+        return@execute
+      }
       val session = ChatRepo.requireDb().currentSession(pk, ChatRepo.currentEpochId)
       if (session == null) {
         promise.reject("expired", "no session in the current epoch — re-introduce first")
@@ -369,6 +433,10 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       val c = NodeRuntime.ctx
       if (c == 0L) {
         promise.reject("send_message", "node not started")
+        return@execute
+      }
+      if (NodeRuntime.mixSendBlocked()) {
+        promise.reject("mix_not_ready", "waiting for mix peers — not sending over relay")
         return@execute
       }
       val row = ChatRepo.requireDb().outboundMessage(msgPk.toLong())

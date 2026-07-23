@@ -51,6 +51,9 @@ class ChatService : Service() {
             Thread(r, "logoschat-service-poll").apply { isDaemon = true }
           }.also {
             it.scheduleWithFixedDelay({ updateNotification(this) }, 30, 30, TimeUnit.SECONDS)
+            // Mix pool poll (#31): off the JS thread (background-throttle lesson),
+            // on the native executor via NodeRuntime. No-op unless mix is on.
+            it.scheduleWithFixedDelay({ NodeRuntime.pollMixStatus() }, 5, 8, TimeUnit.SECONDS)
           }
     }
     Log.i(TAG, "ChatService foregrounded (dataSync, sticky)")
