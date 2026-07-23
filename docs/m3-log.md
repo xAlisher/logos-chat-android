@@ -119,3 +119,22 @@ module already delegating to them, but uncommitted and not building. Completed f
   and `> λ chat — node running · epoch 8 · 2 conversations · 16 messages`.
 - Also confirmed incidentally: conversations + history survive an **APK reinstall** and show the
   expired-session banner (#22/#23) — `logs/m3-23-expired-thread-history.png`.
+
+## #28 release + #27 error surfaces / battery (2026-07-23)
+
+- **R8 turned ON for release** (`minifyEnabled true`) — this is the setting most likely to break
+  a JNI app silently, so the keep rules cover everything bound *by name* from C
+  (`NodeBridge`, `ChatPtr`/`ChatResult`, `EventCallbackManager`), plus `ChatService` (instantiated
+  by the system from the manifest and re-created under START_STICKY) and
+  `MainActivity.consumeLaunchConvoPk`. Verified with the minified APK on-device: node reaches
+  Running with no `UnsatisfiedLinkError` and a full round trip works both directions.
+  APK 98.0 → 93.6 MB (the `.so`s dominate; R8 only shrinks the Java side).
+- **Error surfaces (#27)** were already in place from earlier milestones and were re-checked
+  rather than rebuilt: lib `error` events → `nodeStore.error` → `ErrorToast` (Settings, Intro
+  bundle); send failures → a `failed — tap to retry` bubble in the thread (`ChatScreen`). No
+  unhandled path found while exercising restart, re-introduce, background receive and the
+  R8 build.
+- **Battery (#27)**: a 6-minute observation is meaningless, so a proper window was started
+  (unplugged at 53%, node running under the FGS, screen off, app backgrounded) with a sampler
+  writing `logs/m3-27-battery.txt` every 10 minutes. Read that file for the numbers — do not
+  quote a drain figure that isn't in it.

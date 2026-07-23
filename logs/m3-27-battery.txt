@@ -1,0 +1,4 @@
+# logos-chat battery window — node running via ChatService (dataSync FGS), screen off
+# device SM-G780G, unplugged, sampled every 10 min
+# started 2026-07-23 19:44
+19:44 level=53 node_pid=32679
