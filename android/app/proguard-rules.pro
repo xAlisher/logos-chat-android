@@ -8,3 +8,18 @@
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
 # Add any project specific keep options here:
+
+# --- logos-chat native bridge (#28) ---------------------------------------
+# JNI binds by fully-qualified name: Java_com_logoschat_NodeBridge_* resolves
+# against these classes at runtime, and the callback + result types are only
+# ever referenced from C. R8 must not rename or strip any of them.
+-keep class com.logoschat.NodeBridge { *; }
+-keep class com.logoschat.ChatPtr { *; }
+-keep class com.logoschat.ChatResult { *; }
+-keep class com.logoschat.EventCallbackManager { *; }
+# The service is started by name from the manifest and re-created by the system
+# after process death (START_STICKY).
+-keep class com.logoschat.ChatService { *; }
+-keepclassmembers class com.logoschat.MainActivity {
+    public static long consumeLaunchConvoPk();
+}
