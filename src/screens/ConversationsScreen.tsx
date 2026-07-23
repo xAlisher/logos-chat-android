@@ -9,6 +9,7 @@ import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, layout} from '../theme';
 import {Brand} from '../components/Brand';
+import {MixPill} from '../components/MixPill';
 import {StatusPill} from '../components/StatusPill';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {ErrorToast} from '../components/ErrorToast';
@@ -101,6 +102,7 @@ export function ConversationsScreen() {
       <View style={styles.header}>
         <Brand />
         <View style={styles.headerRight}>
+          <MixPill />
           <Pressable onPress={() => navigation.navigate('Settings')}>
             <StatusPill status={status} />
           </Pressable>
