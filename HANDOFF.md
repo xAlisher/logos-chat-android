@@ -29,32 +29,43 @@ All decisions are made and specced — **do not re-litigate**:
 - `docs/chat-vs-chat-mix.md`, `docs/ux-both-modes.md` — background/rationale.
 - Plan file (approved): `~/.claude/plans/explore-both-modules-codes-kind-hartmanis.md`.
 
-## In flight right now (2026-07-23, background agents — check their results!)
+## Milestone state (2026-07-23)
 
-1. **Backlog agent**: DONE ✓ — 48 issues live (#1–#38 children, #39–#48 epics), milestones/labels
-   verified, `docs/backlog.md` committed (14fb73e).
-2. **M0 agent**: DONE ✓ — liblogoschat.so arm64 built (all 12 exports, DT_NEEDED c++_shared,
-   24.4 MB stripped) and **smoke PASSED on the SM-G780G** (node started, dialed all 6 fleet
-   peers, printed a real `logos_chatintro_1_…` bundle). Repo published:
-   github.com/xAlisher/logos-libchat-android (build script, patches, prebuilts, fork-tree log).
-   Notable: plain cargo + NDK env sufficed for the rust-bundle (no cross/Docker); nwaku nat-libs
-   have no -mssse3 wall; patch nim-ffi only AFTER `make update` (it hard-resets submodules).
-   Issues #1–#4, #6 closed. M0 COMPLETE ✓ — CI green, v0.1.0 released (github.com/xAlisher/logos-libchat-android/releases/tag/v0.1.0), #5/#7 + epics closed.
-3. **M1 agent**: DONE ✓ (2026-07-23) — issues #8–#13 all closed with on-device evidence. RN 0.86
-   app at the repo root (package `com.logoschat`), full theme per docs/theme.md, 5-screen nav
-   shell, JNI bridge (out-of-band ndk-build via `scripts/build-bridge.sh`, prebuilts vendored in
-   jniLibs), LogosChatModule with invariant-ordered startNode (chat_new → set_event_callback →
-   chat_start) + HandlerThread event pipeline, live Status screen. **Node boots to Running on the
-   phone from JS**, dials the fleet (5/6 peers up), real `logos_chatintro_1_…` bundle fetched and
-   rendered. Walls + fixes: `docs/m1-log.md`; evidence: `logs/m1-*`. Verification workflow:
-   `assembleRelease` (release signs with debug keystore → self-contained bundled-JS APK, no metro).
+1. **M0**: COMPLETE ✓ — liblogoschat.so arm64 built + smoked on the SM-G780G, repo
+   github.com/xAlisher/logos-libchat-android, CI green, v0.1.0 released. Notable walls in that
+   repo's fork-tree log (plain cargo + NDK env sufficed; patch nim-ffi only AFTER `make update`).
+2. **M1** (#8–#13): COMPLETE ✓ — RN 0.86 app (package `com.logoschat`), theme, nav shell, JNI
+   bridge (`scripts/build-bridge.sh`), LogosChatModule with invariant-ordered startNode +
+   HandlerThread event pipeline, live Status screen. Node boots to Running from JS on the phone.
+   Walls: `docs/m1-log.md`; evidence: `logs/m1-*`.
+3. **M2** (#14–#20): COMPLETE ✓ (2026-07-23) — QR intro-bundle exchange + live E2E 1:1 chat
+   phone↔desktop, all verified against the REAL desktop lib:
+   - **Desktop counterpart** = `scripts/desktop-peer/` headless harness dlopening the x86_64
+     `liblogoschat.so` from `~/.local/share/Logos/LogosBasecamp/modules/chat_module/` (the
+     exact lib chat_module_plugin wraps) — FIFO-driven, timestamped event log. Use this for
+     all future interop runs; the Basecamp GUI is only needed for human demos.
+   - #14 QR display (opencv-verified round-trip), #16 outbound flow (statusCode==0, push-bound
+     convoId, asymmetric ids observed live), #17 inbound (+ns-timestamp wall), #18 live list,
+     #19 two-way thread — all closed with evidence. #20 gate executed:
+     `docs/interop-checklist.md` — soak 19/20 (one wire loss, sender-undetectable: no
+     delivery_ack — invariant #5 vindicated), foreground-only scope documented.
+   - #15 scanner: paste + denied paths PROVEN; physical QR aim is `wetware-required`
+     (label + 2-min steps on the issue; tracked on xAlisher/ecodev#27). Epic #43 open on that
+     alone; #44/#45 closed.
+   - Walls + exact fixes: `docs/m2-log.md` (VIBRATE permission crash, JAVA_HOME→JDK17 for the
+     Java clipboard module, vision-camera 5.x→4.7.3, ns timestamps, adb driving gotchas).
+   - New JS deps: qrcode-generator, react-native-svg, @react-native-clipboard/clipboard,
+     react-native-vision-camera@4.7.3. Stores: `chatStore` (in-memory, epoch-scoped — clears on
+     node stop by design).
 
 ## Next steps (in order)
 
-1. M0 exit: CI green (#5) → tag `logos-libchat-android` v0.1.0 release + close #7.
-2. M2 (issues #14–#19): conversations + QR intro-bundle exchange + interop gate (#20) against
-   desktop Basecamp chat_module — needs `~/basecamp` `/run` tooling; device driving recipes in
-   `~/android-skills/skills/INDEX.md`.
+1. Human: run the #15 wetware check (physical QR scan — steps on the issue) → then close #15 + #43.
+2. **M3 (#21–#28)**: persistence + resilience — the SQLite session-epoch schema
+   (architecture.md §4), ChatService dataSync FGS with persist-before-forward, durable
+   history across restarts, re-introduce banner/flow, contact naming. Build gotchas you need:
+   `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, node 22 via `~/.nvm/versions/node/v22.22.2/bin`,
+   `TMPDIR=/extra/tmp`, bridge rebuilds via `scripts/build-bridge.sh` only.
 
 ## Key context that isn't in the docs
 
