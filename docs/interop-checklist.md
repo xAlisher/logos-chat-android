@@ -76,6 +76,22 @@ desktop `newconvo <bundle> <text>` → verify phone UI.
 - error surface works: `newconvo` with an empty bundle → statusCode==1
   `"bundle is zero length"` (desktop harness, 18:18:33)
 
+## 5. Phone ↔ phone (added 2026-07-23, user request)
+
+Same procedure with two devices (`adb -s <serialA>` / `-s <serialB>`), no desktop involved —
+proves the app is a full peer on both ends (initiate + accept) over the public fleet.
+
+Steps: install the same release APK on both → start both nodes (Settings) → extract phone B's
+bundle (`uiautomator dump` on the IntroBundle screen) → paste into phone A's Scan paste path →
+opening message → verify: B gets `new_conversation`+`new_message` live (unread badge), A binds
+its convoId and lands in the thread → reply B→A → short soak both ways.
+
+- [ ] A-initiates: opening message appears on B with unread
+- [ ] B replies: appears live in A's open thread
+- [ ] Bidirectional mini-soak (5+5) with per-message delivery noted
+
+Results: _pending second device authorization (see run log below when executed)._
+
 ## Open (wetware)
 
 - Physical QR scan phone→desktop-screen: scanner pipeline verified up to the gate (CAMERA
