@@ -44,22 +44,9 @@ interface ChatState {
   merge: (pendingConvoPk: number, targetConvoPk: number) => Promise<number>;
 }
 
-/** Conversations sorted by last activity, newest first. */
-export function sortedConversations(
-  conversations: Record<number, ConversationRow>,
-): ConversationRow[] {
-  return Object.values(conversations).sort(
-    (a, b) => b.lastMessageAt - a.lastMessageAt,
-  );
-}
-
-/** Display name with fallbacks — bundles are opaque, names optional/manual. */
-export function convoDisplayName(c: ConversationRow): string {
-  if (c.name != null && c.name.length > 0) {
-    return c.name;
-  }
-  return c.pending ? `unattributed #${c.convoPk}` : `peer #${c.convoPk}`;
-}
+// Pure view helpers live in conversationView.ts (RN-free, unit-tested #49);
+// re-exported here so existing screen imports keep resolving from chatStore.
+export {sortedConversations, convoDisplayName} from './conversationView';
 
 const PAGE = 200;
 
