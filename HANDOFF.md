@@ -60,22 +60,18 @@ All decisions are made and specced — **do not re-litigate**:
 
 ## Next steps (in order)
 
-4. **M3** (#21–#28): #21 persistence, #22 epochs, #23 re-introduce, #24 contact merge,
-   #25 foreground service, #26 notifications, #28 signed v0.1 APK — **COMPLETE ✓**, closed with
-   on-device evidence. **v0.1.0 released**:
+4. **M3** (#21–#28, #49): **essentially COMPLETE ✓**. #21 persistence, #22 epochs,
+   #23 re-introduce, #24 contact merge, #25 FGS, #26 notifications, #28 signed v0.1 APK,
+   #49 test suite — all closed with on-device / green-CI evidence. **v0.1.0 released**:
    github.com/xAlisher/logos-chat-android/releases/tag/v0.1.0 (R8 on, JNI keep rules verified
-   on the minified APK). Remaining in M3: **#27** (error surfaces reviewed and fine — only the
-   battery number is outstanding: a sampler is writing `logs/m3-27-battery.txt` every 10 min
-   from a 53%-unplugged, screen-off, node-running window; read that file, don't invent a
-   figure), **#49** (automated test suite), then epic #47.
-   - #25/#26 were finished by hand after the agent hit its budget mid-refactor. Three real bugs
-     found there, all in `docs/m3-log.md` and worth remembering: POST_NOTIFICATIONS is a
-     *runtime* permission on 13+ (manifest alone ⇒ `importance=NONE`, every notification
-     dropped); `LifecycleEventListener` doesn't fire reliably under Bridgeless (read
-     `reactContext.lifecycleState` instead); and `markRead` from a backgrounded-but-mounted
-     ChatScreen cancelled each notification ~200ms after it posted.
-   - Verified on-device with the screen off: message persisted before forward, notification
-     posted and stayed (`logs/m3-25-26-notification-shade.png`).
+   on the minified APK; APK attached). Tests: 11 JS logic + 19 Kotlin, CI workflow `test.yml`.
+   - **Only open M3 item: #27 battery number.** Everything else in #27 (error surfaces) is done
+     and reviewed. A bash sampler (`scratchpad/battery-sample.sh`, background task) is writing
+     `logs/m3-27-battery.txt` every 10 min from a window started 19:44 @ 53% unplugged, node
+     running under the FGS, screen off. When it finishes (~13 samples / ~2h): read that file,
+     write the drain rate into `docs/m3-log.md` #27 section, commit, close #27 + epic #47.
+     **Do NOT invent a figure** — only quote what's in the file. If the phone got re-plugged or
+     driven by other work mid-window, discard and re-run the sampler.
 5. Human: run the #15 wetware check (physical QR scan — steps on the issue) → close #15 + #43.
 6. **M4** (#29–#33): mix build variant, Private routing toggle, MIX chrome, send gating with
    **no silent fallback**, mix interop checklist.
