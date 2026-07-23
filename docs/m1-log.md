@@ -82,3 +82,22 @@ Running log of walls + exact fixes while executing M1 (#8–#13). Convention: ea
   `successfulConns=2` (5/6 fleet peers up); JS console shows the three node_status events.
 - Evidence: `logs/m1-12-logcat.txt` (bridge + node stdout + ReactNativeJS lines),
   `logs/m1-12-settings-stopped.png`, `logs/m1-12-after.png` (running pill + stop button).
+
+## #13 status screen (2026-07-23)
+
+- Settings/Status fully live: StatusPill (amber 550ms pulse for initializing/starting is in the
+  component; the real transition is ~20ms — initializing→running faster than a screencap, so the
+  pulse is only *observable* in the theme-demo pills, which run the same component/animation),
+  identity card (chat_get_identity name once running), intro-bundle fetch showing the real
+  `logos_chatintro_1_…` string in mono/selectable, ErrorToast wired to store errors.
+- Full lifecycle verified on-device: stopped → start tap → running (identity `phone-m1`) →
+  fetch bundle (`IntroBundleCreated` in node log; string rendered) → stop tap → stopped
+  (chat_stop + chat_destroy, ctx cleared, restart works).
+- Evidence: `logs/m1-13-running.png`, `m1-13-bundle.png`, `m1-13-stopped.png`,
+  `logs/m1-13-logcat.txt`.
+
+## M1 exit state
+
+All six issues (#8–#13) closed with on-device evidence. Node boots to Running on the SM-G780G
+from the JS layer through the full stack (zustand → RN module → JNI → liblogoschat), fleet
+peers dialed (5/6 up), events flowing lib→HandlerThread→JS. Next: M2 (conversations + QR).
