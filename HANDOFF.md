@@ -33,11 +33,14 @@ All decisions are made and specced — **do not re-litigate**:
 
 1. **Backlog agent**: DONE ✓ — 48 issues live (#1–#38 children, #39–#48 epics), milestones/labels
    verified, `docs/backlog.md` committed (14fb73e).
-2. **M0 agent**: scaffolding + building `xAlisher/logos-libchat-android` — cross-compiling
-   liblogoschat @ `53302e4` for arm64 (rust-bundle via cargo cross → Nim compile with the
-   libdelivery wall playbook → 12-export verify → **adb smoke test on the connected SM-G780G**,
-   win = printed `logos_chatintro_1_…` bundle) → public repo + CI. Its fork-tree log:
-   `logos-libchat-android/docs/build-fork-tree.md`. If it hit a wall, the log says exactly where.
+2. **M0 agent**: DONE ✓ — liblogoschat.so arm64 built (all 12 exports, DT_NEEDED c++_shared,
+   24.4 MB stripped) and **smoke PASSED on the SM-G780G** (node started, dialed all 6 fleet
+   peers, printed a real `logos_chatintro_1_…` bundle). Repo published:
+   github.com/xAlisher/logos-libchat-android (build script, patches, prebuilts, fork-tree log).
+   Notable: plain cargo + NDK env sufficed for the rust-bundle (no cross/Docker); nwaku nat-libs
+   have no -mssse3 wall; patch nim-ffi only AFTER `make update` (it hard-resets submodules).
+   Issues #1–#4, #6 closed. **Remaining M0**: CI run 30019377215 green (#5) → tag v0.1.0
+   release + close #7, then M0 milestone done.
 
 ## Next steps (in order, after the agents report)
 
