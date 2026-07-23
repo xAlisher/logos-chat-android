@@ -17,3 +17,18 @@ Running log of walls + exact fixes while executing M1 (#8–#13). Convention: ea
   app.json displayName `> λ chat`; package.json name `logos-chat` (init had written `com.logoschat`).
 - Verify: `assembleRelease` 1m02s → install → launch → screenshot `logs/m1-08-scaffold.png`
   (Welcome screen, Version 0.86.0, JS Engine: Hermes) on SM-G780G.
+
+## #9 theme (2026-07-23)
+
+- Fonts: local system only has Nerd Font *patched* JetBrains Mono → downloaded official TTFs from
+  `raw.githubusercontent.com/JetBrains/JetBrainsMono/master/fonts/ttf/` (Regular/Medium/Bold).
+  Bundled twice: `assets/fonts/` (source of truth) + `android/app/src/main/assets/fonts/`
+  (Android RN auto-loads fonts from `assets/fonts` by exact family name — no react-native-asset
+  link step needed). Used as three distinct families (`JetBrainsMono-Regular|Medium|Bold`) —
+  the reliable Android pattern vs weight-matching.
+- Paper adapter: overrode EVERY MD3 color slot (not just the spec-mapped nine) — containers,
+  tertiary, inverse*, elevation levels — so no default purple can leak through any Paper component.
+- react-native-vector-icons NOT installed — M1 uses no Paper icon props; avoids an extra native dep.
+- Verify on-device (release build): `logs/m1-09-theme.png` (tokens + typography),
+  `m1-09-theme-bottom.png` (all 5 StatusPill states, bubbles, Paper button/TextInput — emerald,
+  no purple), `m1-09-theme-toast.png` (ErrorToast fired via on-device tap).
