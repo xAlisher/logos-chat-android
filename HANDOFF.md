@@ -39,8 +39,7 @@ All decisions are made and specced — **do not re-litigate**:
    github.com/xAlisher/logos-libchat-android (build script, patches, prebuilts, fork-tree log).
    Notable: plain cargo + NDK env sufficed for the rust-bundle (no cross/Docker); nwaku nat-libs
    have no -mssse3 wall; patch nim-ffi only AFTER `make update` (it hard-resets submodules).
-   Issues #1–#4, #6 closed. **Remaining M0**: CI run 30019377215 green (#5) → tag v0.1.0
-   release + close #7, then M0 milestone done.
+   Issues #1–#4, #6 closed. M0 COMPLETE ✓ — CI green, v0.1.0 released (github.com/xAlisher/logos-libchat-android/releases/tag/v0.1.0), #5/#7 + epics closed.
 3. **M1 agent**: DONE ✓ (2026-07-23) — issues #8–#13 all closed with on-device evidence. RN 0.86
    app at the repo root (package `com.logoschat`), full theme per docs/theme.md, 5-screen nav
    shell, JNI bridge (out-of-band ndk-build via `scripts/build-bridge.sh`, prebuilts vendored in
