@@ -44,3 +44,26 @@ Running log of walls + exact fixes while executing M3 (#21–#28). Convention: e
 - AC evidence: `logs/m3-22-conversations-restart.png` (history row after force-stop+relaunch,
   unread badge persisted), `logs/m3-22-expired-banner.png` (banner + attribution bar +
   disabled composer on the restored thread).
+
+## #23 Re-introduce flow (2026-07-23)
+
+- Full restart-then-resume demo vs the live desktop peer, one thread throughout
+  (`convo_pk=2`, contact "desktop", bundle stored at scan time):
+  1. epoch 2: phone pastes desktop bundle + names contact → `session bound (initiated):
+     convo=2 epoch=2` → desktop receives; desktop replies → `persisted inbound msg_pk=3`.
+  2. `am force-stop` + relaunch → `db open: 2 conversations, 3 messages`; thread lists as
+     "session expired — re-introduce to continue".
+  3. node start (epoch 3) → thread shows banner + composer ENABLED with placeholder
+     "message (re-introduces)…" (stored bundle present). Typing + send re-ran
+     `chat_new_private_conversation` with the stored bundle → `session bound (initiated):
+     convo=2 epoch=3 lib=6d4509a6…` — SAME convo_pk, new lib id (X3DH asymmetry: desktop
+     sees a brand-new conversationId `28fbd9b4…`).
+  4. desktop reply on its new id → `persisted inbound msg_pk=5 convo=2` — one thread on the
+     phone: pre-restart history above, resumed exchange below (`logs/m3-23-resumed-thread.png`).
+- **Honest limit of "graceful ask-for-fresh-QR"**: the failure toast fires on synchronous lib
+  rejection (and on `no_bundle`). A stale-but-well-formed bundle is typically ACCEPTED by the
+  sender lib (statusCode 0) and simply never delivers — sender-undetectable, same class as the
+  M2 soak loss (no delivery_ack, invariant #5). The banner's *scan theirs* path is the real
+  recovery: a fresh QR re-runs the intro into the same convo_pk.
+- adb driving reminders that hit again: `input text` drops words after a space unless `%s` is
+  used; a second adb device appeared mid-run → pin `ANDROID_SERIAL=RF8RA0M127K` everywhere.

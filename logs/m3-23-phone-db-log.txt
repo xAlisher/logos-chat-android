@@ -1,0 +1,9 @@
+--------- beginning of main
+07-23 18:52:56.438 18063 18063 I logos-chat-db: db open: 1 conversations, 1 messages (schema v1)
+07-23 18:53:13.433 18063 18187 I logos-chat-db: epoch 2 opened (mix=false)
+07-23 18:54:31.576 18063 18087 I logos-chat-db: session bound (initiated): convo=2 epoch=2 lib=f03feb2dd6f705f83ce12f417c2ea79730bf
+07-23 18:54:51.991 18063 18087 I logos-chat-db: persisted inbound msg_pk=3 convo=2 (20 chars) BEFORE forward
+07-23 18:55:06.519 20494 20494 I logos-chat-db: db open: 2 conversations, 3 messages (schema v1)
+07-23 18:55:20.855 20494 20556 I logos-chat-db: epoch 3 opened (mix=false)
+07-23 18:56:04.446 20494 20513 I logos-chat-db: session bound (initiated): convo=2 epoch=3 lib=6d4509a6dc7fb3ee7467b291239365031227
+07-23 18:56:25.529 20494 20513 I logos-chat-db: persisted inbound msg_pk=5 convo=2 (31 chars) BEFORE forward
