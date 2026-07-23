@@ -67,3 +67,18 @@ Running log of walls + exact fixes while executing M3 (#21–#28). Convention: e
   recovery: a fresh QR re-runs the intro into the same convo_pk.
 - adb driving reminders that hit again: `input text` drops words after a space unless `%s` is
   used; a second adb device appeared mid-run → pin `ANDROID_SERIAL=RF8RA0M127K` everywhere.
+
+## #24 Contact merge (2026-07-23)
+
+- Pending inbound conversations (contact_id NULL) show the amber attribution bar in the
+  thread → `AttachContact` screen: merge into an existing thread (messages+sessions re-point
+  to the target convo_pk in one transaction, unread/recency carry over) OR name as a new
+  contact. Attribution is manual — bundles are opaque, names unauthenticated (v1, stated in
+  the UI copy).
+- Demo on-device: pending convo=1 (the epoch-1 desktop-peer probe, survived two restarts)
+  merged into convo=2 "desktop" → single thread, all 5 messages in chronological order
+  (msg_pk order), 18:42 probe above the epoch-2/3 exchange; pending row gone from the list.
+  `logs/m3-24-attach-screen.png`, `logs/m3-24-merged-thread.png`.
+- Merge-into-active nuance covered by ChatDbTest.pendingInboundThenMerge: when the pending
+  thread's session is in the CURRENT epoch and the target's isn't, the merged conversation
+  becomes active (sessions move with the merge) — the fresh session serves the united thread.

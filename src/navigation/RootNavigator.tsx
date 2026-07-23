@@ -10,6 +10,7 @@ import {ChatScreen} from '../screens/ChatScreen';
 import {IntroBundleScreen} from '../screens/IntroBundleScreen';
 import {ScanScreen} from '../screens/ScanScreen';
 import {NewConversationScreen} from '../screens/NewConversationScreen';
+import {AttachContactScreen} from '../screens/AttachContactScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {ThemeDemoScreen} from '../screens/ThemeDemoScreen';
 
@@ -64,6 +65,11 @@ export function RootNavigator() {
           name="NewConversation"
           component={NewConversationScreen}
           options={{title: 'new conversation'}}
+        />
+        <Stack.Screen
+          name="AttachContact"
+          component={AttachContactScreen}
+          options={{title: 'attach to contact'}}
         />
         <Stack.Screen
           name="Settings"
