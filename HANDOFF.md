@@ -41,6 +41,10 @@ All decisions are made and specced — **do not re-litigate**:
    have no -mssse3 wall; patch nim-ffi only AFTER `make update` (it hard-resets submodules).
    Issues #1–#4, #6 closed. **Remaining M0**: CI run 30019377215 green (#5) → tag v0.1.0
    release + close #7, then M0 milestone done.
+3. **M1 agent**: IN FLIGHT (launched 2026-07-23) — executing issues #8–#13: RN 0.86 scaffold at
+   the repo root (package com.logoschat), theme, navigation, JNI bridge, LogosChatModule, Status
+   screen reaching Running on the SM-G780G. Its log: docs/m1-log.md. Closes each issue with
+   on-device evidence as it lands. If it stalled, the log + closed-issue trail says where.
 
 ## Next steps (in order, after the agents report)
 
