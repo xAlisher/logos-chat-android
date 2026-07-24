@@ -4,16 +4,18 @@
 // pending inbound awaiting attribution (#24). Unread badge (#EF4444, capped 99+).
 import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
+import {FAB} from 'react-native-paper';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import {colors, type, spacing, layout} from '../theme';
+import {colors, type, spacing, layout, radii} from '../theme';
 import {Brand} from '../components/Brand';
-import {MixPill} from '../components/MixPill';
 import {StatusPill} from '../components/StatusPill';
+import {QrIcon} from '../components/QrIcon';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
+import {useSettingsStore} from '../stores/settingsStore';
 import {
   useChatStore,
   sortedConversations,
@@ -86,9 +88,12 @@ export function ConversationsScreen() {
   const status = useNodeStore(s => s.status);
   const error = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
+  const privateRouting = useSettingsStore(s => s.privateRouting);
+  const mix = useSettingsStore(s => s.mix);
   const conversations = useChatStore(s => s.conversations);
   const refreshConversations = useChatStore(s => s.refreshConversations);
   const list = sortedConversations(conversations);
+  const mixShort = !mix.mixReady || mix.mixPoolSize < mix.minPoolSize;
 
   // DB is the source of truth — re-query whenever the list gains focus.
   useFocusEffect(
@@ -99,34 +104,29 @@ export function ConversationsScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
+      {/* #56 — single-row header: [logo] · [node pill → Settings] · [QR → bundle].
+          The node pill encodes mix state; the old second row is gone. */}
       <View style={styles.header}>
         <Brand />
         <View style={styles.headerRight}>
-          <MixPill />
-          <Pressable onPress={() => navigation.navigate('Settings')}>
-            <StatusPill status={status} />
+          <Pressable
+            testID="node-pill"
+            hitSlop={8}
+            onPress={() => navigation.navigate('Settings')}>
+            <StatusPill
+              status={status}
+              mixEnabled={privateRouting}
+              mixShort={mixShort}
+            />
           </Pressable>
           <Pressable
-            style={styles.newBtn}
-            testID="new-conversation"
-            onPress={() => navigation.navigate('Scan')}>
-            <Text style={styles.newBtnText}>+ new</Text>
+            style={styles.qrBtn}
+            testID="open-intro-bundle"
+            hitSlop={8}
+            onPress={() => navigation.navigate('IntroBundle')}>
+            <QrIcon size={24} />
           </Pressable>
         </View>
-      </View>
-      <View style={styles.actionsRow}>
-        <Pressable
-          style={styles.actionLink}
-          onPress={() => navigation.navigate('IntroBundle')}>
-          <Text style={[type.label, {color: colors.accent}]}>show my QR</Text>
-        </Pressable>
-        <Pressable
-          style={styles.actionLink}
-          onPress={() => navigation.navigate('Settings')}>
-          <Text style={[type.label, {color: colors.textDim}]}>
-            settings / status
-          </Text>
-        </Pressable>
       </View>
       {list.length === 0 ? (
         <View style={styles.empty}>
@@ -138,6 +138,7 @@ export function ConversationsScreen() {
         <FlatList
           data={list}
           keyExtractor={c => String(c.convoPk)}
+          contentContainerStyle={styles.listContent}
           renderItem={({item}) => (
             <ConversationRow
               convo={item}
@@ -152,6 +153,18 @@ export function ConversationsScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
+      {/* #55 — new-conversation FAB (MD3, emerald, black +), bottom-right. Opens the
+          scan+paste flow. Custom icon avoids the vector-icons dependency. */}
+      <FAB
+        testID="new-conversation"
+        style={styles.fab}
+        color={colors.onAccent}
+        customSize={56}
+        icon={({size, color}) => (
+          <Text style={{fontSize: 28, lineHeight: 30, color}}>+</Text>
+        )}
+        onPress={() => navigation.navigate('Scan')}
+      />
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
   );
@@ -169,22 +182,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
-  headerRight: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
-  newBtn: {
-    minHeight: layout.minTouchTarget - 16,
+  headerRight: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  qrBtn: {
+    minHeight: layout.minTouchTarget,
+    minWidth: layout.minTouchTarget,
+    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
   },
-  newBtnText: {...type.title, color: colors.accent},
-  actionsRow: {
-    backgroundColor: colors.pane,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    paddingHorizontal: spacing.lg,
-    flexDirection: 'row',
-    gap: spacing.xl,
+  listContent: {paddingBottom: 88}, // clearance so the FAB never covers the last row (#55)
+  fab: {
+    position: 'absolute',
+    right: spacing.lg,
+    bottom: spacing.lg,
+    backgroundColor: colors.accent,
+    borderRadius: radii.pill,
   },
-  actionLink: {paddingVertical: spacing.md, minHeight: 40},
   row: {
     height: layout.conversationRowHeight,
     backgroundColor: colors.pane,

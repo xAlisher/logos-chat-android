@@ -63,8 +63,9 @@ export function IntroBundleScreen() {
           )}
         </View>
         <Text style={styles.hint}>
-          show this QR to a peer (or send them the code) — they scan or paste it
-          to open a conversation with you
+          show this QR to a peer (or send them the code) — they scan or paste it to
+          open a conversation with you. it changes each time the node restarts or you
+          switch Private routing — reshare it after that.
         </Text>
       </ScrollView>
       <ErrorToast message={error} onDismiss={clearError} />

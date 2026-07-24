@@ -1,10 +1,11 @@
-// The '> λ chat' branding mark — docs/theme.md §2 (brand style, accent color).
+// The 'λ chat' branding mark — docs/theme.md §2 (brand style, accent color).
+// The '>' prefix was dropped in the v0.1.2 header redesign (#56).
 import React from 'react';
 import {Text, StyleSheet} from 'react-native';
 import {colors, type} from '../theme';
 
 export function Brand() {
-  return <Text style={styles.brand}>{'> λ chat'}</Text>;
+  return <Text style={styles.brand}>{'λ chat'}</Text>;
 }
 
 const styles = StyleSheet.create({
