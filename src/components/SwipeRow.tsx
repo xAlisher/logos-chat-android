@@ -80,9 +80,10 @@ export function SwipeRow({
 
   return (
     <View style={styles.wrap} onLayout={onLayout}>
-      {/* Red ribbon behind the row; label flips to "release to delete" when armed. */}
-      <View style={[styles.ribbon, armedUI && styles.ribbonArmed]}>
-        <Text style={[styles.ribbonText, armedUI && styles.ribbonTextArmed]}>
+      {/* Red ribbon behind the row; label flips to "release to delete" when armed
+          (same red color throughout — the haptic + label are the arm signal). */}
+      <View style={styles.ribbon}>
+        <Text style={styles.ribbonText}>
           {armedUI ? 'release to delete' : 'delete'}
         </Text>
       </View>
@@ -106,7 +107,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingRight: 20,
   },
-  ribbonArmed: {backgroundColor: colors.errorBorder},
   ribbonText: {...type.label, color: colors.unread, fontWeight: '700'},
-  ribbonTextArmed: {color: '#FFFFFF'},
 });
