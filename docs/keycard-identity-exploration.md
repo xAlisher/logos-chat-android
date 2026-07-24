@@ -49,3 +49,13 @@ Orthogonal, deeper, and combinable with Layer 1. libchat's **`main` branch alrea
 - libchat curves: `core/crypto/{keys.rs,Cargo.toml,xeddsa_sign.rs,signatures.rs}`; bundle build: `conversations/src/inbox/introduction.rs`; ephemeral identity: `conversations/src/identity.rs`+`context.rs`; FFI takes only name: `library/api/client_api.nim`; upstream seams (main): `core/crypto/src/identity.rs` (`from_secret`), `core/storage/src/store.rs` (`IdentityStore`), `core/shared-traits/src/lib.rs` (`IdentityProvider`).
 - Keycard: `status-keycard/.../KeycardApplet.java` + `SECP256k1.java` (secp256k1-only, ECDSA/BIP32/export, EIP-1581 export gate); `keycard-py/keycard/constants.py` (`ECDSA_SECP256K1`).
 - Reusable pattern: `receiver-basecamp/src/station_identity.{h,cpp}` + `pgp_words.h`; `booth-android/KeycardModule.kt` + `docs/keycard.md` (export-once, one-tap-per-session).
+
+## Addendum — Ed25519 on Keycard? (investigated 2026-07-24)
+
+Checked whether an experimental **Ed25519** Keycard applet exists (recollection of "experimental applets from mikkoph") that could match liblogoschat's Ed25519 signature scheme. **Verdict: no.**
+
+- The experimental applet from **@mikkoph** (Keycard core dev) is **BIP340 Schnorr, not Ed25519** — branch `status-im/status-keycard:schnorr-signatures`, a temporary hand-distributed build. It adds a second *signature scheme* (`SIGN P2=0x03`) but on the **same secp256k1 curve**. Fully documented in `~/basecamp/modules/keycard-basecamp/KEYCARD_SIGNING_MODES.md` (captured from the Keycard Discord thread).
+- **Zero `25519` in the applet source on any branch** (`gh search code`, `status-im/status-keycard`), including the schnorr branch (still ships only `SECP256k1.java`). Our doc states it plainly: Ed25519 "would have ruled out on-card signing entirely given current Keycard applet capabilities." Nothing in bitgamma repos either.
+- (Live Discord DM pull was not available in this session — no user token present — so this rests on the applet source + the already-captured mikkoph intel, which are the authoritative sources anyway.)
+
+**Implication:** Keycard is secp256k1-only with **two** signature schemes now (ECDSA + Schnorr). Still no X25519 ECDH and no Ed25519 — so it cannot be liblogoschat's chat key or produce its XEdDSA bundle signature. The Layer-1 app-layer attestation remains the path; the only refinement the Schnorr applet buys is that the Keycard→bundle attestation could be **BIP340 Schnorr** (64-byte R‖s, batch-verifiable) instead of ECDSA — still a secp256k1 outer envelope, not a curve match. See `keycard-basecamp/KEYCARD_SIGNING_MODES.md` for the Schnorr APDU details (P2=0x03, EIP-1581 export gate, one-tap-per-session model).
