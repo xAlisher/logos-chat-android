@@ -3,6 +3,39 @@
 State snapshot for continuing this project with zero session context. Read this + `docs/` and you
 have everything. Delete/refresh this file as work progresses.
 
+---
+
+## ⏩ FINAL PASS RESULT (2026-07-24, Opus — autonomous) ✅ shipped v0.2.0
+
+The MLS/address rebuild is **done, tested, and released**. Scoping ✓ → M0' ✓ → M1' ✓ →
+M2' ✓ → **final pass ✓**. Details of each stage below (this file grows top-down; the
+oldest M0–M4 spec is at the bottom and describes the RETIRED ephemeral model).
+
+- **Release: `v0.2.0` (versionCode 6)** — arm64 `app-release.apk` attached. Both phones
+  on 0.2.0 (Samsung interactively; Pixel via `adb -r`, data preserved).
+- **CI green on both repos:** app `test` (JS logic 13/13 + Kotlin unit 27/27); the MLS lib
+  `build-android-arm64` — **the from-source arm64 rebuild is now green** (fixed the missing
+  `protoc`: hashgraph-like-consensus builds via prost). Same reproducibility bar we held
+  logos-libdelivery to.
+- **Composer-on-empty-group bug FIXED + observed on-device** — a fresh zero-message group
+  now renders the composer full-height (list `flex:1` + composer `minHeight`). Verified on
+  the Samsung (created `verify-composer-v020`, saw input+send, then deleted it).
+- **Issue hygiene:** #35 (group conversations — was "blocked: no FFI") closed as delivered;
+  **#83 filed (wetware)** for the 3-party physical-phone group test.
+
+**Open (all non-blocking, flagged):**
+- **#83 wetware** — 3-party group on two *physical* phones. The Pixel 10 was PIN-locked the
+  whole run (its PIN isn't available to an autonomous session); the desktop peer covered the
+  counterpart role so 2-party groups + reverse-leg 1:1 are fully proven. Both phones are
+  staged on 0.2.0 — a human just unlocks the Pixel and runs the steps in #83.
+- Joiner-side full roster → needs a `list_group_members` FFI verb (an arm64+host `.so`
+  rebuild; deferred to keep the verified `.so` untouched).
+- At-rest hardening of the identity seed + db-key via Android Keystore (M1' follow-up).
+- Stale-since-pivot issues to triage in retro: #81/#82 (hide mix/unknown flows — the pivot
+  *deleted* those flows, likely moot); #62 (device-key stable identity — effectively shipped).
+
+---
+
 ## What this project is
 
 Android app embedding `liblogoschat` (Logos Chat: X3DH/double-ratchet + embedded Logos Messaging
