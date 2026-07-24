@@ -6,16 +6,20 @@
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="#FFFFFFFF">
-  <!-- long leg: apex → bottom-left -->
-  <path
-      android:strokeColor="#FFFFFFFF"
-      android:strokeWidth="2.6"
-      android:strokeLineCap="round"
-      android:pathData="M14.5,4 L6,20" />
-  <!-- branch: upper junction → bottom-right -->
-  <path
-      android:strokeColor="#FFFFFFFF"
-      android:strokeWidth="2.6"
-      android:strokeLineCap="round"
-      android:pathData="M11.8,9 L18,20" />
+  <!-- mirrored horizontally (scaleX -1 about center) so the λ reads the right
+       way round in the status bar -->
+  <group android:pivotX="12" android:pivotY="12" android:scaleX="-1">
+    <!-- long leg: apex → bottom -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M14.5,4 L6,20" />
+    <!-- branch: upper junction → bottom -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:pathData="M11.8,9 L18,20" />
+  </group>
 </vector>

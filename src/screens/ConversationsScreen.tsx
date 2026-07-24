@@ -4,7 +4,7 @@
 // pending inbound awaiting attribution (#24). Unread badge (#EF4444, capped 99+).
 import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, layout, radii} from '../theme';
@@ -93,6 +93,7 @@ function ConversationRow({
 
 export function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
+  const insets = useSafeAreaInsets();
   const status = useNodeStore(s => s.status);
   const error = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
@@ -180,7 +181,8 @@ export function ConversationsScreen() {
           slot left it optically off). */}
       <Pressable
         testID="new-conversation"
-        style={styles.fab}
+        // #80 — lift above the gesture pill (no persistent bottom bar on Pixel).
+        style={[styles.fab, {bottom: spacing.lg + insets.bottom}]}
         onPress={() => navigation.navigate('Scan')}>
         <Text style={styles.fabPlus}>+</Text>
       </Pressable>
