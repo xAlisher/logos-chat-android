@@ -59,3 +59,12 @@ Checked whether an experimental **Ed25519** Keycard applet exists (recollection 
 - (Live Discord DM pull was not available in this session — no user token present — so this rests on the applet source + the already-captured mikkoph intel, which are the authoritative sources anyway.)
 
 **Implication:** Keycard is secp256k1-only with **two** signature schemes now (ECDSA + Schnorr). Still no X25519 ECDH and no Ed25519 — so it cannot be liblogoschat's chat key or produce its XEdDSA bundle signature. The Layer-1 app-layer attestation remains the path; the only refinement the Schnorr applet buys is that the Keycard→bundle attestation could be **BIP340 Schnorr** (64-byte R‖s, batch-verifiable) instead of ECDSA — still a secp256k1 outer envelope, not a curve match. See `keycard-basecamp/KEYCARD_SIGNING_MODES.md` for the Schnorr APDU details (P2=0x03, EIP-1581 export gate, one-tap-per-session model).
+
+## Addendum 2 — live Keycard Discord + mikkoph DMs (2026-07-24)
+
+Pulled the Keycard Discord guild and the mikkoph DMs directly (fresh user token). Confirms the source-level verdict and adds a forward-looking opening:
+
+- **No Ed25519 / Curve25519 anywhere** in the Keycard server or the mikkoph DMs. mikkoph (2026-04-09, DM): *"BIP32 is used both for ECDSA and BIP340 (Schnorr)… 0 is ECDSA and 3 is Schnorr, **the others are not supported yet**."* Current card = secp256k1, two schemes (ECDSA `P2=0`, Schnorr `P2=3`). Schnorr/LEE need a preloaded math package (multiplication/reduction); a fully-opensource variant exists without it.
+- **Opening — applet v4 roadmap** (0xguylouis, Keycard team, #general, 2026-07-14): *"applet v4 with… extended cryptography (BIP-340 Schnorr), **Logos compatibility**, and a more extensible architecture to bring **more cryptographic primitives**."* Ed25519/X25519 not present today, but v4's extensible-primitives + explicit "Logos compatibility" goal is the realistic path to Keycard natively backing logos-chat's X25519/Ed25519 identity (Layer 3).
+- **Actionable ask** (there's a direct mikkoph DM line): confirm whether v4's "more cryptographic primitives" will include **Ed25519 + X25519 ECDH**. If yes → Keycard could be the actual chat identity key, not just the Layer-1 attestation. If no → Layer 1 (Keycard secp256k1 attestation over the rotating bundle) remains the shippable path now, optionally using the Schnorr scheme.
+- (The private applet binary/file mikkoph shared is intentionally not reproduced here.)
