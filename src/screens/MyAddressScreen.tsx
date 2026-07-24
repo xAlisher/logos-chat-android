@@ -1,9 +1,9 @@
 // My address (Show my address) — the stable hex account address as a QR + the hex
-// string + Copy + Refresh. Replaces the old ephemeral intro-bundle screen: the
-// address is STABLE (persistent identity), so Refresh just re-reads it.
+// string + Copy. Replaces the old ephemeral intro-bundle screen. There is no
+// Refresh: the address is STABLE (persistent identity), so re-reading it could
+// never change anything — the button only looked broken.
 import React, {useEffect, useState} from 'react';
 import {
-  ActivityIndicator,
   Text,
   View,
   Pressable,
@@ -23,31 +23,9 @@ export function MyAddressScreen() {
   const fetchAddress = useNodeStore(s => s.fetchAddress);
   const clearError = useNodeStore(s => s.clearError);
   const [copied, setCopied] = useState(false);
-  const [refreshState, setRefreshState] = useState<'idle' | 'busy' | 'done'>(
-    'idle',
-  );
   const running = status === 'running';
 
-  const onRefresh = async () => {
-    if (refreshState === 'busy') {
-      return;
-    }
-    setRefreshState('busy');
-    try {
-      await fetchAddress();
-      setRefreshState('done');
-    } catch {
-      setRefreshState('idle');
-    }
-  };
 
-  useEffect(() => {
-    if (refreshState !== 'done') {
-      return undefined;
-    }
-    const t = setTimeout(() => setRefreshState('idle'), 1600);
-    return () => clearTimeout(t);
-  }, [refreshState]);
 
   useEffect(() => {
     if (running && myAddress == null) {
@@ -81,35 +59,17 @@ export function MyAddressScreen() {
               <Text style={styles.code} selectable>
                 {myAddress}
               </Text>
-              <View style={styles.actions}>
-                <Pressable
-                  testID="copy-address"
-                  style={styles.copyBtn}
-                  onPress={() => {
-                    Clipboard.setString(myAddress);
-                    setCopied(true);
-                  }}>
-                  <Text style={[type.title, {color: colors.onAccent}]}>
-                    {copied ? 'Copied' : 'Copy'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  testID="refresh-address"
-                  style={styles.refreshBtn}
-                  disabled={refreshState === 'busy'}
-                  onPress={onRefresh}>
-                  {refreshState === 'busy' ? (
-                    <ActivityIndicator color={colors.accent} />
-                  ) : (
-                    <Text style={[type.title, {color: colors.accent}]}>
-                      {refreshState === 'done' ? 'Refreshed ✓' : 'Refresh'}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-              <Text style={styles.refreshCaption}>
-                Refresh re-reads your address from the node — it never changes.
-              </Text>
+              <Pressable
+                testID="copy-address"
+                style={styles.copyBtn}
+                onPress={() => {
+                  Clipboard.setString(myAddress);
+                  setCopied(true);
+                }}>
+                <Text style={[type.title, {color: colors.onAccent}]}>
+                  {copied ? 'Copied' : 'Copy'}
+                </Text>
+              </Pressable>
             </>
           )}
         </View>
@@ -141,7 +101,6 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   code: {...type.code, color: colors.text, textAlign: 'center'},
-  actions: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   copyBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
@@ -150,19 +109,5 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
   },
-  refreshBtn: {
-    borderColor: colors.accent,
-    borderWidth: 1,
-    borderRadius: radii.card,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-  },
   hint: {...type.label, color: colors.textFaint, textAlign: 'center'},
-  refreshCaption: {
-    ...type.label,
-    color: colors.textFaint,
-    textAlign: 'center',
-  },
 });

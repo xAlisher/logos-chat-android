@@ -92,9 +92,22 @@ addLogosChatListener(e => {
   } else if (e.eventType === 'inbound_error' && e.source === 'lib') {
     try {
       const parsed = JSON.parse(e.event ?? '{}');
-      useNodeStore.setState({error: parsed.message ?? 'lib error'});
+      const message: string = parsed.message ?? 'lib error';
+      // The relay echoes our OWN published message back to us, and MLS
+      // (correctly) refuses to decrypt a message we sent. That is expected on
+      // every single send — it is not a delivery failure, so it must never
+      // reach the user as a red error toast. Still logged above.
+      if (isBenignInboundError(message)) {
+        return;
+      }
+      useNodeStore.setState({error: message});
     } catch {
       useNodeStore.setState({error: 'lib error'});
     }
   }
 });
+
+/** Inbound-error messages that are normal operation, not something to alarm the user with. */
+function isBenignInboundError(message: string): boolean {
+  return /cannot decrypt own messages/i.test(message);
+}
