@@ -42,6 +42,20 @@ object NodeRuntime {
     Log.i(TAG, "node_status: $next${detail?.let { " ($it)" } ?: ""}")
     EventCallbackManager.emitNodeStatus(next, detail)
     ChatService.refreshNotification()
+    // #78 — node died for a reason the user didn't ask for: notify. The
+    // auto-restart flag == "1" means the user wants it running, so an "error"
+    // here is unexpected (bg kill + failed restart, chat_new/start failure).
+    // A clean user stop goes to "stopped", never "error" — no false positive.
+    val ctx = ChatService.appContext ?: return
+    when (next) {
+      "error" -> {
+        val wanted = try {
+          ChatRepo.requireDb().kvGet(KV_AUTO_RESTART) == "1"
+        } catch (_: Throwable) { false }
+        if (wanted) MessageNotifier.notifyNodeDown(ctx, detail)
+      }
+      "running" -> MessageNotifier.clearNodeDown(ctx)
+    }
   }
 
   /** Runs ON the node executor. Returns null on success, error message on failure. */

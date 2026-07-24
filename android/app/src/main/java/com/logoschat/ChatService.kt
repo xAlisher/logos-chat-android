@@ -137,7 +137,7 @@ class ChatService : Service() {
       return NotificationCompat.Builder(context, CHANNEL_NODE)
           .setContentTitle("> λ chat — node $status")
           .setContentText("epoch ${ChatRepo.currentEpochId} · $convos conversations · $msgs messages")
-          .setSmallIcon(R.drawable.ic_stat_chat)
+          .setSmallIcon(R.drawable.ic_stat_lambda) // λ in the status bar = node running
           .setColor(0xFF10B981.toInt()) // theme accent (docs/theme.md)
           .setOngoing(true)
           .setContentIntent(tap)

@@ -79,6 +79,59 @@ object MessageNotifier {
     }
   }
 
+  private const val CHANNEL_NODE_ALERT = "node_alerts"
+  private const val ID_NODE_DOWN = 900
+
+  /**
+   * Node died unexpectedly (#78) — NOT a user-initiated stop. e.g. the process
+   * was killed in the background and the auto-restart failed, or chat_new/start
+   * errored. Tapping reopens the app, which auto-starts the node (#57).
+   */
+  fun notifyNodeDown(context: Context, reason: String?) {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (nm.getNotificationChannel(CHANNEL_NODE_ALERT) == null) {
+          nm.createNotificationChannel(
+              NotificationChannel(CHANNEL_NODE_ALERT, "Node alerts", NotificationManager.IMPORTANCE_DEFAULT)
+                  .apply { description = "Node stopped unexpectedly" })
+        }
+      }
+      val tap =
+          PendingIntent.getActivity(
+              context,
+              ID_NODE_DOWN,
+              Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+              },
+              PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+      val n =
+          NotificationCompat.Builder(context, CHANNEL_NODE_ALERT)
+              .setContentTitle("Node stopped")
+              .setContentText("Messages may be missed. Tap to reconnect.")
+              .setSmallIcon(R.drawable.ic_stat_lambda)
+              .setColor(0xFFEF4444.toInt())
+              .setCategory(NotificationCompat.CATEGORY_ERROR)
+              .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+              .setAutoCancel(true)
+              .setContentIntent(tap)
+              .build()
+      (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+          .notify(ID_NODE_DOWN, n)
+      if (reason != null) Log.w(TAG, "node down: $reason")
+    } catch (t: Throwable) {
+      Log.w(TAG, "notifyNodeDown failed: ${t.message}")
+    }
+  }
+
+  /** Clear the node-down alert (e.g. once the node is running again). */
+  fun clearNodeDown(context: Context) {
+    try {
+      (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+          .cancel(ID_NODE_DOWN)
+    } catch (_: Throwable) {}
+  }
+
   /** Called when the thread is opened/read — clears its notification. */
   fun cancelFor(context: Context, convoPk: Long) {
     try {
