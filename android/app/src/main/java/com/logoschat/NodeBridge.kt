@@ -27,9 +27,6 @@ object NodeBridge {
   private const val TAG = "logos-chat-bridge"
   const val PREFS = "logoschat_native"
   const val KEY_VARIANT = "variant" // "std" | "mix"
-  // One-shot: set before a mode-switch process restart, consumed by MainActivity to
-  // auto-foreground ChatService so the node comes back up in the chosen mode (#51).
-  const val KEY_AUTOSTART_ON_LAUNCH = "autostartOnLaunch"
 
   @Volatile private var loaded = false
   @Volatile var loadedVariant: String = "std"; private set

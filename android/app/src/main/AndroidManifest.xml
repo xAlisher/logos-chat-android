@@ -34,6 +34,17 @@
         </intent-filter>
       </activity>
 
+      <!-- ProcessPhoenix relauncher (#59): runs in a SEPARATE process so it survives
+           the main-process kill needed to swap the dual-binary .so variant, then
+           reliably brings MainActivity back to the foreground (the AlarmManager path
+           vanished on Samsung). Invisible + excluded from recents. -->
+      <activity
+        android:name=".PhoenixActivity"
+        android:process=":phoenix"
+        android:theme="@android:style/Theme.Translucent.NoTitleBar"
+        android:excludeFromRecents="true"
+        android:exported="false" />
+
       <!-- Owns the node + DB so messages keep arriving (and persisting) while the
            app is backgrounded or swiped away; START_STICKY brings it back. -->
       <service
