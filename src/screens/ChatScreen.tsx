@@ -137,7 +137,10 @@ export function ChatScreen() {
   // short, the composer is DISABLED — a message must NEVER leave over plain
   // relay. This is the whole point of the mix mode (docs/ux-both-modes.md §3).
   const mixGated = mixSendGated({privateRouting, mix});
-  const composerEnabled = running && (!expired || canReintroduce) && !mixGated;
+  // Expired = read-only: the composer is DISABLED and shows "session expired"
+  // (matches the desktop pattern of disabling the input when unavailable). The
+  // re-introduce flow is hidden (#82).
+  const composerEnabled = running && !expired && !mixGated;
   const canSend = composerEnabled && text.trim().length > 0 && !busy;
 
   const onSend = async () => {
@@ -213,9 +216,7 @@ export function ChatScreen() {
               : mixGated
               ? 'Waiting for mix peers…'
               : expired
-              ? canReintroduce
-                ? 'message…'
-                : 'session expired'
+              ? 'session expired'
               : 'message…'
           }
           placeholderTextColor={colors.textFaint}
