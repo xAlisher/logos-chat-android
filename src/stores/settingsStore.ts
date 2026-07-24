@@ -15,7 +15,7 @@ interface SettingsState {
   setDisplayName: (name: string) => Promise<void>;
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
+export const useSettingsStore = create<SettingsState>((set, _get) => ({
   displayName: DEFAULT_DISPLAY_NAME,
 
   load: async () => {

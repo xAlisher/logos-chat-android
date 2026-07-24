@@ -3,6 +3,7 @@
 import {create} from 'zustand';
 import LogosChat, {addLogosChatListener} from '../native/LogosChat';
 import type {NodeStatus} from '../native/LogosChat';
+import {isBenignInboundError, benignReason} from './inboundErrors';
 
 interface NodeState {
   status: NodeStatus;
@@ -93,11 +94,11 @@ addLogosChatListener(e => {
     try {
       const parsed = JSON.parse(e.event ?? '{}');
       const message: string = parsed.message ?? 'lib error';
-      // The relay echoes our OWN published message back to us, and MLS
-      // (correctly) refuses to decrypt a message we sent. That is expected on
-      // every single send — it is not a delivery failure, so it must never
-      // reach the user as a red error toast. Still logged above.
+      // Routine protocol conditions (own-message echo, a late frame past its
+      // epoch, a duplicate welcome) are NOT failures — surfacing them as red
+      // toasts made ordinary use look broken. Still in logcat above.
       if (isBenignInboundError(message)) {
+        console.log('[LogosChat] benign inbound error:', benignReason(message));
         return;
       }
       useNodeStore.setState({error: message});
@@ -107,7 +108,3 @@ addLogosChatListener(e => {
   }
 });
 
-/** Inbound-error messages that are normal operation, not something to alarm the user with. */
-function isBenignInboundError(message: string): boolean {
-  return /cannot decrypt own messages/i.test(message);
-}

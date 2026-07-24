@@ -262,7 +262,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       try {
         await get().addMember(convoPk, address);
         invited += 1;
-      } catch (e: any) {
+      } catch {
         get().pushSystemLine(convoPk, `${describePeer(address)} could not be invited`);
       }
     }
@@ -309,6 +309,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
  */
 const joinWaiters: Record<number, Array<() => void>> = {};
 
+/**
+ * After `members_changed` the joiner has NOT necessarily subscribed yet: it
+ * subscribes to the group's delivery topic only once it processes the welcome,
+ * which we measured landing ~2s AFTER our members_changed. Anything published in
+ * that window is never delivered (a subscription race, not a crypto one — there
+ * is no store replay for this topic). Settle before flushing a held message.
+ */
+const JOIN_SETTLE_MS = 8_000;
+
 function waitForJoin(convoPk: number, timeoutMs = 120_000): Promise<void> {
   return new Promise(resolve => {
     let done = false;
@@ -317,7 +326,8 @@ function waitForJoin(convoPk: number, timeoutMs = 120_000): Promise<void> {
       done = true;
       resolve();
     };
-    (joinWaiters[convoPk] ??= []).push(finish);
+    // The join signal starts the settle window; the timeout is the hard cap.
+    (joinWaiters[convoPk] ??= []).push(() => setTimeout(finish, JOIN_SETTLE_MS));
     setTimeout(finish, timeoutMs);
   });
 }

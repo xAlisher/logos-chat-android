@@ -52,7 +52,9 @@ export function AddMembersScreen() {
 
   const conversations = useChatStore(s => s.conversations);
   const allMembers = useChatStore(s => s.members);
-  const members = allMembers[convoPk] ?? [];
+  // Memoised: `allMembers[convoPk] ?? []` would be a NEW array each render,
+  // which changes the deps of the contacts useMemo below on every render.
+  const members = useMemo(() => allMembers[convoPk] ?? [], [allMembers, convoPk]);
   const loadMembers = useChatStore(s => s.loadMembers);
   const addMember = useChatStore(s => s.addMember);
 
