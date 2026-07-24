@@ -12,6 +12,7 @@ import {ScanScreen} from '../screens/ScanScreen';
 import {NewConversationScreen} from '../screens/NewConversationScreen';
 import {NewGroupScreen} from '../screens/NewGroupScreen';
 import {GroupInfoScreen} from '../screens/GroupInfoScreen';
+import {AddMembersScreen} from '../screens/AddMembersScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -54,34 +55,39 @@ export function RootNavigator() {
         <Stack.Screen
           name="MyAddress"
           component={MyAddressScreen}
-          options={{title: 'my address'}}
+          options={{title: 'My Address'}}
         />
         <Stack.Screen
           name="Scan"
           component={ScanScreen}
           options={({route}) => ({
-            title: route.params?.mode === 'addMember' ? 'add member' : 'new chat',
+            title: route.params?.mode === 'addMember' ? 'Add Member' : 'New Chat',
           })}
         />
         <Stack.Screen
           name="NewConversation"
           component={NewConversationScreen}
-          options={{title: 'new conversation'}}
+          options={{title: 'Add Contact'}}
         />
         <Stack.Screen
           name="NewGroup"
           component={NewGroupScreen}
-          options={{title: 'new group'}}
+          options={{title: 'New Group'}}
         />
         <Stack.Screen
           name="GroupInfo"
           component={GroupInfoScreen}
-          options={{title: 'group info'}}
+          options={{title: 'Group Info'}}
+        />
+        <Stack.Screen
+          name="AddMembers"
+          component={AddMembersScreen}
+          options={{title: 'Add Members'}}
         />
         <Stack.Screen
           name="Settings"
           component={SettingsScreen}
-          options={{title: 'settings'}}
+          options={{title: 'Settings'}}
         />
       </Stack.Navigator>
     </NavigationContainer>

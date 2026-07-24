@@ -44,7 +44,8 @@ interface ChatState {
 
 // Pure view helpers live in conversationView.ts (RN-free, unit-tested);
 // re-exported here so existing screen imports keep resolving from chatStore.
-export {sortedConversations, convoDisplayName} from './conversationView';
+export {sortedConversations, convoDisplayName, knownContacts} from './conversationView';
+export type {KnownContact} from './conversationView';
 
 const PAGE = 200;
 

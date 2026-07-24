@@ -5,7 +5,7 @@ import type {MD3Theme} from 'react-native-paper';
 import {colors} from './colors';
 import {fonts} from './typography';
 
-export {colors} from './colors';
+export {colors, nodeStatusColor} from './colors';
 export {fonts, type} from './typography';
 export {spacing, radii, layout} from './spacing';
 

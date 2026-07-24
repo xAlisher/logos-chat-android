@@ -14,5 +14,7 @@ export type RootStackParamList = {
   NewGroup: undefined;
   /** Group roster + add-member affordance. */
   GroupInfo: {convoPk: number};
+  /** Add members to a group: checkbox list of known contacts + paste/scan (#13). */
+  AddMembers: {convoPk: number};
   Settings: undefined;
 };

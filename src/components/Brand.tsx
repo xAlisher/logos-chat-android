@@ -1,16 +1,23 @@
-// The 'λ chat' branding mark — docs/theme.md §2 (brand style, accent color).
-// The '>' prefix was dropped in the v0.1.2 header redesign (#56).
+// The Chat brand mark (#16): the messages-square Logo tinted by node status
+// (green online · amber pulsing connecting · red offline) + the "Chat" wordmark.
+// Replaces the old 'λ chat' text mark.
 import React from 'react';
-import {Text, StyleSheet} from 'react-native';
-import {colors, type} from '../theme';
+import {View, Text, StyleSheet} from 'react-native';
+import {colors, type, spacing} from '../theme';
+import {NodeStatusIcon} from './NodeStatusIcon';
+import {useNodeStore} from '../stores/nodeStore';
 
 export function Brand() {
-  return <Text style={styles.brand}>{'λ chat'}</Text>;
+  const status = useNodeStore(s => s.status);
+  return (
+    <View style={styles.row}>
+      <NodeStatusIcon status={status} size={26} />
+      <Text style={styles.word}>Chat</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  brand: {
-    ...type.brand,
-    color: colors.accent,
-  },
+  row: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  word: {...type.brand, color: colors.text},
 });
