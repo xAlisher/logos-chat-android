@@ -168,3 +168,44 @@ Release APK: `cd android && ./gradlew assembleRelease` then `adb -s … install 
   use intro bundles** — bundles are the wire-compatible path we build on.
 - Related memory: `project_logos_chat_android` in memory dir; sibling project memory
   `project_logos_libdelivery_android`.
+
+---
+
+## 🔀 STRATEGIC PIVOT (2026-07-24, overnight autonomous) — rebuild on the MLS/address libchat
+
+**Discovery:** the currently-installed Basecamp chat **v0.2.1** uses a generation-newer libchat:
+stable hex **ADDRESSES** (32-byte, shared once) instead of rotating intro-bundle QRs, **MLS
+GROUPS** (New group, OpenMLS, Ed25519 credentials), and a **persistent installation ID**. Our app
+is pinned to the OLD ephemeral intro-bundle model (logos-chat @ 53302e4). The newer model dissolves
+our hardest problems: stable identity (no rotating QR / re-introduce / unattributed / merge),
+groups, persistent identity — i.e. most of the Contacts epic (#69) is built into the new lib.
+
+**User directive (asleep, full autonomy, both phones):** rebuild onto the new lib, KEEP our UI/
+field/keyboard lessons, retarget the app, test on-device against desktop v0.2.1, write tests —
+**don't stop until all functions are covered and tested.**
+
+**Overnight plan (chained background agents; each updates this file):**
+1. **SCOPING (in flight)** — agent a0a3a91a: pin the exact ref, extract the new FFI (addresses,
+   groups, events), address/persistent-identity model, arm64 build feasibility (esp. aws-lc-rs +
+   OpenMLS + rustls/hyper cross-compile), app-retarget delta. → `docs/mls-rebuild-scoping.md`.
+2. **M0' BUILD** — cross-compile the new liblogoschat for arm64 (reuse ~/projects/logos-libchat-android
+   pipeline + fork-tree discipline; expect aws-lc-rs walls). Smoke on-device (get-my-address).
+3. **M1' RETARGET** — new JNI/Kotlin verbs (getMyAddress, createConversation(address), send, events);
+   JS model address-based; DELETE the unattributed/merge/re-introduce/session-epoch workarounds;
+   "New chat = paste address", "Show my address + copy". KEEP: targetSdk 34 keyboard fix,
+   KeyboardAwareScreen, emerald theme, FAB, swipe-delete, trash, λ status icon, FGS/notifications,
+   ProcessPhoenix/dual-binary lesson, on-device verify discipline. 1:1 E2E vs desktop v0.2.1.
+4. **M2' GROUPS** — create group, add member, group messaging + events, on-device.
+5. **TESTS** — JS logic + Kotlin unit + interop checklist; CI.
+
+**KEEP-list (hard-won, do NOT lose):** targetSdk 34 (opt out of forced edge-to-edge → adjustResize
+works → keyboard/field fix everywhere); the emerald theme + λ app icon (#10B981 on #161616);
+swipe-to-delete (haptic, commit-on-release), trash-in-header, FAB centering; FGS + λ status icon +
+node-down notify (#78); persist-before-forward; the desktop-peer headless interop harness;
+tap-by-text adb driving; ALWAYS verify on both phones (Samsung RF8RA0M127K + Pixel 64150DLCR0028D).
+The current intro-bundle app is the UI shell to retarget, not throw away.
+
+**Build env:** JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64, node 22 (~/.nvm/.../v22.22.2/bin),
+TMPDIR=/extra/tmp, NDK 27.1.12297006, /extra/tmp for build trees. cairosvg venv at /extra/tmp/svgvenv.
+
+Old-lib work (still valid history): logos-libchat-android (v0.1.0 std + v0.2.0 mix), app v0.1.0–v0.1.3.
