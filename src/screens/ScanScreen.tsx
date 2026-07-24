@@ -131,7 +131,7 @@ export function ScanScreen() {
           testID="paste-address-link"
           onPress={() => setPasteMode(true)}>
           <Text style={[type.label, {color: colors.accent}]}>
-            paste address instead
+            Paste Address Instead
           </Text>
         </Pressable>
       </View>
@@ -169,7 +169,7 @@ export function ScanScreen() {
                 })
               }>
               <Text style={[type.title, {color: colors.onAccent}]}>
-                grant camera access
+                Grant Camera Access
               </Text>
             </Pressable>
           )}
@@ -195,7 +195,7 @@ export function ScanScreen() {
           {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           <View style={styles.pasteRow}>
             <ActionButton
-              label="use address"
+              label="Use Address"
               variant="primary"
               style={{flex: 1}}
               testID="paste-address-use"
@@ -209,7 +209,7 @@ export function ScanScreen() {
             />
             {cameraAvailable && (
               <ActionButton
-                label="back to camera"
+                label="Back to Camera"
                 variant="secondary"
                 onPress={() => setPasteMode(false)}
               />

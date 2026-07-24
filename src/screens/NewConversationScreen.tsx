@@ -32,7 +32,7 @@ export function NewConversationScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = status === 'running';
-  const canStart = running && !busy;
+  const canStart = !busy;
 
   const onStart = async () => {
     if (!canStart) {
@@ -60,29 +60,33 @@ export function NewConversationScreen() {
     <View style={styles.root}>
       <KeyboardAwareScreen contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Text style={[type.label, {color: colors.textDim}]}>peer address</Text>
+          <Text style={[type.label, {color: colors.textDim}]}>Peer Address</Text>
           <Text style={styles.address} selectable numberOfLines={2}>
             {address}
           </Text>
         </View>
 
         {!running && (
-          <Text style={[type.label, {color: colors.unread}]}>
-            node not running — start it in settings first
+          <Text style={[type.label, {color: colors.textDim}]}>
+            Node connecting…
           </Text>
         )}
 
         <View style={styles.card}>
-          <Text style={[type.label, {color: colors.textDim}]}>
-            nickname (optional — a private label; the peer never sees it)
+          <Text style={[type.label, {color: colors.text}]}>
+            Add a label (optional)
+          </Text>
+          <Text style={[type.caption, {color: colors.textDim}]}>
+            Only you see this — it never leaves your device.
           </Text>
           <TextInput
             style={[styles.input, styles.nameInput]}
             value={name}
             onChangeText={setName}
-            placeholder="name this contact…"
+            placeholder="e.g. Alice"
             placeholderTextColor={colors.textFaint}
             editable={!busy}
+            autoFocus
             testID="contact-name-input"
           />
           <Pressable
@@ -94,13 +98,13 @@ export function NewConversationScreen() {
               <ActivityIndicator color={colors.onAccent} />
             ) : (
               <Text style={[type.title, {color: colors.onAccent}]}>
-                {'start conversation >>'}
+                {'Add contact'}
               </Text>
             )}
           </Pressable>
           {busy && (
             <Text style={[type.label, {color: colors.textDim}]}>
-              opening conversation…
+              Opening conversation…
             </Text>
           )}
         </View>

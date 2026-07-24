@@ -13,7 +13,6 @@ import {NewConversationScreen} from '../screens/NewConversationScreen';
 import {NewGroupScreen} from '../screens/NewGroupScreen';
 import {GroupInfoScreen} from '../screens/GroupInfoScreen';
 import {AddMembersScreen} from '../screens/AddMembersScreen';
-import {SettingsScreen} from '../screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -83,11 +82,6 @@ export function RootNavigator() {
           name="AddMembers"
           component={AddMembersScreen}
           options={{title: 'Add Members'}}
-        />
-        <Stack.Screen
-          name="Settings"
-          component={SettingsScreen}
-          options={{title: 'Settings'}}
         />
       </Stack.Navigator>
     </NavigationContainer>

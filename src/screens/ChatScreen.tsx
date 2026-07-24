@@ -11,6 +11,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  ToastAndroid,
   StyleSheet,
 } from 'react-native';
 import {useRoute, useFocusEffect, useNavigation} from '@react-navigation/native';
@@ -19,13 +20,20 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {TrashIcon} from '../components/TrashIcon';
+import {ContactLabelModal} from '../components/ContactLabelModal';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
-import type {Message} from '../stores/chatStore';
+import type {Conversation, Message} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+/** The attribution shown above an incoming bubble (#10). */
+interface Attribution {
+  label: string | null;
+  hex: string;
+}
 
 function formatTime(at: number): string {
   const d = new Date(at);
@@ -34,23 +42,71 @@ function formatTime(at: number): string {
   ).padStart(2, '0')}`;
 }
 
+// Resolve the sender line for an INCOMING message (#10). Own bubbles get none.
+// 1:1 → the conversation's nickname; group → any 1:1 conversation whose
+// peerAddress matches the directory-verified sender, else no label. The short
+// hex falls back to the conversation peer when senderAccount is absent (1:1).
+function resolveAttribution(
+  msg: Message,
+  isGroup: boolean,
+  convo: Conversation | undefined,
+): Attribution | null {
+  if (msg.direction !== 'in') {
+    return null;
+  }
+  const senderAddr = msg.senderAccount ?? convo?.peerAddress ?? null;
+  if (senderAddr == null) {
+    return null;
+  }
+  let label: string | null = null;
+  if (isGroup) {
+    if (msg.senderAccount != null) {
+      const target = msg.senderAccount.toLowerCase();
+      for (const c of Object.values(useChatStore.getState().conversations)) {
+        if (
+          !c.isGroup &&
+          c.peerAddress != null &&
+          c.peerAddress.toLowerCase() === target &&
+          c.nickname != null &&
+          c.nickname.length > 0
+        ) {
+          label = c.nickname;
+          break;
+        }
+      }
+    }
+  } else {
+    label = convo?.nickname != null && convo.nickname.length > 0 ? convo.nickname : null;
+  }
+  return {label, hex: shortAddress(senderAddr)};
+}
+
 function Bubble({
   msg,
-  isGroup,
+  attribution,
   onRetry,
 }: {
   msg: Message;
-  isGroup: boolean;
+  attribution: Attribution | null;
   onRetry: () => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
-  // In a group, label incoming bubbles with the directory-verified sender.
-  const senderLabel =
-    isGroup && !own && msg.senderAccount ? shortAddress(msg.senderAccount) : null;
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
-      {senderLabel != null && <Text style={styles.sender}>{senderLabel}</Text>}
+      {attribution != null &&
+        (attribution.label != null ? (
+          <Text style={styles.attrLine} numberOfLines={1}>
+            <Text style={{color: colors.contact}}>{attribution.label}</Text>
+            <Text style={{color: colors.textDim}}> {attribution.hex}</Text>
+          </Text>
+        ) : (
+          <Text
+            style={[styles.attrLine, {color: colors.contact}]}
+            numberOfLines={1}>
+            {attribution.hex}
+          </Text>
+        ))}
       <Pressable
         disabled={!failed}
         onPress={onRetry}
@@ -85,11 +141,13 @@ export function ChatScreen() {
   const send = useChatStore(s => s.send);
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
+  const setNickname = useChatStore(s => s.setNickname);
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [labelModalVisible, setLabelModalVisible] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -117,9 +175,47 @@ export function ChatScreen() {
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
 
+  const openLabel = useCallback(() => setLabelModalVisible(true), []);
+
   useEffect(() => {
     navigation.setOptions({
-      title: convo != null ? convoDisplayName(convo) : ' ',
+      // Custom title (#8/#9): 1:1 shows label + short hex (two lines) and opens
+      // the contact-label modal on press; a group keeps its single-line name.
+      headerTitle: () => {
+        if (convo == null) {
+          return <Text style={styles.headerTitleText}> </Text>;
+        }
+        if (isGroup) {
+          return (
+            <Text style={styles.headerTitleText} numberOfLines={1}>
+              {convoDisplayName(convo)}
+            </Text>
+          );
+        }
+        const hasLabel = convo.nickname != null && convo.nickname.length > 0;
+        const shortHex =
+          convo.peerAddress != null
+            ? shortAddress(convo.peerAddress)
+            : `peer #${convo.convoPk}`;
+        return (
+          <Pressable testID="chat-title" onPress={openLabel} hitSlop={8}>
+            {hasLabel ? (
+              <>
+                <Text style={styles.headerTitleText} numberOfLines={1}>
+                  {convo.nickname}
+                </Text>
+                <Text style={styles.headerTitleSub} numberOfLines={1}>
+                  {shortHex}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.headerTitleText} numberOfLines={1}>
+                {shortHex}
+              </Text>
+            )}
+          </Pressable>
+        );
+      },
       headerRight: () => (
         <View style={styles.headerActions}>
           {isGroup && (
@@ -136,13 +232,21 @@ export function ChatScreen() {
         </View>
       ),
     });
-  }, [navigation, convo, onTrash, isGroup, convoPk]);
+  }, [navigation, convo, onTrash, isGroup, convoPk, openLabel]);
 
   const running = nodeStatus === 'running';
-  const composerEnabled = running;
-  const canSend = composerEnabled && text.trim().length > 0 && !busy;
+  const connecting = nodeStatus === 'initializing' || nodeStatus === 'starting';
+  const canSend = running && text.trim().length > 0 && !busy;
 
-  const onSend = async () => {
+  // Submit button color mirrors node status (#17): orange running, amber while
+  // connecting (NOT pulsing), red offline. The button is never a dead no-op.
+  const sendColor = running
+    ? colors.accent
+    : connecting
+    ? colors.nodeConnecting
+    : colors.nodeOffline;
+
+  const doSend = async () => {
     if (!canSend) {
       return;
     }
@@ -158,6 +262,20 @@ export function ChatScreen() {
     }
   };
 
+  const onSubmit = () => {
+    if (running) {
+      doSend();
+    } else if (connecting) {
+      // Keep the draft; just tell the user to wait.
+      ToastAndroid.show('Node connecting…', ToastAndroid.SHORT);
+    } else {
+      // Offline (stopped/error): keep the draft, fire the red error toast.
+      useNodeStore.setState({error: 'Node offline'});
+    }
+  };
+
+  const empty = messages.length === 0;
+
   return (
     <KeyboardAvoidingView
       style={styles.root}
@@ -169,38 +287,54 @@ export function ChatScreen() {
         renderItem={({item}) => (
           <Bubble
             msg={item}
-            isGroup={isGroup}
+            attribution={resolveAttribution(item, isGroup, convo)}
             onRetry={() => retry(convoPk, item.msgPk)}
           />
         )}
         // flex:1 so the list owns the free space and the composer keeps its
-        // intrinsic height — without it, an EMPTY inverted list mismeasures
-        // under KeyboardAvoidingView and collapses the composer to ~0 height
-        // (the empty-group bug from M2').
+        // intrinsic height. When there are NO messages, an inverted list under
+        // KeyboardAvoidingView mismeasures and collapses the composer to ~0
+        // height (the empty-group bug from M2'). Fix (#84): a flexGrow content
+        // container + a flex:1 empty spacer that durably fills the list so the
+        // composer never gets crushed — survives members_changed + keyboard.
         style={styles.list}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          empty && styles.listContentEmpty,
+        ]}
+        ListEmptyComponent={<View style={styles.emptySpacer} />}
       />
       <View style={styles.composer}>
         <TextInput
-          style={[styles.input, !composerEnabled && styles.inputDisabled]}
+          style={styles.input}
           value={text}
           onChangeText={setText}
-          placeholder={running ? 'message…' : 'node not running'}
+          // Always editable (#17): browse + draft while the node connects/offline.
+          placeholder="Message…"
           placeholderTextColor={colors.textFaint}
           multiline
-          editable={composerEnabled}
           testID="composer-input"
         />
         <Pressable
-          style={[styles.send, !canSend && styles.sendDisabled]}
-          disabled={!canSend}
-          onPress={onSend}
+          style={[styles.send, {backgroundColor: sendColor}]}
+          onPress={onSubmit}
           testID="composer-send">
           <Text style={[type.title, {color: colors.onAccent}]}>
             {busy ? '…' : '>>'}
           </Text>
         </Pressable>
       </View>
+      <ContactLabelModal
+        visible={labelModalVisible}
+        address={convo?.peerAddress ?? null}
+        label={convo?.nickname ?? null}
+        onClose={() => setLabelModalVisible(false)}
+        onSave={newLabel =>
+          setNickname(convoPk, newLabel).catch(e =>
+            useNodeStore.setState({error: `label failed: ${e?.message ?? e}`}),
+          )
+        }
+      />
       <ErrorToast message={nodeError} onDismiss={clearError} />
     </KeyboardAvoidingView>
   );
@@ -210,6 +344,8 @@ const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.canvas},
   list: {flex: 1},
   listContent: {padding: spacing.lg, gap: spacing.sm},
+  listContentEmpty: {flexGrow: 1},
+  emptySpacer: {flex: 1},
   bubbleWrap: {maxWidth: layout.bubbleMaxWidthPct, gap: 2},
   wrapPeer: {alignSelf: 'flex-start', alignItems: 'flex-start'},
   wrapOwn: {alignSelf: 'flex-end', alignItems: 'flex-end'},
@@ -222,10 +358,12 @@ const styles = StyleSheet.create({
   bubbleOwn: {backgroundColor: colors.accent},
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
-  sender: {...type.caption, color: colors.accent, marginBottom: 2},
+  attrLine: {...type.caption, marginBottom: 2},
   time: {...type.caption, color: colors.textFaint},
   headerActions: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg},
   headerIcon: {...type.label, color: colors.accent},
+  headerTitleText: {...type.title, color: colors.text},
+  headerTitleSub: {...type.caption, color: colors.textDim},
   composer: {
     backgroundColor: colors.pane,
     borderTopColor: colors.border,
@@ -248,7 +386,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     maxHeight: 120,
   },
-  inputDisabled: {opacity: 0.5},
   send: {
     backgroundColor: colors.accent,
     borderRadius: radii.pill,
@@ -256,5 +393,4 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
   },
-  sendDisabled: {opacity: 0.5},
 });

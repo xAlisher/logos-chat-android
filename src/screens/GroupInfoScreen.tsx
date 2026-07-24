@@ -65,12 +65,10 @@ export function GroupInfoScreen() {
 
       <View style={styles.footer}>
         <ActionButton
-          label="add member by address"
+          label="Add members"
           variant="primary"
           testID="group-add-member"
-          onPress={() =>
-            navigation.navigate('Scan', {mode: 'addMember', groupConvoPk: convoPk})
-          }
+          onPress={() => navigation.navigate('AddMembers', {convoPk})}
         />
         <Text style={[type.caption, {color: colors.textFaint}]}>
           adding sends an MLS Welcome; the member appears in their conversations list.

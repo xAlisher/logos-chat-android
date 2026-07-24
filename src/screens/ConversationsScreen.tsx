@@ -1,6 +1,7 @@
 // Conversations list. Rows come from the DURABLE store (SQLite) so history is
-// visible across restarts. Keyed by peer address + nickname. Accent dot = a
-// conversation with a live route; unread badge (#EF4444, capped 99+).
+// visible across restarts. Keyed by peer address + nickname. Leading glyph = a
+// people icon (orange) for groups · a single-person icon (green) for 1:1s (#15);
+// unread badge (#EF4444, capped 99+).
 import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -8,11 +9,15 @@ import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, layout} from '../theme';
 import {Brand} from '../components/Brand';
-import {StatusPill} from '../components/StatusPill';
 import {QrIcon} from '../components/QrIcon';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
+import {
+  SpeedDialFab,
+  ContactGlyph,
+  GroupGlyph,
+} from '../components/SpeedDialFab';
 import {useNodeStore} from '../stores/nodeStore';
 import {
   useChatStore,
@@ -53,10 +58,15 @@ function ConversationRow({
       style={styles.row}
       onPress={onPress}
       testID={`convo-${convo.convoPk}`}>
-      <View style={styles.dot} />
+      <View style={styles.leadIcon}>
+        {convo.isGroup ? (
+          <GroupGlyph size={20} color={colors.accent} />
+        ) : (
+          <ContactGlyph size={20} color={colors.contact} />
+        )}
+      </View>
       <View style={styles.rowBody}>
         <View style={styles.titleRow}>
-          {convo.isGroup && <Text style={styles.groupTag}>group</Text>}
           <Text
             style={[type.title, {color: colors.text, flexShrink: 1}]}
             numberOfLines={1}>
@@ -78,7 +88,6 @@ function ConversationRow({
 export function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
-  const status = useNodeStore(s => s.status);
   const error = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
   const conversations = useChatStore(s => s.conversations);
@@ -103,19 +112,11 @@ export function ConversationsScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
-      {/* Single-row header: [logo] · [node pill → Settings] · [QR → my address]. */}
+      {/* Header: [Brand — status-tinted icon + "Chat"] · [QR → my address]. */}
       <View style={styles.header}>
         <Brand />
-        <View style={styles.pillCenter} pointerEvents="box-none">
-          <Pressable
-            testID="node-pill"
-            hitSlop={8}
-            onPress={() => navigation.navigate('Settings')}>
-            <StatusPill status={status} />
-          </Pressable>
-        </View>
         <Pressable
-          style={styles.qrBtn}
+          style={styles.iconBtn}
           testID="open-my-address"
           hitSlop={8}
           onPress={() => navigation.navigate('MyAddress')}>
@@ -125,7 +126,7 @@ export function ConversationsScreen() {
       {list.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>
-            no conversations — tap + to add a peer by address
+            no conversations — tap the + button to add a peer by address
           </Text>
         </View>
       ) : (
@@ -150,24 +151,11 @@ export function ConversationsScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
-      {/* new-group FAB (emerald outline), stacked above the new-chat FAB. */}
-      <Pressable
-        testID="new-group"
-        style={[styles.groupFab, {bottom: spacing.lg + insets.bottom + 68}]}
-        onPress={() => navigation.navigate('NewGroup')}>
-        <View style={styles.groupGlyph}>
-          <View style={styles.groupHead} />
-          <View style={[styles.groupHead, styles.groupHead2]} />
-          <View style={styles.groupBody} />
-        </View>
-      </Pressable>
-      {/* new-conversation FAB (emerald, black +), bottom-right. */}
-      <Pressable
-        testID="new-conversation"
-        style={[styles.fab, {bottom: spacing.lg + insets.bottom}]}
-        onPress={() => navigation.navigate('Scan')}>
-        <Text style={styles.fabPlus}>+</Text>
-      </Pressable>
+      <SpeedDialFab
+        bottomInset={insets.bottom}
+        onContact={() => navigation.navigate('Scan')}
+        onGroup={() => navigation.navigate('NewGroup')}
+      />
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
   );
@@ -185,85 +173,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
-  pillCenter: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qrBtn: {
+  iconBtn: {
     minHeight: layout.minTouchTarget,
     minWidth: layout.minTouchTarget,
     alignItems: 'center',
     justifyContent: 'center',
   },
   listContent: {paddingBottom: 88},
-  fab: {
-    position: 'absolute',
-    right: spacing.lg,
-    bottom: spacing.lg,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-  },
-  fabPlus: {
-    color: colors.onAccent,
-    fontSize: 32,
-    lineHeight: 34,
-    includeFontPadding: false,
-    textAlign: 'center',
-  },
-  groupFab: {
-    position: 'absolute',
-    right: spacing.lg + 6,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.panel,
-    borderColor: colors.accent,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 4,
-  },
-  groupGlyph: {width: 24, height: 20, alignItems: 'center', justifyContent: 'center'},
-  groupHead: {
-    position: 'absolute',
-    top: 2,
-    left: 5,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.accent,
-  },
-  groupHead2: {left: 13},
-  groupBody: {
-    position: 'absolute',
-    bottom: 2,
-    width: 18,
-    height: 8,
-    borderTopLeftRadius: 6,
-    borderTopRightRadius: 6,
-    backgroundColor: colors.accent,
-  },
   titleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
-  groupTag: {
-    ...type.caption,
-    color: colors.accent,
-    borderColor: colors.accent,
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-    overflow: 'hidden',
-  },
   row: {
     height: layout.conversationRowHeight,
     backgroundColor: colors.pane,
@@ -272,11 +189,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     gap: spacing.md,
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.accent,
+  leadIcon: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowBody: {flex: 1, gap: 2},
   preview: {...type.label, color: colors.textDim},

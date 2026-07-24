@@ -15,10 +15,10 @@ export const colors = {
   unread: '#EF4444', // unread badge
   pulse: '#F59E0B', // amber startup pulse (node initializing/starting)
   // Node status (header icon + composer submit — #16/#17):
-  nodeOnline: '#22C55E', // running — green
+  nodeOnline: '#FF5000', // running — orange (brand; no green anywhere)
   nodeConnecting: '#F59E0B', // initializing/starting — amber (pulsing)
   nodeOffline: '#EF4444', // stopped/error — red
-  contact: '#22C55E', // 1:1 contact glyph in the list
+  contact: '#FF5000', // 1:1 contact glyph + attribution label — orange
   errorFill: '#5c1a1a', // error toast fill
   errorBorder: '#C62828', // error toast border (text #EF4444)
   qrBg: '#FFFFFF', // QR modules — ALWAYS white bg / black fg for scannability

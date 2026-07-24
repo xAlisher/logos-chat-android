@@ -16,5 +16,4 @@ export type RootStackParamList = {
   GroupInfo: {convoPk: number};
   /** Add members to a group: checkbox list of known contacts + paste/scan (#13). */
   AddMembers: {convoPk: number};
-  Settings: undefined;
 };

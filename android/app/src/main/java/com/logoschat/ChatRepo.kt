@@ -113,10 +113,15 @@ object ChatRepo {
     if (existing != null) {
       // Learned it's a group after the fact (e.g. inbound message arrived first).
       if (group && !d.isGroup(existing)) d.markGroup(existing, null)
+      // #95: a JOINER (received the Welcome) must seed itself into the roster,
+      // just like the creator does — otherwise Group Info is empty on join.
+      if (group || d.isGroup(existing)) seedSelfMember(existing)
       return null
     }
     val now = System.currentTimeMillis()
     val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = group, groupName = null)
+    // #95: seed self on the joiner so its own address is always on the roster.
+    if (group) seedSelfMember(convoPk)
     Log.i(TAG, "conversation started (inbound): convo=$convoPk lib=$libConvoId class=${klass ?: "?"}")
     return Outcome(if (group) "group_ready" else "conversation_ready", convoPk, "in", "")
   }
@@ -127,8 +132,22 @@ object ChatRepo {
     val d = requireDb()
     val convoPk = d.convoPkByLibId(libConvoId) ?: return null
     if (!d.isGroup(convoPk)) d.markGroup(convoPk, null)
+    // #95: the joiner is always a member once a members-change lands for it.
+    seedSelfMember(convoPk)
     Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId")
     return Outcome("members_changed", convoPk, "in", "")
+  }
+
+  /**
+   * Ensure our OWN address is on a group's roster (isSelf=true). Idempotent —
+   * [ChatDb.addGroupMember] de-dups on (convo_pk,address). No-ops before the node
+   * has an address (e.g. unit tests), where the roster fills from observed senders.
+   */
+  private fun seedSelfMember(convoPk: Long) {
+    val self = NodeRuntime.address
+    if (!self.isNullOrBlank()) {
+      requireDb().addGroupMember(convoPk, self, isSelf = true, addedAt = System.currentTimeMillis())
+    }
   }
 
   private fun onMessageReceived(libConvoId: String, content: String, senderAccount: String?): Outcome? {
@@ -153,6 +172,17 @@ object ChatRepo {
     }
     val msgPk = d.insertMessage(convoPk, "in", content, now, "received", senderAccount)
     d.touchConversation(convoPk, now)
+    // #95: joiner-side roster fill-in. On a GROUP, a verified inbound sender that
+    // isn't us and isn't already on the roster is recorded (idempotent). This is
+    // how a device that only JOINED (and never added anyone) learns the members —
+    // it observes them as senders. addGroupMember de-dups on (convo_pk,address).
+    if (senderAccount != null && d.isGroup(convoPk)) {
+      val self = NodeRuntime.address
+      if (self == null || !senderAccount.equals(self, ignoreCase = true)) {
+        d.addGroupMember(convoPk, senderAccount, isSelf = false, addedAt = now)
+      }
+      seedSelfMember(convoPk) // make sure we're on our own roster too
+    }
     if (activeConvoPk != convoPk) d.bumpUnread(convoPk)
     Log.i(TAG, "persisted inbound msg_pk=$msgPk convo=$convoPk (${content.length} chars) BEFORE forward")
     return Outcome("message", convoPk, "in", content)

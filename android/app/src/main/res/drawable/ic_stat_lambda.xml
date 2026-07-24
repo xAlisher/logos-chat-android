@@ -1,25 +1,15 @@
-<!-- Status-bar icon for the running node (#57 / λ indicator). Notification small
-     icons must be a white-on-transparent silhouette — the system tints it. A λ. -->
+<!-- Status-bar icon for the running node (Lucide messages-square). Notification
+     small icons must be a white-on-transparent silhouette — the system tints it. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="#FFFFFFFF">
-  <!-- mirrored horizontally (scaleX -1 about center) so the λ reads the right
-       way round in the status bar -->
-  <group android:pivotX="12" android:pivotY="12" android:scaleX="-1">
-    <!-- long leg: apex → bottom -->
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round"
-        android:pathData="M14.5,4 L6,20" />
-    <!-- branch: upper junction → bottom -->
-    <path
-        android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round"
-        android:pathData="M11.8,9 L18,20" />
-  </group>
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2Z"/>
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>
 </vector>

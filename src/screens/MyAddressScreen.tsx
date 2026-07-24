@@ -2,7 +2,14 @@
 // string + Copy + Refresh. Replaces the old ephemeral intro-bundle screen: the
 // address is STABLE (persistent identity), so Refresh just re-reads it.
 import React, {useEffect, useState} from 'react';
-import {Text, View, Pressable, ScrollView, StyleSheet} from 'react-native';
+import {
+  ActivityIndicator,
+  Text,
+  View,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
 import {QrCard} from '../components/QrCard';
@@ -16,7 +23,31 @@ export function MyAddressScreen() {
   const fetchAddress = useNodeStore(s => s.fetchAddress);
   const clearError = useNodeStore(s => s.clearError);
   const [copied, setCopied] = useState(false);
+  const [refreshState, setRefreshState] = useState<'idle' | 'busy' | 'done'>(
+    'idle',
+  );
   const running = status === 'running';
+
+  const onRefresh = async () => {
+    if (refreshState === 'busy') {
+      return;
+    }
+    setRefreshState('busy');
+    try {
+      await fetchAddress();
+      setRefreshState('done');
+    } catch {
+      setRefreshState('idle');
+    }
+  };
+
+  useEffect(() => {
+    if (refreshState !== 'done') {
+      return undefined;
+    }
+    const t = setTimeout(() => setRefreshState('idle'), 1600);
+    return () => clearTimeout(t);
+  }, [refreshState]);
 
   useEffect(() => {
     if (running && myAddress == null) {
@@ -38,7 +69,7 @@ export function MyAddressScreen() {
         <View style={styles.card}>
           {!running ? (
             <Text style={[type.label, {color: colors.textDim}]}>
-              node not running — start it in settings first
+              node starting…
             </Text>
           ) : myAddress == null ? (
             <Text style={[type.label, {color: colors.textDim}]}>
@@ -59,16 +90,26 @@ export function MyAddressScreen() {
                     setCopied(true);
                   }}>
                   <Text style={[type.title, {color: colors.onAccent}]}>
-                    {copied ? 'copied' : 'copy'}
+                    {copied ? 'Copied' : 'Copy'}
                   </Text>
                 </Pressable>
                 <Pressable
                   testID="refresh-address"
                   style={styles.refreshBtn}
-                  onPress={() => fetchAddress()}>
-                  <Text style={[type.title, {color: colors.accent}]}>refresh</Text>
+                  disabled={refreshState === 'busy'}
+                  onPress={onRefresh}>
+                  {refreshState === 'busy' ? (
+                    <ActivityIndicator color={colors.accent} />
+                  ) : (
+                    <Text style={[type.title, {color: colors.accent}]}>
+                      {refreshState === 'done' ? 'Refreshed ✓' : 'Refresh'}
+                    </Text>
+                  )}
                 </Pressable>
               </View>
+              <Text style={styles.refreshCaption}>
+                Refresh re-reads your address from the node — it never changes.
+              </Text>
             </>
           )}
         </View>
@@ -119,4 +160,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   hint: {...type.label, color: colors.textFaint, textAlign: 'center'},
+  refreshCaption: {
+    ...type.label,
+    color: colors.textFaint,
+    textAlign: 'center',
+  },
 });
