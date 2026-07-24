@@ -97,6 +97,26 @@ All decisions are made and specced — **do not re-litigate**:
      because the SM-G780G was reserved by the running #27 battery window.
    - Evidence: `logs/m4-*`; build+walls: `docs/m4-log.md`.
 
+7. **v0.1.1** (#50, #51): **COMPLETE ✓ (2026-07-24)** — two on-device-caught test fixes, both
+   verified on the SM-G780G, both phones left on the working build.
+   - **#50 keyboard**: shared dependency-free `src/components/KeyboardAwareScreen.tsx`
+     (ScrollView + `keyboardShouldPersistTaps` + scroll-to-end on keyboardDidShow) wraps
+     NewConversation / Scan-paste / AttachContact; ChatScreen's KeyboardAvoidingView made
+     Platform-aware. Focused input + its primary button now clear the keyboard
+     (`logs/v011-50-*`).
+   - **#51 relay-send regression → DUAL-BINARY (option A landed).** The mix-superset `.so`
+     never mounts WakuRelay (even standard mode) → standard send failed. Now the app ships
+     BOTH `liblogoschat_std.so` (v0.1.0, relay) + `liblogoschat_mix.so` (v0.2.0, mix) — same
+     soname — and loads ONE per process by absolute path (`NodeBridge.load`, needs
+     `useLegacyPackaging`). The bridge dlsym's `chat_get_mix_status` so it works with either.
+     Private routing toggle rewrites the variant flag + **restarts the process** (inexact
+     alarm + kill) so the right `.so` loads fresh; ChatService auto-restarts the node in the
+     new mode. **Both modes proven on-device**: std relay send E2E to the desktop peer (no
+     "relay send failed"); mix mode → real `chat_get_mix_status` (pool 5/4 ready) + MIX pill;
+     toggle back → std relay restored. Mix anonymous *delivery* from the phone stays
+     wetware-required (no RLN — M4 #33 limit), not faked. Full log: `docs/v011-log.md`.
+     Released **v0.1.1**.
+
 Build gotchas that keep mattering: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, node 22 via
 `~/.nvm/versions/node/v22.22.2/bin`, `TMPDIR=/extra/tmp`, bridge rebuilds via
 `scripts/build-bridge.sh` only, `ANDROID_SERIAL`/`adb -s RF8RA0M127K` (a Pixel 10,
