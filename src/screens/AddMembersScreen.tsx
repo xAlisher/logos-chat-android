@@ -1,9 +1,17 @@
-// AddMembers (#97) — add peers to a group. Top→bottom: title "Add to <group>",
-// a paste-address row (inline Paste + Add on one line), a "Scan QR" row, then a
-// checkbox list of known contacts (two-line label/hex left, checkbox right).
-// Pasted/scanned addresses are STAGED at the top (checked). A bottom-stuck
-// "Add to group" CTA calls addMember for every checked address, then pops back to
-// the group and toasts "Member(s) have been added".
+// AddMembers (#97, #114) — add peers to a group. Top→bottom: title "Add to
+// <group>", a paste-address row (inline Paste + Add on one line), a "Scan QR"
+// row, then a checkbox list of known contacts (two-line label/hex left,
+// checkbox right). Pasted/scanned addresses are STAGED at the top (checked).
+// A bottom-stuck "Add to group" CTA calls addMember for every checked
+// address and toasts "Member(s) have been added".
+//
+// Two entry points, branched on route.params.postCreate:
+//  - postCreate falsy (from Group info, the pre-existing path): submit pops
+//    back to Group info via goBack(); no extra button.
+//  - postCreate true (fresh off NewGroupScreen, #114): submit REPLACES into
+//    the new group's Chat thread (so Back from the thread goes to the
+//    conversations list, not back into this screen), and an extra "Skip for
+//    now" button lets you land in the thread without inviting anyone yet.
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Text,
@@ -40,7 +48,7 @@ interface Row {
 export function AddMembersScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteProp<RootStackParamList, 'AddMembers'>>();
-  const {convoPk} = route.params;
+  const {convoPk, postCreate} = route.params;
 
   const conversations = useChatStore(s => s.conversations);
   const allMembers = useChatStore(s => s.members);
@@ -150,9 +158,17 @@ export function AddMembersScreen() {
         added === 1 ? 'Member has been added' : 'Members have been added',
         ToastAndroid.SHORT,
       );
-      navigation.goBack();
+      if (postCreate) {
+        navigation.replace('Chat', {convoPk, convoName: groupName, isGroup: true});
+      } else {
+        navigation.goBack();
+      }
     }
-  }, [checked, submitting, addMember, convoPk, navigation]);
+  }, [checked, submitting, addMember, convoPk, navigation, postCreate, groupName]);
+
+  const skip = useCallback(() => {
+    navigation.replace('Chat', {convoPk, convoName: groupName, isGroup: true});
+  }, [navigation, convoPk, groupName]);
 
   const renderRow = ({item}: {item: Row}) => {
     const isChecked = checked.has(item.address);
@@ -249,6 +265,15 @@ export function AddMembersScreen() {
       />
 
       <View style={[styles.footer, {paddingBottom: spacing.lg + insets.bottom}]}>
+        {postCreate && (
+          <ActionButton
+            label="Skip for now"
+            variant="secondary"
+            testID="add-member-skip"
+            disabled={submitting}
+            onPress={skip}
+          />
+        )}
         <ActionButton
           label="Add to group"
           variant="primary"
@@ -320,6 +345,7 @@ const styles = StyleSheet.create({
   empty: {color: colors.textDim, padding: spacing.lg, textAlign: 'center'},
   footer: {
     padding: spacing.lg,
+    gap: spacing.sm,
     borderTopColor: colors.border,
     borderTopWidth: 1,
     backgroundColor: colors.panel,

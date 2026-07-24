@@ -1,5 +1,6 @@
-// New group — name + optional description → create_group (MLS/GroupV2) and open
-// the group thread. Members are added afterwards from Group info.
+// New group — name + optional description → create_group (MLS/GroupV2) then
+// straight to Add Members (#114) so inviting people is part of creating a
+// group, not a separate trip through Group info.
 import React, {useState} from 'react';
 import {
   Text,
@@ -14,7 +15,7 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
-import {useChatStore, convoDisplayName} from '../stores/chatStore';
+import {useChatStore} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
 
@@ -39,12 +40,10 @@ export function NewGroupScreen() {
     setError(null);
     try {
       const convoPk = await createGroup(name.trim(), description.trim() || undefined);
-      const convo = useChatStore.getState().conversations[convoPk];
-      navigation.replace('Chat', {
-        convoPk,
-        convoName: convo != null ? convoDisplayName(convo) : name.trim(),
-        isGroup: true,
-      });
+      // #114: land on Add Members, not the empty thread — and `replace` so
+      // Back can't return to this form (the group already exists; resubmit
+      // would create a second one).
+      navigation.replace('AddMembers', {convoPk, postCreate: true});
     } catch (e: any) {
       setError(String(e?.message ?? e));
       setBusy(false);
@@ -102,7 +101,7 @@ export function NewGroupScreen() {
             </Text>
           )}
           <Text style={[type.caption, {color: colors.textFaint}]}>
-            add members from Group info after it's created.
+            next: invite members to the group.
           </Text>
         </View>
       </KeyboardAwareScreen>

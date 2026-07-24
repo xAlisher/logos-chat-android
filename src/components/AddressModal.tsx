@@ -1,42 +1,27 @@
-// Contact label modal (#8) — a themed transparent Modal for a 1:1 peer. Shows the
-// FULL hex address (selectable + Copy) and a local, private label the user can set.
-// Saving calls onSave(trimmed) then onClose; the parent maps that to setNickname,
-// which re-renders the chat title.
+// AddressModal (#105) — one job: show a peer's FULL hex address and let the user
+// copy it. Split out of the old ContactLabelModal, which mixed "look at the
+// address" with "name this contact" and made both feel like a form to fill in.
 import React, {useEffect, useState} from 'react';
-import {
-  Modal,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-  StyleSheet,
-} from 'react-native';
+import {Modal, Pressable, Text, View, StyleSheet} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import {colors, type, spacing, radii} from '../theme';
+import {colors, type, spacing, radii, layout} from '../theme';
 
-export function ContactLabelModal({
+export function AddressModal({
   visible,
   address,
-  label,
   onClose,
-  onSave,
 }: {
   visible: boolean;
   address: string | null;
-  label: string | null;
   onClose: () => void;
-  onSave: (newLabel: string) => void;
 }) {
-  const [draft, setDraft] = useState(label ?? '');
   const [copied, setCopied] = useState(false);
 
-  // Re-sync the input to the current label each time the modal opens.
   useEffect(() => {
     if (visible) {
-      setDraft(label ?? '');
       setCopied(false);
     }
-  }, [visible, label]);
+  }, [visible]);
 
   useEffect(() => {
     if (!copied) {
@@ -53,11 +38,6 @@ export function ContactLabelModal({
     }
   };
 
-  const onSavePress = () => {
-    onSave(draft.trim());
-    onClose();
-  };
-
   return (
     <Modal
       visible={visible}
@@ -67,28 +47,13 @@ export function ContactLabelModal({
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
-        <Pressable style={styles.card} onPress={() => {}} testID="contact-modal">
-          <Text style={styles.heading}>Contact</Text>
+        <Pressable style={styles.card} onPress={() => {}} testID="address-modal">
+          <Text style={styles.heading}>Address</Text>
 
-          {/* 1. Address on top (full width, selectable, non-editable). */}
-          <Text style={styles.fieldLabel}>Address</Text>
           <Text style={styles.addr} selectable testID="contact-address">
             {address ?? '(unknown address)'}
           </Text>
 
-          {/* 2. Label field below. */}
-          <Text style={styles.fieldLabel}>Label (optional — only you see it)</Text>
-          <TextInput
-            style={styles.input}
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Label…"
-            placeholderTextColor={colors.textFaint}
-            autoFocus
-            testID="contact-label-input"
-          />
-
-          {/* 3. Copy below — full width. */}
           <Pressable
             style={styles.copyBtn}
             onPress={onCopy}
@@ -100,11 +65,11 @@ export function ContactLabelModal({
           </Pressable>
 
           <View style={styles.actions}>
-            <Pressable style={styles.cancelBtn} onPress={onClose} testID="contact-cancel">
-              <Text style={[type.title, {color: colors.textDim}]}>Cancel</Text>
-            </Pressable>
-            <Pressable style={styles.saveBtn} onPress={onSavePress} testID="contact-save">
-              <Text style={[type.title, {color: colors.onAccent}]}>Save</Text>
+            <Pressable
+              style={styles.closeBtn}
+              onPress={onClose}
+              testID="contact-close">
+              <Text style={[type.title, {color: colors.textDim}]}>Close</Text>
             </Pressable>
           </View>
         </Pressable>
@@ -148,36 +113,17 @@ const styles = StyleSheet.create({
     minHeight: 48,
     justifyContent: 'center',
   },
-  fieldLabel: {...type.label, color: colors.textDim},
-  input: {
-    ...type.body,
-    color: colors.text,
-    backgroundColor: colors.canvas,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.card,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
   actions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     alignItems: 'center',
-    gap: spacing.md,
   },
-  cancelBtn: {
+  closeBtn: {
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii.card,
     paddingHorizontal: spacing.xl,
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  saveBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radii.card,
-    paddingHorizontal: spacing.xl,
-    minHeight: 44,
+    minHeight: layout.minTouchTarget,
     justifyContent: 'center',
   },
 });

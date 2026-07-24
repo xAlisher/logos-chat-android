@@ -241,6 +241,32 @@ Java_com_logoschat_NodeBridge_chatAddGroupMember(JNIEnv *env, jobject thiz, jlon
   return rc;
 }
 
+// Self-removal from a group (#108). rc==0 means the removal CONSENSUS ROUND was
+// opened and published — NOT that we are already out; the ejecting commit lands
+// asynchronously. Can legitimately fail while the group is mid-round.
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatLeaveGroup(JNIEnv *env, jobject thiz, jlong handle,
+                                             jstring convoId) {
+  (void)thiz;
+  const char *c = (*env)->GetStringUTFChars(env, convoId, 0);
+  int rc = logoschat_leave_group((void *)handle, c);
+  (*env)->ReleaseStringUTFChars(env, convoId, c);
+  return rc;
+}
+
+// A group's shared metadata as JSON {"name":…,"desc":…} (#102). This is carried
+// to EVERY joiner in the welcome (it lives in an MLS group extension), so a
+// joined group can show its real name instead of "group #N". NULL on error.
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatGroupMetadata(JNIEnv *env, jobject thiz, jlong handle,
+                                                jstring convoId) {
+  (void)thiz;
+  const char *c = (*env)->GetStringUTFChars(env, convoId, 0);
+  char *json = logoschat_group_metadata((void *)handle, c);
+  (*env)->ReleaseStringUTFChars(env, convoId, c);
+  return take_cstr(env, json);
+}
+
 // Register the persistent event callback for this handle. The wrapper spawns a
 // pump; events arriving before this are buffered on the crossbeam channel, so
 // there is no early-event-loss window (unlike the old lib).

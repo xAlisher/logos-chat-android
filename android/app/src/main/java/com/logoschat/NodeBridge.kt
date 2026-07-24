@@ -84,6 +84,22 @@ object NodeBridge {
   /** Add peerAddress to group convoId (M2'). 0 on success, -1 on failure. */
   external fun chatAddGroupMember(handle: Long, convoId: String, peerAddress: String): Int
 
+  /**
+   * Self-removal from a group (#108). rc==0 means the removal CONSENSUS ROUND
+   * opened and was published — NOT that we are already out; the ejecting commit
+   * lands asynchronously. Fails while the group is mid-round (retryable), and
+   * always fails for a group from a previous session (#103, no GroupV2 reload).
+   */
+  external fun chatLeaveGroup(handle: Long, convoId: String): Int
+
+  /**
+   * A group's shared metadata as JSON `{"name":…,"desc":…}` (#102). Lives in an
+   * MLS group extension, so it IS carried to every joiner — this is how a joined
+   * group learns its real name. Null on error (e.g. a 1:1, or a legacy group
+   * carrying no metadata).
+   */
+  external fun chatGroupMetadata(handle: Long, convoId: String): String?
+
   /** Register the persistent event callback for this handle. 0 on success. */
   external fun chatSetEventCallback(handle: Long): Int
 

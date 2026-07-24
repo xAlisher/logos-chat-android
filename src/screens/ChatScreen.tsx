@@ -1,6 +1,11 @@
 // Chat thread. Inverted list over the DURABLE history (SQLite via chatStore);
 // peer bubbles left, own right; optimistic 'pending' (dimmed) on sends; failed
 // bubbles are tappable → retry. NO "delivered" ticks.
+//
+// Affordances (#104 #105 #106 #107 #109): every per-thread action lives behind
+// ONE header overflow menu, and every per-message action behind a long-press on
+// the bubble. Nothing is edited by tapping a label any more (#106) — a title
+// that silently opened a modal was undiscoverable and easy to hit by accident.
 import React, {useCallback, useEffect, useState} from 'react';
 import {
   Alert,
@@ -20,7 +25,20 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {TrashIcon} from '../components/TrashIcon';
-import {ContactLabelModal} from '../components/ContactLabelModal';
+import {QrIcon} from '../components/QrIcon';
+import {
+  OverflowMenu,
+  EllipsisIcon,
+  TagIcon,
+  UserPlusIcon,
+  UsersIcon,
+  EraserIcon,
+  type MenuItem,
+} from '../components/OverflowMenu';
+import {AddressModal} from '../components/AddressModal';
+import {LabelModal} from '../components/LabelModal';
+import {BubbleActionMenu} from '../components/BubbleActionMenu';
+import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import type {Conversation, Message} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
@@ -29,11 +47,11 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-/** The attribution shown above an incoming bubble (#10) — tappable → Contact modal. */
+/** The attribution shown above an incoming bubble (#10). Display-only (#109). */
 interface Attribution {
   label: string | null;
   hex: string;
-  /** Full sender address, so tapping the line can open the Contact modal. */
+  /** Full sender address — carried into the bubble's long-press menu. */
   address: string;
 }
 
@@ -42,6 +60,17 @@ function formatTime(at: number): string {
   return `${String(d.getHours()).padStart(2, '0')}:${String(
     d.getMinutes(),
   ).padStart(2, '0')}`;
+}
+
+/**
+ * Find the 1:1 conversation with `address`, if we already have one.
+ * Case-insensitive: addresses come back from different layers in either case.
+ */
+function findDirectConvo(address: string): Conversation | undefined {
+  const target = address.toLowerCase();
+  return Object.values(useChatStore.getState().conversations).find(
+    c => !c.isGroup && c.peerAddress?.toLowerCase() === target,
+  );
 }
 
 // Resolve the sender line for an INCOMING message (#10). Own bubbles get none.
@@ -87,23 +116,20 @@ function Bubble({
   msg,
   attribution,
   onRetry,
-  onOpenContact,
+  onLongPress,
 }: {
   msg: Message;
   attribution: Attribution | null;
   onRetry: () => void;
-  onOpenContact: (a: Attribution) => void;
+  onLongPress: () => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
-      {/* Tapping the contact line opens the Contact modal (address + label). */}
+      {/* Display only (#109): the contact actions live on the bubble long-press. */}
       {attribution != null && (
-        <Pressable
-          onPress={() => onOpenContact(attribution)}
-          hitSlop={6}
-          testID={`attr-${attribution.address}`}>
+        <View testID={`attr-${attribution.address}`}>
           {attribution.label != null ? (
             <Text style={styles.attrLine} numberOfLines={1}>
               <Text style={{color: colors.contact}}>{attribution.label}</Text>
@@ -116,11 +142,15 @@ function Bubble({
               {attribution.hex}
             </Text>
           )}
-        </Pressable>
+        </View>
       )}
+      {/* Short tap = retry (failed only); long press = the action menu. The
+          Pressable must stay ENABLED or `disabled` would kill onLongPress too. */}
       <Pressable
-        disabled={!failed}
-        onPress={onRetry}
+        onPress={failed ? onRetry : undefined}
+        onLongPress={onLongPress}
+        delayLongPress={350}
+        testID={`bubble-${msg.msgPk}`}
         style={[
           styles.bubble,
           own ? styles.bubbleOwn : styles.bubblePeer,
@@ -153,18 +183,23 @@ export function ChatScreen() {
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
   const setNickname = useChatStore(s => s.setNickname);
+  const wipe = useChatStore(s => s.wipe);
+  const remove = useChatStore(s => s.remove);
+  const startConversation = useChatStore(s => s.startConversation);
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  // The contact the modal is showing: the thread peer (header title) OR the
-  // sender of a tapped bubble (works for group members too).
-  const [contactTarget, setContactTarget] = useState<{
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [addressOpen, setAddressOpen] = useState(false);
+  // The contact the label editor is for: the thread peer (header menu) OR the
+  // sender of a long-pressed bubble (works for group members too).
+  const [labelTarget, setLabelTarget] = useState<{
     address: string | null;
     label: string | null;
   } | null>(null);
-  const startConversation = useChatStore(s => s.startConversation);
+  const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -174,7 +209,8 @@ export function ChatScreen() {
     }, [convoPk, setActive, loadMessages]),
   );
 
-  const remove = useChatStore(s => s.remove);
+  const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
+
   const onTrash = useCallback(() => {
     Alert.alert('Delete conversation', 'Delete this conversation and all its messages?', [
       {text: 'Cancel', style: 'cancel'},
@@ -190,11 +226,31 @@ export function ChatScreen() {
     ]);
   }, [remove, convoPk, navigation]);
 
-  const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
+  // Wipe = local content only. Say so plainly: it does NOT leave the group, and
+  // messages sent after the wipe still arrive (#107).
+  const onWipe = useCallback(() => {
+    Alert.alert(
+      'Wipe group',
+      'Wipe this group from this device? All its messages will be deleted here. ' +
+        'You will still receive new messages — wiping does not remove you from the group.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Wipe',
+          style: 'destructive',
+          onPress: () => {
+            wipe(convoPk).catch(e =>
+              useNodeStore.setState({error: `wipe failed: ${e?.message ?? e}`}),
+            );
+          },
+        },
+      ],
+    );
+  }, [wipe, convoPk]);
 
   const openLabel = useCallback(
     () =>
-      setContactTarget({
+      setLabelTarget({
         address: convo?.peerAddress ?? null,
         label: convo?.nickname ?? null,
       }),
@@ -211,10 +267,7 @@ export function ChatScreen() {
       if (address == null) {
         return;
       }
-      const target = address.toLowerCase();
-      const existing = Object.values(useChatStore.getState().conversations).find(
-        c => !c.isGroup && c.peerAddress?.toLowerCase() === target,
-      );
+      const existing = findDirectConvo(address);
       try {
         if (existing != null) {
           await setNickname(existing.convoPk, newLabel);
@@ -228,10 +281,78 @@ export function ChatScreen() {
     [setNickname, startConversation],
   );
 
+  /** "Send message" on a group member's bubble (#109): resolve-or-create the 1:1. */
+  const openDirectWith = useCallback(
+    async (address: string) => {
+      try {
+        const existing = findDirectConvo(address);
+        const pk =
+          existing != null ? existing.convoPk : await startConversation(address);
+        const target = useChatStore.getState().conversations[pk];
+        navigation.navigate('Chat', {
+          convoPk: pk,
+          convoName:
+            target != null ? convoDisplayName(target) : shortAddress(address),
+          isGroup: false,
+        });
+      } catch (e: any) {
+        useNodeStore.setState({error: `could not open chat: ${e?.message ?? e}`});
+      }
+    },
+    [startConversation, navigation],
+  );
+
+  const hasLabel = convo?.nickname != null && convo.nickname.length > 0;
+
+  // One menu for the whole thread (#104 1:1, #107 groups).
+  const menuItems: MenuItem[] = isGroup
+    ? [
+        {
+          key: 'add-members',
+          label: 'Add members',
+          icon: <UserPlusIcon color={colors.textDim} />,
+          onPress: () => navigation.navigate('AddMembers', {convoPk}),
+        },
+        {
+          key: 'group-info',
+          label: 'Group info',
+          icon: <UsersIcon color={colors.textDim} />,
+          onPress: () => navigation.navigate('GroupInfo', {convoPk}),
+        },
+        {
+          key: 'wipe-group',
+          label: 'Wipe group',
+          icon: <EraserIcon color={colors.unread} />,
+          onPress: onWipe,
+          destructive: true,
+        },
+      ]
+    : [
+        {
+          key: 'label',
+          label: hasLabel ? 'Edit label' : 'Add label',
+          icon: <TagIcon color={colors.textDim} />,
+          onPress: openLabel,
+        },
+        {
+          key: 'show-address',
+          label: 'Show address',
+          icon: <QrIcon size={20} color={colors.textDim} />,
+          onPress: () => setAddressOpen(true),
+        },
+        {
+          key: 'delete',
+          label: 'Delete conversation',
+          icon: <TrashIcon size={20} color={colors.unread} />,
+          onPress: onTrash,
+          destructive: true,
+        },
+      ];
+
   useEffect(() => {
     navigation.setOptions({
-      // Custom title (#8/#9): 1:1 shows label + short hex (two lines) and opens
-      // the contact-label modal on press; a group keeps its single-line name.
+      // Custom title (#8/#9/#106): 1:1 shows label + short hex on two lines, a
+      // group its name. NOT pressable — labels are edited from the menu.
       headerTitle: () => {
         if (convo == null) {
           return <Text style={styles.headerTitleText}> </Text>;
@@ -243,14 +364,14 @@ export function ChatScreen() {
             </Text>
           );
         }
-        const hasLabel = convo.nickname != null && convo.nickname.length > 0;
         const shortHex =
           convo.peerAddress != null
             ? shortAddress(convo.peerAddress)
             : `peer #${convo.convoPk}`;
+        const labelled = convo.nickname != null && convo.nickname.length > 0;
         return (
-          <Pressable testID="chat-title" onPress={openLabel} hitSlop={8}>
-            {hasLabel ? (
+          <View testID="chat-title">
+            {labelled ? (
               <>
                 <Text style={styles.headerTitleText} numberOfLines={1}>
                   {convo.nickname}
@@ -264,33 +385,27 @@ export function ChatScreen() {
                 {shortHex}
               </Text>
             )}
-          </Pressable>
+          </View>
         );
       },
       headerRight: () => (
-        <View style={styles.headerActions}>
-          {isGroup && (
-            <Pressable
-              onPress={() => navigation.navigate('GroupInfo', {convoPk})}
-              hitSlop={10}
-              testID="group-info">
-              <Text style={styles.headerIcon}>info</Text>
-            </Pressable>
-          )}
-          <Pressable onPress={onTrash} hitSlop={10} testID="chat-delete">
-            <TrashIcon size={22} />
-          </Pressable>
-        </View>
+        <Pressable
+          onPress={() => setMenuOpen(true)}
+          hitSlop={10}
+          style={styles.headerBtn}
+          testID="chat-overflow">
+          <EllipsisIcon size={22} color={colors.text} />
+        </Pressable>
       ),
     });
-  }, [navigation, convo, onTrash, isGroup, convoPk, openLabel]);
+  }, [navigation, convo, isGroup]);
 
   const running = nodeStatus === 'running';
   const connecting = nodeStatus === 'initializing' || nodeStatus === 'starting';
   const canSend = running && text.trim().length > 0 && !busy;
 
-  // Submit button color mirrors node status (#17): orange running, amber while
-  // connecting (NOT pulsing), red offline. The button is never a dead no-op.
+  // Submit button color mirrors node status (#17): orange running, gray while
+  // connecting, red offline. The button is never a dead no-op.
   const sendColor = running
     ? colors.accent
     : connecting
@@ -335,16 +450,25 @@ export function ChatScreen() {
         inverted
         data={messages}
         keyExtractor={m => String(m.msgPk)}
-        renderItem={({item}) => (
-          <Bubble
-            msg={item}
-            attribution={resolveAttribution(item, isGroup, convo)}
-            onRetry={() => retry(convoPk, item.msgPk)}
-            onOpenContact={a =>
-              setContactTarget({address: a.address, label: a.label})
-            }
-          />
-        )}
+        renderItem={({item}) => {
+          const attribution = resolveAttribution(item, isGroup, convo);
+          return (
+            <Bubble
+              msg={item}
+              attribution={attribution}
+              onRetry={() => retry(convoPk, item.msgPk)}
+              onLongPress={() =>
+                setBubbleTarget({
+                  own: item.direction === 'out',
+                  isGroup,
+                  text: item.text,
+                  address: attribution?.address ?? null,
+                  label: attribution?.label ?? null,
+                })
+              }
+            />
+          );
+        }}
         // flex:1 so the list owns the free space and the composer keeps its
         // intrinsic height. When there are NO messages, an inverted list under
         // KeyboardAvoidingView mismeasures and collapses the composer to ~0
@@ -378,12 +502,28 @@ export function ChatScreen() {
           </Text>
         </Pressable>
       </View>
-      <ContactLabelModal
-        visible={contactTarget != null}
-        address={contactTarget?.address ?? null}
-        label={contactTarget?.label ?? null}
-        onClose={() => setContactTarget(null)}
-        onSave={newLabel => saveLabelFor(contactTarget?.address ?? null, newLabel)}
+      <OverflowMenu
+        visible={menuOpen}
+        items={menuItems}
+        onClose={() => setMenuOpen(false)}
+        testID="chat-menu"
+      />
+      <BubbleActionMenu
+        target={bubbleTarget}
+        onClose={() => setBubbleTarget(null)}
+        onAddLabel={t => setLabelTarget({address: t.address, label: t.label})}
+        onSendMessage={openDirectWith}
+      />
+      <AddressModal
+        visible={addressOpen}
+        address={convo?.peerAddress ?? null}
+        onClose={() => setAddressOpen(false)}
+      />
+      <LabelModal
+        visible={labelTarget != null}
+        label={labelTarget?.label ?? null}
+        onClose={() => setLabelTarget(null)}
+        onSave={newLabel => saveLabelFor(labelTarget?.address ?? null, newLabel)}
       />
       <ErrorToast message={nodeError} onDismiss={clearError} />
     </KeyboardAvoidingView>
@@ -410,8 +550,12 @@ const styles = StyleSheet.create({
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
   attrLine: {...type.caption, marginBottom: 2},
   time: {...type.caption, color: colors.textFaint},
-  headerActions: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg},
-  headerIcon: {...type.label, color: colors.accent},
+  headerBtn: {
+    minWidth: layout.minTouchTarget,
+    minHeight: layout.minTouchTarget,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   headerTitleText: {...type.title, color: colors.text},
   headerTitleSub: {...type.caption, color: colors.textDim},
   composer: {
