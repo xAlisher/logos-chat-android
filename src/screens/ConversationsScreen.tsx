@@ -23,6 +23,7 @@ import {
 } from '../stores/chatStore';
 import type {Conversation} from '../stores/chatStore';
 import type {RootStackParamList} from '../navigation/types';
+import {CONTACT_ATTACH_ENABLED} from '../config/features';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -58,7 +59,9 @@ function ConversationRow({
       <View
         style={[
           styles.dot,
-          convo.pending
+          // #82 — don't amber-flag unknown/pending conversations when the attach
+          // flow is hidden; just show live (accent) vs expired (faint).
+          CONTACT_ATTACH_ENABLED && convo.pending
             ? styles.dotPending
             : convo.expired
             ? styles.dotExpired
@@ -78,9 +81,9 @@ function ConversationRow({
           {convoDisplayName(convo)}
         </Text>
         <Text style={styles.preview} numberOfLines={1}>
-          {convo.expired && !convo.pending
-            ? 'session expired — re-introduce to continue'
-            : convo.lastText || 'new conversation'}
+          {/* Always show the last message — the gray title already signals an
+              expired session; the 'session expired' preview was noise. */}
+          {convo.lastText || 'new conversation'}
         </Text>
       </View>
       <View style={styles.rowRight}>

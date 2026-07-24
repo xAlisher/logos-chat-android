@@ -28,6 +28,7 @@ import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
 import LogosChat from '../native/LogosChat';
 import {buildNodeConfig} from '../config/mix';
+import {MIX_UI_ENABLED} from '../config/features';
 
 export function SettingsScreen() {
   const status = useNodeStore(s => s.status);
@@ -134,7 +135,8 @@ export function SettingsScreen() {
           </View>
         </View>
 
-        {/* ── Block 2: Private routing — on/off toggle (+ mix pool when on) ── */}
+        {/* ── Block 2: Private routing — HIDDEN for now (#81); infra kept ── */}
+        {MIX_UI_ENABLED && (
         <View style={styles.card}>
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
@@ -185,6 +187,7 @@ export function SettingsScreen() {
             </View>
           )}
         </View>
+        )}
 
         {/* ── Block 3: Identity (intro bundle) ── */}
         <View style={styles.card}>

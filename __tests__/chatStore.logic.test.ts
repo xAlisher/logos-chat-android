@@ -41,11 +41,11 @@ describe('convoDisplayName', () => {
     expect(convoDisplayName(row({name: 'desktop-m3'}))).toBe('desktop-m3');
   });
 
-  it('labels a pending inbound conversation as unattributed (#24)', () => {
+  it('labels a pending inbound conversation as unknown (#24)', () => {
     // bundles are opaque + names unauthenticated, so an un-merged inbound
     // conversation must read as clearly not-yet-identified, not as a real peer
     expect(convoDisplayName(row({convoPk: 7, pending: true}))).toBe(
-      'unattributed #7',
+      'unknown #7',
     );
   });
 

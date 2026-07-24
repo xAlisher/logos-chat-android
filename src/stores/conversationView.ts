@@ -21,5 +21,5 @@ export function convoDisplayName(c: ConversationRow): string {
   if (c.name != null && c.name.length > 0) {
     return c.name;
   }
-  return c.pending ? `unattributed #${c.convoPk}` : `peer #${c.convoPk}`;
+  return c.pending ? `unknown #${c.convoPk}` : `peer #${c.convoPk}`;
 }

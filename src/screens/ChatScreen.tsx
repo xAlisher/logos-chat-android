@@ -31,6 +31,7 @@ import type {Message} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore, mixSendGated} from '../stores/settingsStore';
 import type {RootStackParamList} from '../navigation/types';
+import {CONTACT_ATTACH_ENABLED} from '../config/features';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -171,13 +172,13 @@ export function ChatScreen() {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      {convo?.pending === true && (
+      {CONTACT_ATTACH_ENABLED && convo?.pending === true && (
         <Pressable
           style={styles.pendingBar}
           testID="attach-contact-bar"
           onPress={() => navigation.navigate('AttachContact', {convoPk})}>
           <Text style={[type.label, {color: colors.pulse}]}>
-            unattributed conversation — tap to attach to a contact
+            unknown conversation — tap to attach to a contact
           </Text>
         </Pressable>
       )}
@@ -190,34 +191,9 @@ export function ChatScreen() {
         )}
         contentContainerStyle={styles.list}
       />
-      {expired && (
-        <View style={styles.expiredBanner} testID="expired-banner">
-          <Text style={[type.label, {color: colors.text}]}>
-            session expired — the encrypted session died with the last node run.
-            {canReintroduce
-              ? ' sending will re-introduce with the stored bundle.'
-              : running
-              ? ' no stored bundle — exchange QRs to continue this thread.'
-              : ' start the node, then re-introduce.'}
-          </Text>
-          <View style={styles.expiredActions}>
-            <Pressable
-              style={styles.expiredBtn}
-              testID="expired-show-qr"
-              onPress={() => navigation.navigate('IntroBundle')}>
-              <Text style={[type.label, {color: colors.accent}]}>show my QR</Text>
-            </Pressable>
-            <Pressable
-              style={styles.expiredBtn}
-              testID="expired-scan"
-              onPress={() =>
-                navigation.navigate('Scan', {reintroduceConvoPk: convoPk})
-              }>
-              <Text style={[type.label, {color: colors.accent}]}>scan theirs</Text>
-            </Pressable>
-          </View>
-        </View>
-      )}
+      {/* #82 — the noisy 'session expired' banner + re-introduce actions are
+          hidden; the disabled composer placeholder ('session expired') is enough,
+          and an expired thread with a stored bundle continues seamlessly on send. */}
       {mixGated && running && (
         <View style={styles.mixGateBanner} testID="mix-gate-banner">
           <Text style={[type.label, {color: colors.unread}]}>
@@ -238,7 +214,7 @@ export function ChatScreen() {
               ? 'Waiting for mix peers…'
               : expired
               ? canReintroduce
-                ? 'message (re-introduces)…'
+                ? 'message…'
                 : 'session expired'
               : 'message…'
           }

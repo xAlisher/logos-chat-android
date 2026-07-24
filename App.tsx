@@ -6,6 +6,7 @@ import {paperTheme, colors} from './src/theme';
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {useSettingsStore} from './src/stores/settingsStore';
 import {useNodeStore} from './src/stores/nodeStore';
+import {MIX_UI_ENABLED} from './src/config/features';
 
 /**
  * Android 13+ blocks every notification until POST_NOTIFICATIONS is granted at
@@ -35,8 +36,15 @@ function App() {
     // bundle happens on the 'running' node_status event (nodeStore).
     (async () => {
       await useSettingsStore.getState().load();
+      // #81 — mix UI hidden: force standard mode so nobody is stuck in mix (also
+      // resets a previously-persisted mix flag).
+      if (!MIX_UI_ENABLED && useSettingsStore.getState().privateRouting) {
+        await useSettingsStore.getState().persistPrivateRouting(false);
+      }
       const {displayName, privateRouting} = useSettingsStore.getState();
-      await useNodeStore.getState().autoStart(displayName, privateRouting);
+      await useNodeStore
+        .getState()
+        .autoStart(displayName, MIX_UI_ENABLED && privateRouting);
     })();
   }, []);
 
