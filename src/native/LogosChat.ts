@@ -44,6 +44,8 @@ export interface ConversationRow {
   groupName: string | null;
   /** App-side member count (groups only). */
   memberCount: number;
+  /** #112: did THIS device create the group? Only the creator may re-create it. */
+  createdByMe: boolean;
 }
 
 export interface MessageRow {
@@ -95,6 +97,10 @@ interface LogosChatNative {
    * session (#103).
    */
   leaveGroup(convoPk: number): Promise<null>;
+  /** #112: is a group still operable by the lib? 'live' | 'dead' | 'unknown'. */
+  groupLiveness(convoPk: number): Promise<string>;
+  /** #112: re-create a dead group in place. Resolves '{"invited":n,"total":m}'. */
+  recreateGroup(convoPk: number): Promise<string>;
   /** Delete a conversation's messages but KEEP the conversation (#107 wipe). */
   wipeConversationContent(convoPk: number): Promise<null>;
   deleteConversation(convoPk: number): Promise<null>;

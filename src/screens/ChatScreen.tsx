@@ -24,6 +24,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
+import {ActionButton} from '../components/ActionButton';
 import {TrashIcon} from '../components/TrashIcon';
 import {QrIcon} from '../components/QrIcon';
 import {
@@ -188,6 +189,9 @@ export function ChatScreen() {
   const leaveGroup = useChatStore(s => s.leaveGroup);
   const remove = useChatStore(s => s.remove);
   const startConversation = useChatStore(s => s.startConversation);
+  const probeGroup = useChatStore(s => s.probeGroup);
+  const recreateGroup = useChatStore(s => s.recreateGroup);
+  const liveness = useChatStore(s => s.liveness[convoPk]);
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
@@ -202,13 +206,20 @@ export function ChatScreen() {
     label: string | null;
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
+  // #112: set after a successful re-create so the thread can report what happened.
+  const [recreated, setRecreated] = useState<{invited: number; total: number} | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       setActive(convoPk);
       loadMessages(convoPk);
+      // #112: a group from an earlier node session cannot be operated (#103).
+      // Probe once on focus so the thread can say so instead of failing on send.
+      if (route.params.isGroup === true || useChatStore.getState().conversations[convoPk]?.isGroup) {
+        probeGroup(convoPk).catch(() => {});
+      }
       return () => setActive(null);
-    }, [convoPk, setActive, loadMessages]),
+    }, [convoPk, setActive, loadMessages, probeGroup, route.params.isGroup]),
   );
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
@@ -453,6 +464,12 @@ export function ChatScreen() {
     ? colors.nodeConnecting
     : colors.nodeOffline;
 
+  // #112: a group the lib can no longer operate. Only the CREATOR may revive it;
+  // everyone else is offered a fresh group instead (two re-creators would fork it,
+  // and a joiner's roster is partial (#95) so it would silently drop members).
+  const dead = isGroup && liveness === 'dead';
+  const canRevive = dead && (convo?.createdByMe ?? false);
+
   const doSend = async () => {
     if (!canSend) {
       return;
@@ -461,6 +478,11 @@ export function ChatScreen() {
     setText('');
     try {
       setBusy(true);
+      if (canRevive) {
+        // Revive first, then send on the fresh conversation.
+        const res = await recreateGroup(convoPk);
+        setRecreated(res);
+      }
       await send(convoPk, t);
     } catch (e: any) {
       useNodeStore.setState({error: `send failed: ${e?.message ?? e}`});
@@ -523,6 +545,31 @@ export function ChatScreen() {
         ]}
         ListEmptyComponent={<View style={styles.emptySpacer} />}
       />
+      {/* #112 system lines. Deliberately says WHY (our restart), not "expired" —
+          which would read like a server-side lifetime. */}
+      {dead && (
+        <Text style={styles.systemLine} testID="group-dead-line">
+          ──── Group ended when the app restarted ────
+        </Text>
+      )}
+      {recreated != null && (
+        <Text style={styles.systemLine} testID="group-recreated-line">
+          {`──── Group re-created · ${recreated.invited} of ${recreated.total} members invited ────`}
+        </Text>
+      )}
+      {dead && !canRevive ? (
+        // Member side: no auto re-create. Offer a working way forward instead of
+        // a dead composer. Plain New Group screen — we cannot honestly prefill a
+        // roster (#95 partial), so starting clean is the honest option.
+        <View style={styles.deadFooter}>
+          <ActionButton
+            label="Create new group"
+            variant="primary"
+            testID="create-new-group"
+            onPress={() => navigation.navigate('NewGroup')}
+          />
+        </View>
+      ) : (
       <View style={styles.composer}>
         <TextInput
           style={styles.input}
@@ -543,6 +590,7 @@ export function ChatScreen() {
           </Text>
         </Pressable>
       </View>
+      )}
       <OverflowMenu
         visible={menuOpen}
         items={menuItems}
@@ -589,6 +637,19 @@ const styles = StyleSheet.create({
   bubbleOwn: {backgroundColor: colors.accent},
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
+  systemLine: {
+    ...type.caption,
+    color: colors.textFaint,
+    textAlign: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  deadFooter: {
+    backgroundColor: colors.pane,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    padding: spacing.md,
+  },
   attrLine: {...type.caption, marginBottom: 2},
   time: {...type.caption, color: colors.textFaint},
   headerBtn: {

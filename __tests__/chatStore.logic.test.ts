@@ -19,6 +19,7 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     isGroup: false,
     groupName: null,
     memberCount: 0,
+    createdByMe: false,
     ...over,
   };
 }

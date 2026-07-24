@@ -373,7 +373,8 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                       (SELECT direction FROM messages m WHERE m.convo_pk=c.convo_pk
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
-                      (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk)
+                      (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),
+                      c.created_by_me
                FROM conversations c
                ORDER BY c.last_message_at DESC""",
             null)
@@ -393,6 +394,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("isGroup", cur.getInt(9) == 1)
                   if (cur.isNull(10)) put("groupName", JSONObject.NULL) else put("groupName", cur.getString(10))
                   put("memberCount", cur.getInt(11))
+                  put("createdByMe", cur.getInt(12) == 1)
                 })
           }
         }

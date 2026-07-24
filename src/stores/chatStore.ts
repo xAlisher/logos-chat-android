@@ -42,6 +42,12 @@ interface ChatState {
   wipe: (convoPk: number) => Promise<void>;
   /** Ask the group to remove us, then drop it locally (#108). */
   leaveGroup: (convoPk: number) => Promise<void>;
+  /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
+  liveness: Record<number, string>;
+  /** #112: probe whether the lib can still operate this group. */
+  probeGroup: (convoPk: number) => Promise<string>;
+  /** #112: re-create a dead group in place. Resolves {invited,total}. */
+  recreateGroup: (convoPk: number) => Promise<{invited: number; total: number}>;
   /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
 }
@@ -57,6 +63,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   conversations: {},
   messages: {},
   members: {},
+  liveness: {},
   activeConvoPk: null,
 
   refreshConversations: async () => {
@@ -176,6 +183,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await LogosChat.wipeConversationContent(convoPk);
     set(s => ({messages: {...s.messages, [convoPk]: []}}));
     await get().refreshConversations();
+  },
+
+  probeGroup: async (convoPk: number) => {
+    const state = await LogosChat.groupLiveness(convoPk);
+    set(s => ({liveness: {...s.liveness, [convoPk]: state}}));
+    return state;
+  },
+
+  recreateGroup: async (convoPk: number) => {
+    const res = JSON.parse(await LogosChat.recreateGroup(convoPk));
+    // The group is operable again on the NEW lib conversation.
+    set(s => ({liveness: {...s.liveness, [convoPk]: 'live'}}));
+    await get().loadMembers(convoPk);
+    await get().refreshConversations();
+    return {invited: res.invited ?? 0, total: res.total ?? 0};
   },
 
   leaveGroup: async (convoPk: number) => {
