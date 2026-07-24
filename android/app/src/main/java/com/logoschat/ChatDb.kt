@@ -38,7 +38,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // v2 (M2'): MLS groups — is_group + group_name on conversations, a
     // per-message sender_account (groups have many senders), a group_members
     // roster table.
-    const val DB_VERSION = 2
+    const val DB_VERSION = 3
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -51,6 +51,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              nickname TEXT,
              is_group INT DEFAULT 0,
              group_name TEXT,
+             created_by_me INT DEFAULT 0,
              created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
     db.execSQL(
         """CREATE TABLE messages(
@@ -87,6 +88,13 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                    address TEXT, is_self INT DEFAULT 0, added_at INT,
                    PRIMARY KEY(convo_pk, address))""")
         }
+        3 -> {
+          // #112: only the device that CREATED a group may re-create it after a
+          // restart. Two members re-creating would fork the group, and a joiner's
+          // roster is partial (#95) so it would silently drop members. Groups that
+          // already exist get 0 — they are unrecoverable anyway.
+          db.execSQL("ALTER TABLE conversations ADD COLUMN created_by_me INT DEFAULT 0")
+        }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
     }
@@ -114,6 +122,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       createdAt: Long,
       isGroup: Boolean = false,
       groupName: String? = null,
+      createdByMe: Boolean = false,
   ): Long =
       writableDatabase.insertOrThrow(
           "conversations",
@@ -123,6 +132,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
             if (libConvoId != null) put("lib_convo_id", libConvoId) else putNull("lib_convo_id")
             if (nickname != null) put("nickname", nickname) else putNull("nickname")
             put("is_group", if (isGroup) 1 else 0)
+            put("created_by_me", if (createdByMe) 1 else 0)
             if (groupName != null) put("group_name", groupName) else putNull("group_name")
             put("created_at", createdAt)
             put("last_message_at", createdAt)
@@ -134,6 +144,31 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       readableDatabase
           .rawQuery("SELECT is_group FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
           .use { it.moveToFirst() && it.getInt(0) == 1 }
+
+  /** #112: did THIS device create the group? Only the creator may re-create it. */
+  fun createdByMe(convoPk: Long): Boolean =
+      readableDatabase
+          .rawQuery(
+              "SELECT created_by_me FROM conversations WHERE convo_pk=?",
+              arrayOf(convoPk.toString()))
+          .use { it.moveToFirst() && it.getInt(0) == 1 }
+
+  /** A group's stored name (#112: reused verbatim when re-creating a dead group). */
+  fun groupNameOf(convoPk: Long): String? =
+      readableDatabase
+          .rawQuery("SELECT group_name FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .use { if (it.moveToFirst()) it.getString(0) else null }
+
+  /** Every roster address for a group (#112: who to re-invite). */
+  fun groupMemberAddresses(convoPk: Long): List<String> {
+    val out = mutableListOf<String>()
+    readableDatabase
+        .rawQuery(
+            "SELECT address FROM group_members WHERE convo_pk=? ORDER BY added_at ASC",
+            arrayOf(convoPk.toString()))
+        .use { cur -> while (cur.moveToNext()) cur.getString(0)?.let { out.add(it) } }
+    return out
+  }
 
   fun setGroupName(convoPk: Long, name: String) {
     writableDatabase.execSQL(
@@ -236,9 +271,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     db.beginTransaction()
     try {
       db.execSQL("DELETE FROM messages WHERE convo_pk=?", arrayOf(convoPk))
-      db.execSQL(
-          "UPDATE conversations SET unread=0, last_text='', last_direction='' WHERE convo_pk=?",
-          arrayOf(convoPk))
+      // The list preview is DERIVED from `messages`, not stored on the row — so
+      // deleting the messages is what clears it. Only `unread` needs resetting.
+      db.execSQL("UPDATE conversations SET unread=0 WHERE convo_pk=?", arrayOf(convoPk))
       db.setTransactionSuccessful()
     } finally {
       db.endTransaction()

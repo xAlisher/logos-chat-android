@@ -441,6 +441,80 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * Is a group still operable by the lib? (#112)
+   *
+   * A GroupV2 from an EARLIER node session cannot be rebuilt (de-mls has no load
+   * path, #103), so the row and its history survive while every operation fails.
+   * Probing with group_metadata is cheap and read-only: a live group answers with
+   * its metadata; a dead one errors. Resolves "live" | "dead" | "unknown" —
+   * "unknown" when we cannot tell (node down, or a legacy group that simply
+   * carries no metadata extension), so the UI never cries wolf.
+   */
+  @ReactMethod
+  fun groupLiveness(convoPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.resolve("unknown")
+        return@execute
+      }
+      val libConvoId = ChatRepo.requireDb().libConvoIdOf(convoPk.toLong())
+      if (libConvoId == null) {
+        promise.resolve("unknown")
+        return@execute
+      }
+      val json = NodeBridge.chatGroupMetadata(c, libConvoId)
+      if (json != null) {
+        promise.resolve("live")
+        return@execute
+      }
+      val err = NodeBridge.chatLastError() ?: ""
+      val dead = err.contains("was not found", true) || err.contains("cannot be rebuilt", true)
+      promise.resolve(if (dead) "dead" else "unknown")
+    }
+  }
+
+  /**
+   * Re-create a dead group in place (#112): make a NEW lib group with the same
+   * name, rebind THIS conversation row to it (so local history continues), and
+   * re-invite every address on the persisted roster. Resolves JSON
+   * {"invited":n,"total":m} — the caller must report the REAL numbers, never a
+   * blanket success. Only the creator may do this (guarded here too).
+   */
+  @ReactMethod
+  fun recreateGroup(convoPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("recreate_group", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      if (!d.createdByMe(pk)) {
+        promise.reject("recreate_group", "only the group's creator can re-create it")
+        return@execute
+      }
+      val name = d.groupNameOf(pk) ?: "group"
+      val newId = NodeBridge.chatCreateGroup(c, name, "")
+      if (newId == null) {
+        promise.reject("recreate_group", NodeBridge.chatLastError())
+        return@execute
+      }
+      d.setLibConvoId(pk, newId)
+      val self = NodeRuntime.address?.lowercase()
+      val roster = d.groupMemberAddresses(pk).filter { it.lowercase() != self }
+      var invited = 0
+      for (addr in roster) {
+        val rc = NodeBridge.chatAddGroupMember(c, newId, addr)
+        if (rc == 0) invited++ else Log.w("logos-chat-bridge", "re-invite failed for $addr: ${NodeBridge.chatLastError()}")
+      }
+      Log.i("logos-chat-bridge", "re-created group $pk as $newId, invited $invited/${roster.size}")
+      promise.resolve("""{"invited":$invited,"total":${roster.size}}""")
+    }
+  }
+
   @ReactMethod
   fun leaveGroup(convoPk: Double, promise: Promise) {
     NodeRuntime.executor.execute {

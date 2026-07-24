@@ -154,7 +154,47 @@ class ChatDbTest {
         .rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null)
         .use { c -> while (c.moveToNext()) tables.add(c.getString(0)) }
     assertTrue("missing group_members table", "group_members" in tables)
-    assertEquals(2, db.readableDatabase.version)
+    assertEquals(3, db.readableDatabase.version)
+  }
+
+  // -- #112 dead-group bridge -------------------------------------------------
+
+  @Test
+  fun createdByMeDefaultsFalseAndIsSetOnlyForOurOwnGroups() {
+    // A JOINER's group row (created from an inbound welcome) must NOT be ours,
+    // or two devices would both try to re-create it and fork the group.
+    val joined = db.insertConversation(null, "jlib", null, 1000, isGroup = true)
+    assertTrue("a joined group must not be marked ours", !db.createdByMe(joined))
+
+    val mine =
+        db.insertConversation(
+            null, "mlib", null, 1000, isGroup = true, groupName = "mine", createdByMe = true)
+    assertTrue("our own group must be marked ours", db.createdByMe(mine))
+  }
+
+  @Test
+  fun groupNameAndRosterSurviveForRecreate() {
+    val g =
+        db.insertConversation(
+            null, "glib2", null, 1000, isGroup = true, groupName = "crew", createdByMe = true)
+    db.addGroupMember(g, ADDR, isSelf = true, addedAt = 1000)
+    db.addGroupMember(g, ADDR2, isSelf = false, addedAt = 1001)
+    // Re-creating a dead group reuses the name and re-invites the persisted roster.
+    assertEquals("crew", db.groupNameOf(g))
+    assertEquals(listOf(ADDR, ADDR2), db.groupMemberAddresses(g))
+  }
+
+  @Test
+  fun wipeClearsContentButKeepsTheConversation() {
+    // Wipe must NOT delete the row: there is no way to leave a group yet, so the
+    // conversation has to survive in order to keep receiving new messages.
+    val g = db.insertConversation(null, "glib3", null, 1000, isGroup = true, groupName = "keep")
+    db.insertMessage(g, "in", "hello", 1000, "received")
+    db.insertMessage(g, "out", "bye", 1001, "sent")
+    db.wipeConversationContent(g)
+    assertEquals("[]", db.listMessagesJson(g, 0, 10))
+    assertTrue("the conversation row must survive a wipe", db.isGroup(g))
+    assertEquals("keep", db.groupNameOf(g))
   }
 
   @Test

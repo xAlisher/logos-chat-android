@@ -222,7 +222,11 @@ object ChatRepo {
   fun createGroupConversation(name: String, libConvoId: String, selfAddress: String?): Long {
     val d = requireDb()
     val now = System.currentTimeMillis()
-    val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = true, groupName = name)
+    // #112: mark ourselves the creator — only this device may re-create the group
+    // after a restart (two re-creators would fork it; a joiner's roster is partial).
+    val convoPk =
+        d.insertConversation(
+            null, libConvoId, null, now, isGroup = true, groupName = name, createdByMe = true)
     if (!selfAddress.isNullOrBlank()) d.addGroupMember(convoPk, selfAddress, isSelf = true, addedAt = now)
     Log.i(TAG, "created group convo=$convoPk lib=$libConvoId name=$name")
     return convoPk
