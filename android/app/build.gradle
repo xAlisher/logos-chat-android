@@ -82,8 +82,8 @@ android {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "0.1.1"
         ndk {
             // liblogoschat.so is built for arm64 only (emulators can't run the Nim node anyway)
             abiFilters "arm64-v8a"
@@ -93,6 +93,13 @@ android {
         jniLibs {
             // We vendor libc++_shared.so (liblogoschat's DT_NEEDED); RN AARs ship their own copy.
             pickFirsts += ['**/libc++_shared.so']
+            // DUAL-BINARY (#51): we load the chosen variant by ABSOLUTE PATH via
+            // System.load(nativeLibraryDir + "/liblogoschat_<variant>.so"). Modern
+            // AGP packs .so uncompressed inside the APK (extractNativeLibs=false),
+            // so nativeLibraryDir has no files on disk and System.load(path) fails
+            // ("library not found"). Legacy packaging extracts them at install so the
+            // absolute-path load resolves. System.loadLibrary(name) is unaffected.
+            useLegacyPackaging true
         }
     }
     signingConfigs {

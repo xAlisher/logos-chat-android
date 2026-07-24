@@ -33,6 +33,22 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     capture(intent)
+    maybeAutostartAfterModeSwitch()
+  }
+
+  /**
+   * Dual-binary mode switch (#51): after restartInMode() restarts the process, the
+   * correct .so is already loaded by MainApplication — here we consume the one-shot
+   * flag and foreground ChatService, which auto-starts the node in the persisted
+   * mode (JS-independent). Scoped to the switch only, so a normal cold launch does
+   * NOT auto-start the node.
+   */
+  private fun maybeAutostartAfterModeSwitch() {
+    val prefs = getSharedPreferences(NodeBridge.PREFS, MODE_PRIVATE)
+    if (prefs.getBoolean(NodeBridge.KEY_AUTOSTART_ON_LAUNCH, false)) {
+      prefs.edit().putBoolean(NodeBridge.KEY_AUTOSTART_ON_LAUNCH, false).apply()
+      ChatService.start(this)
+    }
   }
 
   override fun onNewIntent(intent: Intent) {

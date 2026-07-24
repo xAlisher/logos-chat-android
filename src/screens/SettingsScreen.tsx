@@ -24,6 +24,8 @@ import {StatusPill} from '../components/StatusPill';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
+import LogosChat from '../native/LogosChat';
+import {buildNodeConfig} from '../config/mix';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -38,7 +40,6 @@ export function SettingsScreen() {
   const error = useNodeStore(s => s.error);
   const start = useNodeStore(s => s.start);
   const stop = useNodeStore(s => s.stop);
-  const restart = useNodeStore(s => s.restart);
   const fetchIntroBundle = useNodeStore(s => s.fetchIntroBundle);
   const clearError = useNodeStore(s => s.clearError);
 
@@ -60,21 +61,28 @@ export function SettingsScreen() {
     setSwitching(true);
     try {
       await persistPrivateRouting(next);
-      // Recreate the node in the new mode (new epoch). If it wasn't running,
-      // this just starts it in the chosen mode.
-      await restart(IDENTITY, next);
-    } finally {
+      // Dual-binary (#51): standard and mix are two separate .so files with the
+      // same soname, so switching modes can't hot-swap — it loads the other
+      // variant, which needs a fresh process. This RESTARTS THE APP; the node
+      // auto-comes-up in the chosen mode (a new epoch — open chats re-introduce).
+      // Execution effectively ends here (the process is killed).
+      await LogosChat.restartInMode(buildNodeConfig(IDENTITY, next), next);
+    } catch {
+      // Only reached if the restart failed to arm — leave the spinner off.
       setSwitching(false);
       refreshMix();
     }
   };
 
   const onTogglePrivateRouting = (next: boolean) => {
-    const body = running
-      ? 'Private routing restarts your node — open chats will need re-introduction. ' +
-        'Messages then route only through the mix network; nothing falls back to plain relay.'
-      : 'Private routing routes every message through the mix network for sender ' +
-        'anonymity — nothing falls back to plain relay. Starting the node in this mode.';
+    const body = next
+      ? 'Private routing routes every message through the mix network for sender ' +
+        'anonymity — nothing falls back to plain relay. The app will reload to ' +
+        'switch networking modes' +
+        (running ? '; open chats will need re-introduction.' : '.')
+      : 'Turning off Private routing returns to standard relay messaging. The app ' +
+        'will reload to switch networking modes' +
+        (running ? '; open chats will need re-introduction.' : '.');
     Alert.alert(next ? 'Turn on Private routing?' : 'Turn off Private routing?', body, [
       {text: 'Cancel', style: 'cancel'},
       {text: next ? 'Turn on' : 'Turn off', onPress: () => applyMode(next)},
@@ -123,7 +131,7 @@ export function SettingsScreen() {
           </View>
           {switching && (
             <Text style={[type.label, {color: colors.pulse}]}>
-              restarting node in {privateRouting ? 'private' : 'standard'} mode… (new
+              reloading app in {privateRouting ? 'private' : 'standard'} mode… (new
               epoch — open chats will need re-introduction)
             </Text>
           )}

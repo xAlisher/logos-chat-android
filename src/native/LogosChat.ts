@@ -101,6 +101,14 @@ interface LogosChatNative {
   mergeConversation(pendingConvoPk: number, targetConvoPk: number): Promise<null>;
   /** Latest mix status JSON (MixStatus). Cached from the native poller (#31). */
   getMixStatus(): Promise<string>;
+  /**
+   * Dual-binary Private-routing switch (#51): persist the new mode + native .so
+   * variant, then RESTART THE PROCESS so the correct liblogoschat variant loads
+   * fresh. The node auto-comes-up in the chosen mode on relaunch. The returned
+   * promise resolves just before the app is killed — treat it as terminal (no
+   * code after it is guaranteed to run).
+   */
+  restartInMode(configJson: string, mix: boolean): Promise<null>;
   /** Persisted app setting (native kv) — e.g. 'privateRouting' (#30). */
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<null>;

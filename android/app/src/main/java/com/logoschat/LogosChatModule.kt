@@ -1,7 +1,13 @@
 package com.logoschat
 
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
+import android.os.Process
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -243,6 +249,71 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       promise.resolve(
           """{"mixEnabled":${NodeRuntime.mixEnabled},"mixReady":false,"mixPoolSize":0,"minPoolSize":${NodeRuntime.minMixPoolSize}}""")
     }
+  }
+
+  /**
+   * DUAL-BINARY mode switch (#51 option A). Standard and mix ship as two `.so`s
+   * with the same soname; only one can be loaded per process. So flipping Private
+   * routing can't hot-swap — it: (1) persists the new node config + auto-restart
+   * flag so the node comes back in the new mode, (2) writes the native VARIANT flag
+   * the next process start will load, (3) arms a one-shot auto-foreground, then
+   * (4) RESTARTS THE PROCESS (AlarmManager relaunch + kill). On next launch
+   * MainApplication loads the chosen variant and ChatService brings the node up.
+   * The Promise resolves just before the kill; JS should treat this as terminal.
+   */
+  @ReactMethod
+  fun restartInMode(configJson: String, mix: Boolean, promise: Promise) {
+    try {
+      val db = ChatRepo.requireDb()
+      db.kvSet(NodeRuntime.KV_NODE_CONFIG, configJson)
+      db.kvSet(NodeRuntime.KV_AUTO_RESTART, "1")
+      NodeBridge.setPersistedVariant(reactApplicationContext, mix)
+      reactApplicationContext
+          .getSharedPreferences(NodeBridge.PREFS, Context.MODE_PRIVATE)
+          .edit()
+          .putBoolean(NodeBridge.KEY_AUTOSTART_ON_LAUNCH, true)
+          .commit()
+      Log.i("logos-chat-bridge", "restartInMode: mix=$mix — restarting process")
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("restart_mode", t)
+      return
+    }
+    scheduleProcessRestart()
+  }
+
+  /** ProcessPhoenix-style clean restart with no extra dep: schedule the launcher
+   * Intent via AlarmManager, then kill this process so the OS starts it fresh. Uses
+   * INEXACT set() — setExact() needs SCHEDULE_EXACT_ALARM on Android 12+ and would
+   * throw, aborting the restart. The kill is unconditional (outside the try) so a
+   * scheduling failure still tears the process down for a fresh variant load. */
+  private fun scheduleProcessRestart() {
+    val ctx = reactApplicationContext.applicationContext
+    try {
+      val launch =
+          ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+          }
+      if (launch != null) {
+        val pi =
+            PendingIntent.getActivity(
+                ctx,
+                0xC0DE,
+                launch,
+                PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        am.set(AlarmManager.RTC, System.currentTimeMillis() + 500, pi)
+      }
+    } catch (t: Throwable) {
+      Log.w("logos-chat-bridge", "restart alarm scheduling failed: ${t.message}")
+    }
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              Process.killProcess(Process.myPid())
+              System.exit(0)
+            },
+            200)
   }
 
   /** Persisted app setting (kv) — e.g. the "privateRouting" flag so the mode and

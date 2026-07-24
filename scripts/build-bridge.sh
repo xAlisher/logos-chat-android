@@ -11,8 +11,12 @@ JNILIBS="$REPO_ROOT/android/app/src/main/jniLibs"
 OUT="${TMPDIR:-/tmp}/logoschat-bridge-build"
 
 [ -x "$NDK/ndk-build" ] || { echo "ndk-build not found at $NDK" >&2; exit 1; }
-[ -f "$JNILIBS/arm64-v8a/liblogoschat.so" ] || {
-  echo "vendored liblogoschat.so missing in $JNILIBS/arm64-v8a" >&2; exit 1; }
+# Dual-binary (#51): the bridge links against the STANDARD variant (soname
+# liblogoschat.so); the mix variant is loaded at runtime, mix symbol dlsym'd.
+[ -f "$JNILIBS/arm64-v8a/liblogoschat_std.so" ] || {
+  echo "vendored liblogoschat_std.so missing in $JNILIBS/arm64-v8a" >&2; exit 1; }
+[ -f "$JNILIBS/arm64-v8a/liblogoschat_mix.so" ] || {
+  echo "vendored liblogoschat_mix.so missing in $JNILIBS/arm64-v8a" >&2; exit 1; }
 
 rm -rf "$OUT"
 "$NDK/ndk-build" \

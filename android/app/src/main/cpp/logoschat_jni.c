@@ -13,6 +13,7 @@
 //   - stdout/stderr → logcat (tag "logos-chat-node") so the Nim node's own logs are visible
 #include "liblogoschat.h"
 #include <android/log.h>
+#include <dlfcn.h>
 #include <jni.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -346,14 +347,48 @@ Java_com_logoschat_NodeBridge_chatSendMessage(
   return response;
 }
 
-// Mix protocol status (mix superset .so). Returns the mix status JSON on success
-// ({"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,"minPoolSize":int}); the
-// ScheduledExecutor in ChatService polls this off the JS thread (#31).
+// Mix protocol status — DUAL-BINARY (#51 option A). The app ships BOTH variants
+// under distinct file names (liblogoschat_std.so / liblogoschat_mix.so, same
+// soname liblogoschat.so) and loads exactly one per process. `chat_get_mix_status`
+// exists ONLY in the mix superset, so this ONE bridge must link against BOTH: we
+// resolve the symbol via dlsym at call time instead of a hard link reference.
+// Absent (standard variant) ⇒ a benign mixEnabled:false snapshot (never called in
+// standard mode anyway — NodeRuntime.pollMixStatus no-ops unless mixEnabled).
+typedef int (*chat_get_mix_status_fn)(void *, FFICallBack, void *);
+
+static chat_get_mix_status_fn resolve_mix_status(void) {
+  static chat_get_mix_status_fn fn = NULL;
+  static bool resolved = false;
+  if (!resolved) {
+    resolved = true;
+    // The loaded variant is a DT_NEEDED of this bridge, so RTLD_DEFAULT (the
+    // bridge's own resolution scope) finds the symbol when present.
+    fn = (chat_get_mix_status_fn)dlsym(RTLD_DEFAULT, "chat_get_mix_status");
+    if (fn == NULL) {
+      // Secondary: the already-loaded soname (System.load'd by absolute path).
+      void *h = dlopen("liblogoschat.so", RTLD_NOW | RTLD_NOLOAD);
+      if (h != NULL) fn = (chat_get_mix_status_fn)dlsym(h, "chat_get_mix_status");
+    }
+    __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG,
+                        "chat_get_mix_status resolved=%p (variant %s mix)",
+                        (void *)fn, fn ? "has" : "lacks");
+  }
+  return fn;
+}
+
 JNIEXPORT jobject JNICALL
 Java_com_logoschat_NodeBridge_chatGetMixStatus(JNIEnv *env, jobject thiz, jlong ctx) {
   (void)thiz;
+  chat_get_mix_status_fn fn = resolve_mix_status();
+  if (fn == NULL) {
+    jstring m = (*env)->NewStringUTF(
+        env, "{\"mixEnabled\":false,\"mixReady\":false,\"mixPoolSize\":0,\"minPoolSize\":4}");
+    jobject r = (*env)->NewObject(env, gChatResultClass, gChatResultCtor, JNI_FALSE, m);
+    (*env)->DeleteLocalRef(env, m);
+    return r;
+  }
   cb_result *result = NULL;
-  chat_get_mix_status((void *)ctx, on_response, (void *)&result);
+  fn((void *)ctx, on_response, (void *)&result);
   jobject response = to_jni_result(env, result);
   free_cb_result(result);
   return response;
