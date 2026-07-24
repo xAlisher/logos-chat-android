@@ -124,7 +124,15 @@ export function AddMembersScreen() {
         added += 1;
       } catch (e: any) {
         // Keep going, but NEVER report success for a member that didn't land.
-        failures.push(`${shortAddress(address)}: ${e?.message ?? e}`);
+        const raw = String(e?.message ?? e);
+        // #103: the lib does not rehydrate MLS group state across a node
+        // restart, so a group from an earlier session reports "not found".
+        // Say that in plain language instead of leaking the lib error.
+        failures.push(
+          /was not found/i.test(raw)
+            ? 'this group was created in an earlier session and can no longer be modified — create a new group'
+            : `${shortAddress(address)}: ${raw}`,
+        );
       }
     }
     setSubmitting(false);

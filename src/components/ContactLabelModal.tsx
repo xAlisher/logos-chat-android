@@ -70,21 +70,13 @@ export function ContactLabelModal({
         <Pressable style={styles.card} onPress={() => {}} testID="contact-modal">
           <Text style={styles.heading}>Contact</Text>
 
-          <View style={styles.addrRow}>
-            <Text style={styles.addr} selectable testID="contact-address">
-              {address ?? '(unknown address)'}
-            </Text>
-            <Pressable
-              style={styles.copyBtn}
-              onPress={onCopy}
-              disabled={address == null}
-              testID="contact-copy">
-              <Text style={[type.title, {color: colors.onAccent}]}>
-                {copied ? 'Copied' : 'Copy'}
-              </Text>
-            </Pressable>
-          </View>
+          {/* 1. Address on top (full width, selectable, non-editable). */}
+          <Text style={styles.fieldLabel}>Address</Text>
+          <Text style={styles.addr} selectable testID="contact-address">
+            {address ?? '(unknown address)'}
+          </Text>
 
+          {/* 2. Label field below. */}
           <Text style={styles.fieldLabel}>Label (optional — only you see it)</Text>
           <TextInput
             style={styles.input}
@@ -95,6 +87,17 @@ export function ContactLabelModal({
             autoFocus
             testID="contact-label-input"
           />
+
+          {/* 3. Copy below — full width. */}
+          <Pressable
+            style={styles.copyBtn}
+            onPress={onCopy}
+            disabled={address == null}
+            testID="contact-copy">
+            <Text style={[type.title, {color: colors.onAccent}]}>
+              {copied ? 'Copied' : 'Copy'}
+            </Text>
+          </Pressable>
 
           <View style={styles.actions}>
             <Pressable style={styles.cancelBtn} onPress={onClose} testID="contact-cancel">
@@ -126,15 +129,10 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
   },
   heading: {...type.title, color: colors.text},
-  addrRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
   addr: {
     ...type.code,
     color: colors.text,
-    flex: 1,
+    alignSelf: 'stretch',
     backgroundColor: colors.canvas,
     borderColor: colors.border,
     borderWidth: 1,
@@ -145,8 +143,9 @@ const styles = StyleSheet.create({
   copyBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
-    paddingHorizontal: spacing.lg,
-    minHeight: 44,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    minHeight: 48,
     justifyContent: 'center',
   },
   fieldLabel: {...type.label, color: colors.textDim},

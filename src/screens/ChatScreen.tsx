@@ -29,10 +29,12 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-/** The attribution shown above an incoming bubble (#10). */
+/** The attribution shown above an incoming bubble (#10) — tappable → Contact modal. */
 interface Attribution {
   label: string | null;
   hex: string;
+  /** Full sender address, so tapping the line can open the Contact modal. */
+  address: string;
 }
 
 function formatTime(at: number): string {
@@ -78,35 +80,44 @@ function resolveAttribution(
   } else {
     label = convo?.nickname != null && convo.nickname.length > 0 ? convo.nickname : null;
   }
-  return {label, hex: shortAddress(senderAddr)};
+  return {label, hex: shortAddress(senderAddr), address: senderAddr};
 }
 
 function Bubble({
   msg,
   attribution,
   onRetry,
+  onOpenContact,
 }: {
   msg: Message;
   attribution: Attribution | null;
   onRetry: () => void;
+  onOpenContact: (a: Attribution) => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
-      {attribution != null &&
-        (attribution.label != null ? (
-          <Text style={styles.attrLine} numberOfLines={1}>
-            <Text style={{color: colors.contact}}>{attribution.label}</Text>
-            <Text style={{color: colors.textDim}}> {attribution.hex}</Text>
-          </Text>
-        ) : (
-          <Text
-            style={[styles.attrLine, {color: colors.contact}]}
-            numberOfLines={1}>
-            {attribution.hex}
-          </Text>
-        ))}
+      {/* Tapping the contact line opens the Contact modal (address + label). */}
+      {attribution != null && (
+        <Pressable
+          onPress={() => onOpenContact(attribution)}
+          hitSlop={6}
+          testID={`attr-${attribution.address}`}>
+          {attribution.label != null ? (
+            <Text style={styles.attrLine} numberOfLines={1}>
+              <Text style={{color: colors.contact}}>{attribution.label}</Text>
+              <Text style={{color: colors.textDim}}> {attribution.hex}</Text>
+            </Text>
+          ) : (
+            <Text
+              style={[styles.attrLine, {color: colors.contact}]}
+              numberOfLines={1}>
+              {attribution.hex}
+            </Text>
+          )}
+        </Pressable>
+      )}
       <Pressable
         disabled={!failed}
         onPress={onRetry}
@@ -147,7 +158,13 @@ export function ChatScreen() {
   const clearError = useNodeStore(s => s.clearError);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
-  const [labelModalVisible, setLabelModalVisible] = useState(false);
+  // The contact the modal is showing: the thread peer (header title) OR the
+  // sender of a tapped bubble (works for group members too).
+  const [contactTarget, setContactTarget] = useState<{
+    address: string | null;
+    label: string | null;
+  } | null>(null);
+  const startConversation = useChatStore(s => s.startConversation);
 
   useFocusEffect(
     useCallback(() => {
@@ -175,7 +192,41 @@ export function ChatScreen() {
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
 
-  const openLabel = useCallback(() => setLabelModalVisible(true), []);
+  const openLabel = useCallback(
+    () =>
+      setContactTarget({
+        address: convo?.peerAddress ?? null,
+        label: convo?.nickname ?? null,
+      }),
+    [convo],
+  );
+
+  /**
+   * Persist a label for an arbitrary address: reuse the 1:1 conversation with
+   * that peer if we have one, otherwise create the contact so a group member
+   * can be named straight from their bubble.
+   */
+  const saveLabelFor = useCallback(
+    async (address: string | null, newLabel: string) => {
+      if (address == null) {
+        return;
+      }
+      const target = address.toLowerCase();
+      const existing = Object.values(useChatStore.getState().conversations).find(
+        c => !c.isGroup && c.peerAddress?.toLowerCase() === target,
+      );
+      try {
+        if (existing != null) {
+          await setNickname(existing.convoPk, newLabel);
+        } else {
+          await startConversation(address, {nickname: newLabel || undefined});
+        }
+      } catch (e: any) {
+        useNodeStore.setState({error: `label failed: ${e?.message ?? e}`});
+      }
+    },
+    [setNickname, startConversation],
+  );
 
   useEffect(() => {
     navigation.setOptions({
@@ -289,6 +340,9 @@ export function ChatScreen() {
             msg={item}
             attribution={resolveAttribution(item, isGroup, convo)}
             onRetry={() => retry(convoPk, item.msgPk)}
+            onOpenContact={a =>
+              setContactTarget({address: a.address, label: a.label})
+            }
           />
         )}
         // flex:1 so the list owns the free space and the composer keeps its
@@ -325,15 +379,11 @@ export function ChatScreen() {
         </Pressable>
       </View>
       <ContactLabelModal
-        visible={labelModalVisible}
-        address={convo?.peerAddress ?? null}
-        label={convo?.nickname ?? null}
-        onClose={() => setLabelModalVisible(false)}
-        onSave={newLabel =>
-          setNickname(convoPk, newLabel).catch(e =>
-            useNodeStore.setState({error: `label failed: ${e?.message ?? e}`}),
-          )
-        }
+        visible={contactTarget != null}
+        address={contactTarget?.address ?? null}
+        label={contactTarget?.label ?? null}
+        onClose={() => setContactTarget(null)}
+        onSave={newLabel => saveLabelFor(contactTarget?.address ?? null, newLabel)}
       />
       <ErrorToast message={nodeError} onDismiss={clearError} />
     </KeyboardAvoidingView>

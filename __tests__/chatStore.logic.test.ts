@@ -66,12 +66,32 @@ describe('convoDisplayName', () => {
     ).toBe('group #9');
   });
 
-  it('a group ignores any peer address / nickname fallback', () => {
+  it('a locally-set group name wins over the lib groupName (explicit user choice)', () => {
     expect(
       convoDisplayName(
         row({convoPk: 3, isGroup: true, groupName: 'g', peerAddress: ADDR, nickname: 'x'}),
       ),
+    ).toBe('x');
+  });
+
+  it('a group with only the lib groupName still uses it', () => {
+    expect(
+      convoDisplayName(row({convoPk: 3, isGroup: true, groupName: 'g', nickname: null})),
     ).toBe('g');
+  });
+
+  it('a joiner group with no groupName falls back to the locally-set name (#102)', () => {
+    expect(
+      convoDisplayName(
+        row({convoPk: 4, isGroup: true, groupName: null, nickname: 'Design crew'}),
+      ),
+    ).toBe('Design crew');
+  });
+
+  it('a joiner group with neither name still shows the placeholder', () => {
+    expect(
+      convoDisplayName(row({convoPk: 4, isGroup: true, groupName: null, nickname: null})),
+    ).toBe('group #4');
   });
 });
 

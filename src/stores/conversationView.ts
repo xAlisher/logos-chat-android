@@ -66,6 +66,13 @@ export function sortedConversations(
  */
 export function convoDisplayName(c: ConversationRow): string {
   if (c.isGroup) {
+    // A locally-set name always wins — it is the user's explicit choice, and a
+    // JOINER never receives the real group name at all (the lib's
+    // conversation_started carries only id+class), so without this a joined
+    // group would read "group #N" forever (#102).
+    if (c.nickname != null && c.nickname.length > 0) {
+      return c.nickname;
+    }
     if (c.groupName != null && c.groupName.length > 0) {
       return c.groupName;
     }
