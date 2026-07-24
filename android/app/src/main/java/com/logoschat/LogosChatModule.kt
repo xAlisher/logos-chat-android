@@ -255,6 +255,31 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * The lib does not rehydrate conversation state across a node restart, so a
+   * conversation bound in an EARLIER session fails with "convo <id> was not
+   * found" even though our SQLite row and its whole history are intact. That
+   * made every 1:1 created before the last restart silently unsendable.
+   */
+  private fun isStaleConvoError(err: String?): Boolean =
+      err != null && err.contains("was not found", ignoreCase = true)
+
+  /**
+   * Re-bind a 1:1 whose lib conversation the node forgot: create a fresh lib
+   * conversation for the same peer address and swap the stored id, so the next
+   * send goes out on a live route. Returns null when we cannot rebind (a group
+   * cannot be recreated this way, nor can a conversation with no peer address).
+   */
+  private fun rebindStaleConversation(c: Long, convoPk: Long): String? {
+    val d = ChatRepo.requireDb()
+    if (d.isGroup(convoPk)) return null
+    val addr = d.peerAddressOf(convoPk) ?: return null
+    val fresh = NodeBridge.chatCreateConversation(c, addr) ?: return null
+    d.setLibConvoId(convoPk, fresh)
+    Log.w("logos-chat-bridge", "rebound stale convo $convoPk -> $fresh ($addr)")
+    return fresh
+  }
+
+  /**
    * Send into a conversation (by stable convoPk). Resolves the lib conversation id
    * (creating it from the peer address if not yet bound), records the outbound
    * message, sends raw UTF-8 bytes. Resolves '{"msgPk":n,"status":"sent"|"failed"}'.
@@ -284,7 +309,13 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         d.setLibConvoId(pk, libConvoId)
       }
       val msgPk = ChatRepo.recordOutgoing(pk, textUtf8)
-      val rc = NodeBridge.chatSendMessage(c, libConvoId, textUtf8.toByteArray(Charsets.UTF_8))
+      val bytes = textUtf8.toByteArray(Charsets.UTF_8)
+      var rc = NodeBridge.chatSendMessage(c, libConvoId, bytes)
+      if (rc != 0 && isStaleConvoError(NodeBridge.chatLastError())) {
+        // Conversation bound in an EARLIER node session — re-bind and retry once.
+        val fresh = rebindStaleConversation(c, pk)
+        if (fresh != null) rc = NodeBridge.chatSendMessage(c, fresh, bytes)
+      }
       val ok = rc == 0
       ChatRepo.finalizeOutgoing(msgPk, ok)
       if (!ok) Log.w("logos-chat-bridge", "send failed: ${NodeBridge.chatLastError()}")
@@ -313,7 +344,15 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         promise.reject("no_route", "conversation not bound")
         return@execute
       }
-      val rc = NodeBridge.chatSendMessage(c, libConvoId, text.toByteArray(Charsets.UTF_8))
+      val bytes = text.toByteArray(Charsets.UTF_8)
+      var rc = NodeBridge.chatSendMessage(c, libConvoId, bytes)
+      if (rc != 0 && isStaleConvoError(NodeBridge.chatLastError())) {
+        val fresh = rebindStaleConversation(c, convoPk)
+        if (fresh != null) rc = NodeBridge.chatSendMessage(c, fresh, bytes)
+      }
+      // Log retry failures too — this path used to fail silently, which made a
+      // stale-conversation bug look like "the node is broken".
+      if (rc != 0) Log.w("logos-chat-bridge", "retry failed: ${NodeBridge.chatLastError()}")
       ChatRepo.finalizeOutgoing(msgPk.toLong(), rc == 0)
       promise.resolve("""{"msgPk":${msgPk.toLong()},"status":"${if (rc == 0) "sent" else "failed"}"}""")
     }

@@ -140,7 +140,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const res = JSON.parse(await LogosChat.retryMessage(msgPk));
       if (res.status === 'failed') {
-        useNodeStore.setState({error: 'send failed again — check the node'});
+        // Don't blame the node — it is usually healthy here. A repeat failure
+        // now means the route could not be re-established for this peer.
+        useNodeStore.setState({
+          error: 'still could not send — the peer may be unreachable',
+        });
       }
     } finally {
       await get().loadMessages(convoPk);
