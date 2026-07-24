@@ -33,6 +33,7 @@ import {
   UserPlusIcon,
   UsersIcon,
   EraserIcon,
+  LogOutIcon,
   type MenuItem,
 } from '../components/OverflowMenu';
 import {AddressModal} from '../components/AddressModal';
@@ -184,6 +185,7 @@ export function ChatScreen() {
   const setActive = useChatStore(s => s.setActive);
   const setNickname = useChatStore(s => s.setNickname);
   const wipe = useChatStore(s => s.wipe);
+  const leaveGroup = useChatStore(s => s.leaveGroup);
   const remove = useChatStore(s => s.remove);
   const startConversation = useChatStore(s => s.startConversation);
   const nodeStatus = useNodeStore(s => s.status);
@@ -247,6 +249,38 @@ export function ChatScreen() {
       ],
     );
   }, [wipe, convoPk]);
+
+  // Leave = ask the group to remove us AND drop the thread locally (#108).
+  // Deliberately honest: removal is a consensus round, so it is *submitted*, not
+  // instant — and it cannot work at all for a group from an earlier session
+  // (#103), which is why the failure path keeps the thread instead of pretending.
+  const onLeave = useCallback(() => {
+    Alert.alert(
+      'Leave group',
+      'Ask the group to remove you? All its messages will also be deleted from ' +
+        'this device. Removal is submitted to the group and completes once the ' +
+        'group processes it.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Leave',
+          style: 'destructive',
+          onPress: () => {
+            leaveGroup(convoPk)
+              .then(() => {
+                ToastAndroid.show('Leaving the group…', ToastAndroid.SHORT);
+                navigation.goBack();
+              })
+              .catch(e =>
+                useNodeStore.setState({
+                  error: `could not leave: ${e?.message ?? e}`,
+                }),
+              );
+          },
+        },
+      ],
+    );
+  }, [leaveGroup, convoPk, navigation]);
 
   const openLabel = useCallback(
     () =>
@@ -324,6 +358,13 @@ export function ChatScreen() {
           label: 'Wipe group',
           icon: <EraserIcon color={colors.unread} />,
           onPress: onWipe,
+          destructive: true,
+        },
+        {
+          key: 'leave-group',
+          label: 'Leave group',
+          icon: <LogOutIcon color={colors.unread} />,
+          onPress: onLeave,
           destructive: true,
         },
       ]

@@ -104,6 +104,24 @@ object ChatRepo {
     }
   }
 
+  /**
+   * The group's shared name, read from the lib (#102). Carried to every joiner
+   * in the welcome via an MLS group extension, so this works on the JOINER too —
+   * it is how a joined group learns its real name instead of "group #N".
+   * Null (and harmless) when the node is down or the group carries no metadata.
+   */
+  private fun groupNameFromLib(libConvoId: String): String? {
+    val ctx = NodeRuntime.ctx
+    if (ctx == 0L) return null
+    return try {
+      val json = NodeBridge.chatGroupMetadata(ctx, libConvoId) ?: return null
+      JSONObject(json).optString("name").takeIf { it.isNotBlank() }
+    } catch (t: Throwable) {
+      Log.w(TAG, "group metadata unavailable for $libConvoId: ${t.message}")
+      null
+    }
+  }
+
   /** A conversation started — 1:1 or an MLS group Welcome. Ensure a row exists. */
   private fun onConversationStarted(libConvoId: String, klass: String?): Outcome? {
     if (libConvoId.isEmpty()) return null
@@ -119,7 +137,11 @@ object ChatRepo {
       return null
     }
     val now = System.currentTimeMillis()
-    val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = group, groupName = null)
+    // #102: the group's real name IS delivered to joiners — it lives in an MLS
+    // group extension carried in the welcome, readable via group_metadata. We
+    // used to insert null here and show "group #N" forever.
+    val name = if (group) groupNameFromLib(libConvoId) else null
+    val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = group, groupName = name)
     // #95: seed self on the joiner so its own address is always on the roster.
     if (group) seedSelfMember(convoPk)
     Log.i(TAG, "conversation started (inbound): convo=$convoPk lib=$libConvoId class=${klass ?: "?"}")

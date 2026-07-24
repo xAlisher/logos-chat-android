@@ -88,6 +88,13 @@ interface LogosChatNative {
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
   markRead(convoPk: number): Promise<null>;
   setActiveConversation(convoPk: number): void;
+  /**
+   * Self-removal from a group (#108). Resolving means the removal CONSENSUS
+   * ROUND opened — not that you are out; the ejecting commit lands later.
+   * Rejects while the group is mid-round, and for a group from an earlier
+   * session (#103).
+   */
+  leaveGroup(convoPk: number): Promise<null>;
   /** Delete a conversation's messages but KEEP the conversation (#107 wipe). */
   wipeConversationContent(convoPk: number): Promise<null>;
   deleteConversation(convoPk: number): Promise<null>;

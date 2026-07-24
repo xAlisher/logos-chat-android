@@ -40,6 +40,8 @@ interface ChatState {
   setNickname: (convoPk: number, name: string) => Promise<void>;
   /** Wipe a group's local content but keep receiving new messages (#107). */
   wipe: (convoPk: number) => Promise<void>;
+  /** Ask the group to remove us, then drop it locally (#108). */
+  leaveGroup: (convoPk: number) => Promise<void>;
   /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
 }
@@ -174,6 +176,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await LogosChat.wipeConversationContent(convoPk);
     set(s => ({messages: {...s.messages, [convoPk]: []}}));
     await get().refreshConversations();
+  },
+
+  leaveGroup: async (convoPk: number) => {
+    // Submit the self-removal FIRST — if the group cannot be reached we must not
+    // delete the thread and leave the user believing they left.
+    await LogosChat.leaveGroup(convoPk);
+    await get().remove(convoPk);
   },
 
   remove: async (convoPk: number) => {

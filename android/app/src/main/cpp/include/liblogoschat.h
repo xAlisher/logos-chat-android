@@ -74,6 +74,32 @@ char *logoschat_create_group(void *handle, const char *name, const char *desc);
 int logoschat_add_group_member(void *handle, const char *convo_id,
                                const char *peer_address);
 
+// Leave group convo_id: remove THIS client from the group's roster.
+// 0 on success, -1 on failure (see logoschat_last_error).
+//
+// The removal is a de-mls consensus round, so like logoschat_add_group_member it
+// is staged here and merged by the group's next commit — not applied when this
+// call returns. Two honest constraints:
+//   * the round only opens while the conversation is Working; mid-round the call
+//     fails with a retry-later message;
+//   * a group created/joined in a PREVIOUS session cannot be left — GroupV2 has
+//     no load path in de-mls, so it cannot be rebuilt from storage.
+int logoschat_leave_group(void *handle, const char *convo_id);
+
+// The group's shared metadata as a JSON object string: {"name":"…","desc":"…"}.
+// Caller frees.
+//
+// Name + description are set at creation (logoschat_create_group) and live in an
+// MLS group EXTENSION — part of the group state every member holds, carried to
+// joiners in the welcome. So a device that JOINED the group reads exactly what
+// the creator set; this is the verb to call for a group whose name never came
+// through an event. Either field may be empty.
+//
+// Returns NULL (reason in logoschat_last_error) for a direct (1:1) conversation,
+// for a legacy group carrying no metadata extension, and for an unknown
+// convo_id — an error, never an empty name.
+char *logoschat_group_metadata(void *handle, const char *convo_id);
+
 // List conversation ids as a JSON array string, e.g. ["id1","id2"]. Caller frees.
 char *logoschat_list_conversations(void *handle);
 

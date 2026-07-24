@@ -234,6 +234,14 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         return@execute
       }
       val addr = peerAddress.trim().lowercase()
+      // GUARD: create_conversation(<our own address>) ABORTS the process inside
+      // libchat (DuplicateSignatureKey unwrap; the workspace is panic="abort"),
+      // so it is a core dump, not an error. Trivially reachable by scanning your
+      // own QR. Reject before the FFI. See build-fork-tree "Node 9".
+      if (addr.equals(NodeRuntime.address ?: "", ignoreCase = true)) {
+        promise.reject("self_address", "that is your own address — you cannot add yourself")
+        return@execute
+      }
       try {
         val convoPk = ChatRepo.ensureConversationForAddress(addr, nickname)
         val d = ChatRepo.requireDb()
@@ -430,6 +438,33 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       promise.resolve(null)
     } catch (t: Throwable) {
       promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
+  fun leaveGroup(convoPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("leave_group", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      val libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        promise.reject("leave_group", "conversation not bound")
+        return@execute
+      }
+      val rc = NodeBridge.chatLeaveGroup(c, libConvoId)
+      if (rc != 0) {
+        promise.reject("leave_group", NodeBridge.chatLastError())
+        return@execute
+      }
+      // rc==0 means the removal ROUND opened and was published — we are not out
+      // yet; the ejecting commit lands asynchronously via members_changed.
+      Log.i("logos-chat-bridge", "leave round opened for convo $pk")
+      promise.resolve(null)
     }
   }
 
