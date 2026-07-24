@@ -1,7 +1,9 @@
 # HANDOFF — logos-chat-android (written by Fable, 2026-07-23, for the next agent)
 
-State snapshot for continuing this project with zero session context. Read this + `docs/` and you
-have everything. Delete/refresh this file as work progresses.
+State snapshot for continuing this project with zero session context.
+**Read `docs/PROJECT_KNOWLEDGE.md` FIRST** — the durable how + why (architecture, persistence,
+upstream landscape, corrections, build playbook). This file is the chronological state-of-play.
+Delete/refresh this file as work progresses.
 
 ---
 

@@ -14,6 +14,11 @@ export type RootStackParamList = {
   NewGroup: undefined;
   /** Group roster + add-member affordance. */
   GroupInfo: {convoPk: number};
-  /** Add members to a group: checkbox list of known contacts + paste/scan (#13). */
-  AddMembers: {convoPk: number};
+  /**
+   * Add members to a group: checkbox list of known contacts + paste/scan (#13).
+   * `postCreate` = reached straight after New Group (#114): submitting ends on
+   * the Chat thread and a "Skip for now" is offered, instead of popping back to
+   * Group Info.
+   */
+  AddMembers: {convoPk: number; postCreate?: boolean};
 };

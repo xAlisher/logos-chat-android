@@ -16,7 +16,9 @@ export const colors = {
   pulse: '#F59E0B', // amber startup pulse (node initializing/starting)
   // Node status (header icon + composer submit — #16/#17):
   nodeOnline: '#FF5000', // running — orange (brand; no green anywhere)
-  nodeConnecting: '#F59E0B', // initializing/starting — amber (pulsing)
+  // Gray, NOT amber (#111): amber reads as the orange accent, so a connecting
+  // node looked "normal". Gray is unmistakably "not ready yet".
+  nodeConnecting: '#9CA3AF', // initializing/starting — gray (pulsing)
   nodeOffline: '#EF4444', // stopped/error — red
   contact: '#FF5000', // 1:1 contact glyph + attribution label — orange
   errorFill: '#5c1a1a', // error toast fill
