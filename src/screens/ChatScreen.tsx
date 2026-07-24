@@ -25,6 +25,7 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
+import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
 import {QrIcon} from '../components/QrIcon';
 import {
@@ -190,8 +191,9 @@ export function ChatScreen() {
   const remove = useChatStore(s => s.remove);
   const startConversation = useChatStore(s => s.startConversation);
   const probeGroup = useChatStore(s => s.probeGroup);
-  const recreateGroup = useChatStore(s => s.recreateGroup);
+  const reviveAndSend = useChatStore(s => s.reviveAndSend);
   const liveness = useChatStore(s => s.liveness[convoPk]);
+  const systemLines = useChatStore(s => s.systemLines[convoPk]);
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
@@ -207,7 +209,7 @@ export function ChatScreen() {
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
   // #112: set after a successful re-create so the thread can report what happened.
-  const [recreated, setRecreated] = useState<{invited: number; total: number} | null>(null);
+  const [reviving, setReviving] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -479,11 +481,15 @@ export function ChatScreen() {
     try {
       setBusy(true);
       if (canRevive) {
-        // Revive first, then send on the fresh conversation.
-        const res = await recreateGroup(convoPk);
-        setRecreated(res);
+        // Revive, then hold this message until the invitee's join commits — MLS
+        // gives a joiner no history, so anything published before they join is
+        // undeliverable to them (observed: the trigger message never arrived).
+        setReviving(true);
+        await reviveAndSend(convoPk, t);
+        setReviving(false);
+      } else {
+        await send(convoPk, t);
       }
-      await send(convoPk, t);
     } catch (e: any) {
       useNodeStore.setState({error: `send failed: ${e?.message ?? e}`});
     } finally {
@@ -545,18 +551,21 @@ export function ChatScreen() {
         ]}
         ListEmptyComponent={<View style={styles.emptySpacer} />}
       />
-      {/* #112 system lines. Deliberately says WHY (our restart), not "expired" —
-          which would read like a server-side lifetime. */}
+      {/* #112 system lines — flex rules, never wrapping dash characters. */}
       {dead && (
-        <Text style={styles.systemLine} testID="group-dead-line">
-          ──── Group ended when the app restarted ────
-        </Text>
+        <SystemLine testID="group-dead-line">
+          Group ended when the app restarted
+        </SystemLine>
       )}
-      {recreated != null && (
-        <Text style={styles.systemLine} testID="group-recreated-line">
-          {`──── Group re-created · ${recreated.invited} of ${recreated.total} members invited ────`}
-        </Text>
+      {reviving && (
+        <SystemLine testID="group-reviving-line">Re-creating the group…</SystemLine>
       )}
+      {/* Per-member progress: "<label> <hex> invited" then "… joined". */}
+      {(systemLines ?? []).map(n => (
+        <SystemLine key={n.id} testID={`system-${n.id}`}>
+          {n.text}
+        </SystemLine>
+      ))}
       {dead && !canRevive ? (
         // Member side: no auto re-create. Offer a working way forward instead of
         // a dead composer. Plain New Group screen — we cannot honestly prefill a

@@ -5,12 +5,18 @@
 // Identity: the STABLE convoPk (survives restarts). A conversation is keyed by the
 // peer ADDRESS native-side; the UI works in convoPks.
 import {create} from 'zustand';
-import LogosChat, {addLogosChatListener} from '../native/LogosChat';
+import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat';
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
 import {useNodeStore} from './nodeStore';
 
 export type {ConversationRow as Conversation, MessageRow as Message};
 export type {GroupMember} from '../native/LogosChat';
+
+/** A UI-only note rendered inline in a thread (never stored, never sent). */
+export interface SystemNote {
+  id: string;
+  text: string;
+}
 
 interface ChatState {
   conversations: Record<number, ConversationRow>;
@@ -42,12 +48,24 @@ interface ChatState {
   wipe: (convoPk: number) => Promise<void>;
   /** Ask the group to remove us, then drop it locally (#108). */
   leaveGroup: (convoPk: number) => Promise<void>;
+  /** Per-thread system notes (invited/joined, group revived) — UI-only, not persisted. */
+  systemLines: Record<number, SystemNote[]>;
+  /** Append a system note to a thread. */
+  pushSystemLine: (convoPk: number, text: string) => void;
   /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
   liveness: Record<number, string>;
   /** #112: probe whether the lib can still operate this group. */
   probeGroup: (convoPk: number) => Promise<string>;
   /** #112: re-create a dead group in place. Resolves {invited,total}. */
   recreateGroup: (convoPk: number) => Promise<{invited: number; total: number}>;
+  /**
+   * #112: revive a dead group and send `text` ONCE THE INVITEE HAS JOINED.
+   * MLS gives a joiner no history, so a message published between the re-create
+   * and their join is undeliverable to them — it is not slow, it is structurally
+   * lost. The creator receives `members_changed` when the add commits (observed
+   * ~60s), so we hold the message until then (with a timeout fallback).
+   */
+  reviveAndSend: (convoPk: number, text: string) => Promise<{invited: number; total: number}>;
   /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
 }
@@ -59,10 +77,34 @@ export type {KnownContact} from './conversationView';
 
 const PAGE = 200;
 
+/** "Alice 0c87f0…71c6", or just the short hex when we have no label for them. */
+function describePeer(address: string): string {
+  const target = address.toLowerCase();
+  for (const c of Object.values(useChatStore.getState().conversations)) {
+    if (
+      !c.isGroup &&
+      c.peerAddress?.toLowerCase() === target &&
+      c.nickname != null &&
+      c.nickname.length > 0
+    ) {
+      return `${c.nickname} ${shortAddress(address)}`;
+    }
+  }
+  return shortAddress(address);
+}
+
+/**
+ * Addresses invited but not yet committed, per conversation. `members_changed`
+ * says a roster changed but not WHO, and de-mls commits one round at a time, so
+ * we release these FIFO — the order we invited them in.
+ */
+const pendingJoins: Record<number, string[]> = {};
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: {},
   messages: {},
   members: {},
+  systemLines: {},
   liveness: {},
   activeConvoPk: null,
 
@@ -104,6 +146,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   addMember: async (convoPk, address) => {
     await LogosChat.addGroupMember(convoPk, address);
+    // Report per-member progress in the thread: invited now, joined when their
+    // add actually commits (members_changed) — the two are ~a minute apart.
+    get().pushSystemLine(convoPk, `${describePeer(address)} invited`);
+    (pendingJoins[convoPk] ??= []).push(address.toLowerCase());
     await get().loadMembers(convoPk);
     await get().refreshConversations();
   },
@@ -185,6 +231,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().refreshConversations();
   },
 
+  pushSystemLine: (convoPk: number, text: string) => {
+    set(s => ({
+      systemLines: {
+        ...s.systemLines,
+        [convoPk]: [
+          ...(s.systemLines[convoPk] ?? []),
+          {id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text},
+        ],
+      },
+    }));
+  },
+
   probeGroup: async (convoPk: number) => {
     const state = await LogosChat.groupLiveness(convoPk);
     set(s => ({liveness: {...s.liveness, [convoPk]: state}}));
@@ -195,9 +253,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const res = JSON.parse(await LogosChat.recreateGroup(convoPk));
     // The group is operable again on the NEW lib conversation.
     set(s => ({liveness: {...s.liveness, [convoPk]: 'live'}}));
-    await get().loadMembers(convoPk);
+    get().pushSystemLine(convoPk, 'Group re-created');
+    // Re-invite from JS (not native) so EVERY member gets its own
+    // "<label> <hex> invited" line, and later its own "joined" line.
+    const roster: string[] = res.members ?? [];
+    let invited = 0;
+    for (const address of roster) {
+      try {
+        await get().addMember(convoPk, address);
+        invited += 1;
+      } catch (e: any) {
+        get().pushSystemLine(convoPk, `${describePeer(address)} could not be invited`);
+      }
+    }
     await get().refreshConversations();
-    return {invited: res.invited ?? 0, total: res.total ?? 0};
+    return {invited, total: roster.length};
+  },
+
+  reviveAndSend: async (convoPk: number, text: string) => {
+    const res = await get().recreateGroup(convoPk);
+    if (res.invited === 0) {
+      // Nobody to wait for — send immediately.
+      await get().send(convoPk, text);
+      return res;
+    }
+    await waitForJoin(convoPk);
+    await get().send(convoPk, text);
+    return res;
   },
 
   leaveGroup: async (convoPk: number) => {
@@ -221,6 +303,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 }));
 
+/**
+ * Resolve when the invitee's join commits for `convoPk` (a members_changed for
+ * that conversation), or after `timeoutMs` so a message is never stuck forever.
+ */
+const joinWaiters: Record<number, Array<() => void>> = {};
+
+function waitForJoin(convoPk: number, timeoutMs = 120_000): Promise<void> {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    (joinWaiters[convoPk] ??= []).push(finish);
+    setTimeout(finish, timeoutMs);
+  });
+}
+
+function notifyJoin(convoPk: number) {
+  const waiters = joinWaiters[convoPk];
+  if (waiters == null) return;
+  delete joinWaiters[convoPk];
+  for (const w of waiters) w();
+}
+
 // ---------------------------------------------------------------------------
 // Live refresh: every persisted change arrives as a db_changed event AFTER the
 // SQLite write. Initial load happens on module import.
@@ -228,6 +336,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
 addLogosChatListener(e => {
   const s = useChatStore.getState();
   if (e.source === 'repo' && e.eventType === 'db_changed') {
+    // #112: the invitee's join committed — release any message held for it.
+    if (e.kind === 'members_changed' && e.convoPk != null) {
+      const queue = pendingJoins[e.convoPk];
+      const joined = queue?.shift();
+      if (joined != null) {
+        s.pushSystemLine(e.convoPk, `${describePeer(joined)} joined`);
+      }
+      notifyJoin(e.convoPk);
+    }
     s.refreshConversations();
     if (e.convoPk != null && e.convoPk === s.activeConvoPk) {
       s.loadMessages(e.convoPk);

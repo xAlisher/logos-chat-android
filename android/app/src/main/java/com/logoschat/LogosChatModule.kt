@@ -477,10 +477,10 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
 
   /**
    * Re-create a dead group in place (#112): make a NEW lib group with the same
-   * name, rebind THIS conversation row to it (so local history continues), and
-   * re-invite every address on the persisted roster. Resolves JSON
-   * {"invited":n,"total":m} — the caller must report the REAL numbers, never a
-   * blanket success. Only the creator may do this (guarded here too).
+   * name and rebind THIS conversation row to it, so local history continues.
+   * Resolves {"members":[…]} — the persisted roster for the CALLER to re-invite,
+   * so every member can be reported individually rather than as a bare count.
+   * Only the creator may do this (guarded here too).
    */
   @ReactMethod
   fun recreateGroup(convoPk: Double, promise: Promise) {
@@ -503,15 +503,15 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         return@execute
       }
       d.setLibConvoId(pk, newId)
+      // Return the roster; the CALLER re-invites so each member can be reported
+      // individually in the thread ("<label> <hex> invited" / "joined") instead
+      // of a single opaque count.
       val self = NodeRuntime.address?.lowercase()
       val roster = d.groupMemberAddresses(pk).filter { it.lowercase() != self }
-      var invited = 0
-      for (addr in roster) {
-        val rc = NodeBridge.chatAddGroupMember(c, newId, addr)
-        if (rc == 0) invited++ else Log.w("logos-chat-bridge", "re-invite failed for $addr: ${NodeBridge.chatLastError()}")
-      }
-      Log.i("logos-chat-bridge", "re-created group $pk as $newId, invited $invited/${roster.size}")
-      promise.resolve("""{"invited":$invited,"total":${roster.size}}""")
+      Log.i("logos-chat-bridge", "re-created group $pk as $newId, ${roster.size} to re-invite")
+      val arr = org.json.JSONArray()
+      roster.forEach { arr.put(it) }
+      promise.resolve(org.json.JSONObject().put("members", arr).toString())
     }
   }
 

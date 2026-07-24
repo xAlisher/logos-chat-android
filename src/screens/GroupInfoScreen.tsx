@@ -20,7 +20,8 @@ export function GroupInfoScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteProp<RootStackParamList, 'GroupInfo'>>();
   const {convoPk} = route.params;
-  const convo = useChatStore(s => s.conversations[convoPk]);
+  const conversations = useChatStore(s => s.conversations);
+  const convo = conversations[convoPk];
   const members = useChatStore(s => s.members[convoPk]) ?? [];
   const loadMembers = useChatStore(s => s.loadMembers);
   const setNickname = useChatStore(s => s.setNickname);
@@ -53,15 +54,48 @@ export function GroupInfoScreen() {
     }, [convoPk, loadMembers]),
   );
 
-  const renderMember = ({item}: {item: GroupMember}) => (
-    <View style={styles.memberRow}>
-      <View style={styles.memberDot} />
-      <Text style={[type.code, {color: colors.text}]} numberOfLines={1}>
-        {shortAddress(item.address)}
-      </Text>
-      {item.isSelf && <Text style={styles.you}>you</Text>}
-    </View>
+  /**
+   * The local label for a member, if we know them — the nickname on our 1:1
+   * conversation with that address. Same resolution the Add Members picker uses,
+   * so a roster row and an invite row read identically.
+   */
+  const labelFor = useCallback(
+    (address: string): string | null => {
+      const target = address.toLowerCase();
+      for (const c of Object.values(conversations)) {
+        if (
+          !c.isGroup &&
+          c.peerAddress?.toLowerCase() === target &&
+          c.nickname != null &&
+          c.nickname.length > 0
+        ) {
+          return c.nickname;
+        }
+      }
+      return null;
+    },
+    [conversations],
   );
+
+  // Two lines per member (label white / hex gray), matching Add Members.
+  const renderMember = ({item}: {item: GroupMember}) => {
+    const label = item.isSelf ? 'You' : labelFor(item.address);
+    return (
+      <View style={styles.memberRow}>
+        <View style={styles.memberDot} />
+        <View style={styles.memberText}>
+          <Text
+            style={[type.body, {color: label ? colors.text : colors.textDim}]}
+            numberOfLines={1}>
+            {label ?? '(no label)'}
+          </Text>
+          <Text style={[type.code, {color: colors.textDim}]} numberOfLines={1}>
+            {shortAddress(item.address)}
+          </Text>
+        </View>
+      </View>
+    );
+  };
 
   return (
     <View style={styles.root}>
@@ -141,6 +175,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.sm,
   },
+  memberText: {flex: 1, gap: 2},
   memberDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent},
   nameInput: {
     ...type.title,
