@@ -16,6 +16,7 @@ import {
   Pressable,
   FlatList,
   KeyboardAvoidingView,
+  Platform,
   StyleSheet,
 } from 'react-native';
 import {useRoute, useFocusEffect, useNavigation} from '@react-navigation/native';
@@ -138,7 +139,14 @@ export function ChatScreen() {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.root} behavior={undefined}>
+    // Composer is pinned at the bottom of a flex column with an inverted list
+    // above; on Android the manifest's adjustResize shrinks the window so the
+    // composer rides up above the keyboard (behavior undefined = let the OS do
+    // it — 'height'/'padding' would double-shrink and leave a gap). iOS has no
+    // adjustResize, so it needs 'padding'. (#50)
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {convo?.pending === true && (
         <Pressable
           style={styles.pendingBar}

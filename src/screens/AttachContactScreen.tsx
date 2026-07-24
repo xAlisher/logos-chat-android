@@ -10,7 +10,6 @@ import {
   TextInput,
   View,
   Pressable,
-  FlatList,
   StyleSheet,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
@@ -18,6 +17,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
+import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {useChatStore, convoDisplayName, sortedConversations} from '../stores/chatStore';
 import type {Conversation} from '../stores/chatStore';
 import type {RootStackParamList} from '../navigation/types';
@@ -83,6 +83,7 @@ export function AttachContactScreen() {
 
   return (
     <View style={styles.root}>
+      <KeyboardAwareScreen contentContainerStyle={styles.content}>
       <Text style={[type.label, {color: colors.textDim}]}>
         who is this? the intro bundle is opaque and names are not authenticated —
         attribution is manual. merge this thread into an existing contact, or
@@ -98,10 +99,12 @@ export function AttachContactScreen() {
             no existing threads to merge into
           </Text>
         ) : (
-          <FlatList
-            data={targets}
-            keyExtractor={c => String(c.convoPk)}
-            renderItem={({item}) => (
+          // Manual-attribution screen: the target set is small, so a mapped View
+          // keeps everything inside the keyboard-aware ScrollView (no nested
+          // VirtualizedList) so the name field below stays reachable (#50).
+          targets.map((item, i) => (
+            <View key={String(item.convoPk)}>
+              {i > 0 && <View style={styles.separator} />}
               <Pressable
                 style={styles.target}
                 testID={`merge-target-${item.convoPk}`}
@@ -114,9 +117,8 @@ export function AttachContactScreen() {
                   {item.lastText || '—'}
                 </Text>
               </Pressable>
-            )}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
-          />
+            </View>
+          ))
         )}
       </View>
 
@@ -141,6 +143,7 @@ export function AttachContactScreen() {
           <Text style={[type.title, {color: colors.onAccent}]}>save contact</Text>
         </Pressable>
       </View>
+      </KeyboardAwareScreen>
       <ErrorToast message={error} onDismiss={() => setError(null)} />
     </View>
   );
@@ -150,6 +153,8 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.canvas,
+  },
+  content: {
     padding: spacing.lg,
     gap: spacing.lg,
   },

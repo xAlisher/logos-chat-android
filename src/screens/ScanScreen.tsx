@@ -23,6 +23,7 @@ import {
 } from 'react-native-vision-camera';
 import {colors, type, spacing, radii} from '../theme';
 import {isIntroBundle} from '../native/LogosChat';
+import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -92,9 +93,12 @@ export function ScanScreen() {
   const cameraAvailable = hasPermission && device != null;
   const showCamera = cameraAvailable && !pasteMode;
 
-  return (
-    <View style={styles.root}>
-      {showCamera ? (
+  // Camera mode is full-bleed (no text input focused) — plain View. The paste /
+  // no-camera path carries the bundle TextInput, so it wraps in the keyboard-aware
+  // ScrollView so the field + "use bundle" button clear the soft keyboard (#50).
+  if (showCamera) {
+    return (
+      <View style={styles.root}>
         <View style={styles.cameraWrap}>
           <Camera
             style={StyleSheet.absoluteFill}
@@ -113,7 +117,21 @@ export function ScanScreen() {
             {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           </View>
         </View>
-      ) : (
+        <Pressable
+          style={styles.pasteLink}
+          testID="paste-bundle-link"
+          onPress={() => setPasteMode(true)}>
+          <Text style={[type.label, {color: colors.accent}]}>
+            paste bundle instead
+          </Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.root}>
+      <KeyboardAwareScreen contentContainerStyle={styles.scrollContent}>
         <View style={styles.noCamera}>
           {permissionDenied ? (
             <Text style={styles.rationale}>
@@ -147,10 +165,8 @@ export function ScanScreen() {
             </Pressable>
           )}
         </View>
-      )}
 
-      {/* Paste path — ALWAYS reachable (docs/theme.md §4) */}
-      {pasteMode || !showCamera ? (
+        {/* Paste path — ALWAYS reachable (docs/theme.md §4) */}
         <View style={styles.pasteCard}>
           <Text style={[type.label, {color: colors.textDim}]}>paste bundle</Text>
           <TextInput
@@ -167,9 +183,7 @@ export function ScanScreen() {
             multiline
             testID="paste-bundle-input"
           />
-          {invalid != null && !showCamera && (
-            <Text style={styles.invalid}>{invalid}</Text>
-          )}
+          {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           <View style={styles.pasteRow}>
             <Pressable
               style={styles.useBtn}
@@ -196,16 +210,7 @@ export function ScanScreen() {
             )}
           </View>
         </View>
-      ) : (
-        <Pressable
-          style={styles.pasteLink}
-          testID="paste-bundle-link"
-          onPress={() => setPasteMode(true)}>
-          <Text style={[type.label, {color: colors.accent}]}>
-            paste bundle instead
-          </Text>
-        </Pressable>
-      )}
+      </KeyboardAwareScreen>
     </View>
   );
 }
@@ -215,6 +220,7 @@ const THICK = 3;
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.canvas},
+  scrollContent: {flexGrow: 1, justifyContent: 'center'},
   cameraWrap: {flex: 1},
   overlay: {
     position: 'absolute',
@@ -240,7 +246,6 @@ const styles = StyleSheet.create({
   caption: {...type.caption, color: colors.text},
   invalid: {...type.caption, color: colors.unread},
   noCamera: {
-    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: spacing.xl,

@@ -17,6 +17,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
+import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
@@ -60,6 +61,7 @@ export function NewConversationScreen() {
 
   return (
     <View style={styles.root}>
+      <KeyboardAwareScreen contentContainerStyle={styles.content}>
       <View style={styles.card}>
         <Text style={[type.label, {color: colors.textDim}]}>
           {reintroduceConvoPk != null
@@ -128,6 +130,7 @@ export function NewConversationScreen() {
           </Text>
         )}
       </View>
+      </KeyboardAwareScreen>
       <ErrorToast message={error} onDismiss={() => setError(null)} />
     </View>
   );
@@ -137,6 +140,8 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.canvas,
+  },
+  content: {
     padding: spacing.lg,
     gap: spacing.lg,
   },
