@@ -86,6 +86,9 @@ class EventCallbackManager {
               putString("kind", outcome.kind)
               putDouble("convoPk", outcome.convoPk.toDouble())
               putString("direction", outcome.direction)
+              // #116: members_changed carries a {"left":[…]} JSON detail so JS
+              // can render "<x> left" lines. Empty for every other outcome.
+              putString("detail", outcome.text)
             }
         emitToJs(repoParams)
       }

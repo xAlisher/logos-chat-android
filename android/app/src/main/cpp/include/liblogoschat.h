@@ -100,6 +100,21 @@ int logoschat_leave_group(void *handle, const char *convo_id);
 // convo_id — an error, never an empty name.
 char *logoschat_group_metadata(void *handle, const char *convo_id);
 
+// The group's CURRENT roster as a JSON array string:
+//   [{"account":"<hex>","device":"<hex>"}, …]
+// Caller frees.
+//
+// One entry per account (self included); an account's several devices collapse
+// to a single entry. A member whose account claim the directory cannot confirm
+// is still cryptographically in the group, so it is listed by its device with
+// "account" set to JSON null; "device" is always the member's local (delegate)
+// identity, hex-encoded. Read this to diff against a previous roster snapshot to
+// detect who joined or left.
+//
+// Returns NULL (reason in logoschat_last_error) for a direct (1:1) conversation
+// and for an unknown convo_id — an error, never an empty array.
+char *logoschat_group_members(void *handle, const char *convo_id);
+
 // List conversation ids as a JSON array string, e.g. ["id1","id2"]. Caller frees.
 char *logoschat_list_conversations(void *handle);
 

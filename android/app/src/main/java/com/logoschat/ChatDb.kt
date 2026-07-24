@@ -191,6 +191,12 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         arrayOf(convoPk, address, if (isSelf) 1 else 0, addedAt))
   }
 
+  /** Remove a member from a group's app-side roster (#116: they left). */
+  fun removeGroupMember(convoPk: Long, address: String) {
+    writableDatabase.execSQL(
+        "DELETE FROM group_members WHERE convo_pk=? AND address=?", arrayOf(convoPk, address))
+  }
+
   fun listGroupMembersJson(convoPk: Long): String {
     val arr = JSONArray()
     readableDatabase

@@ -17,7 +17,7 @@ export interface LogosChatEvent {
   // inbound_error | db_changed
   eventType: string;
   status?: NodeStatus; // when eventType === 'node_status'
-  detail?: string;
+  detail?: string; // node_status detail; also members_changed {"left":[…]} JSON (#116)
   event?: string; // raw lib JSON when source === 'lib'
   kind?: string; // 'message' | 'conversation_ready' when eventType === 'db_changed'
   convoPk?: number; // stable conversation id for db_changed events

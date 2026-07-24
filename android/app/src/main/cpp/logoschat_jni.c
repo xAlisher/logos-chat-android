@@ -267,6 +267,19 @@ Java_com_logoschat_NodeBridge_chatGroupMetadata(JNIEnv *env, jobject thiz, jlong
   return take_cstr(env, json);
 }
 
+// A group's CURRENT roster as JSON [{"account":…,"device":…},…] (#116). Directory-
+// verified, one entry per account. The app diffs this against its stored roster on
+// members_changed to detect who joined / left. NULL on error.
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatGroupMembers(JNIEnv *env, jobject thiz, jlong handle,
+                                               jstring convoId) {
+  (void)thiz;
+  const char *c = (*env)->GetStringUTFChars(env, convoId, 0);
+  char *json = logoschat_group_members((void *)handle, c);
+  (*env)->ReleaseStringUTFChars(env, convoId, c);
+  return take_cstr(env, json);
+}
+
 // Register the persistent event callback for this handle. The wrapper spawns a
 // pump; events arriving before this are buffered on the crossbeam channel, so
 // there is no early-event-loss window (unlike the old lib).

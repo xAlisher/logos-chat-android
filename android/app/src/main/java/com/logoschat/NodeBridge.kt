@@ -100,6 +100,13 @@ object NodeBridge {
    */
   external fun chatGroupMetadata(handle: Long, convoId: String): String?
 
+  /**
+   * A group's CURRENT roster as JSON `[{"account":…,"device":…},…]` (#116),
+   * directory-verified, one entry per account. Diffed against the app-side roster
+   * on members_changed to detect who joined/left. Null on error.
+   */
+  external fun chatGroupMembers(handle: Long, convoId: String): String?
+
   /** Register the persistent event callback for this handle. 0 on success. */
   external fun chatSetEventCallback(handle: Long): Int
 

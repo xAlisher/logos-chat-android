@@ -2,6 +2,7 @@ package com.logoschat
 
 import android.content.Context
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -133,7 +134,13 @@ object ChatRepo {
       if (group && !d.isGroup(existing)) d.markGroup(existing, null)
       // #95: a JOINER (received the Welcome) must seed itself into the roster,
       // just like the creator does — otherwise Group Info is empty on join.
-      if (group || d.isGroup(existing)) seedSelfMember(existing)
+      if (group || d.isGroup(existing)) {
+        seedSelfMember(existing)
+        // #116: capture the FULL roster now (self + creator + others) so a later
+        // departure is detectable — reconcile can only report "left" against
+        // members we already recorded.
+        reconcileRoster(existing, libConvoId)
+      }
       return null
     }
     val now = System.currentTimeMillis()
@@ -143,7 +150,11 @@ object ChatRepo {
     val name = if (group) groupNameFromLib(libConvoId) else null
     val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = group, groupName = name)
     // #95: seed self on the joiner so its own address is always on the roster.
-    if (group) seedSelfMember(convoPk)
+    // #116: reconcile the full roster now so a later departure is detectable.
+    if (group) {
+      seedSelfMember(convoPk)
+      reconcileRoster(convoPk, libConvoId)
+    }
     Log.i(TAG, "conversation started (inbound): convo=$convoPk lib=$libConvoId class=${klass ?: "?"}")
     return Outcome(if (group) "group_ready" else "conversation_ready", convoPk, "in", "")
   }
@@ -156,9 +167,52 @@ object ChatRepo {
     if (!d.isGroup(convoPk)) d.markGroup(convoPk, null)
     // #95: the joiner is always a member once a members-change lands for it.
     seedSelfMember(convoPk)
-    Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId")
-    return Outcome("members_changed", convoPk, "in", "")
+    // #116: reconcile our roster against the lib's real membership. Returns the
+    // addresses that LEFT (present locally, gone from the lib) so the thread can
+    // show "<x> left". Carried in the outcome text as JSON for JS to format.
+    val left = reconcileRoster(convoPk, libConvoId)
+    Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId left=$left")
+    val detail = if (left.isEmpty()) "" else JSONObject().put("left", JSONArray(left)).toString()
+    return Outcome("members_changed", convoPk, "in", detail)
   }
+
+  /**
+   * Sync a group's app-side roster to the lib's directory-verified membership
+   * (#116). Returns the addresses that LEFT (were local, gone from the lib), and
+   * silently adds any new members for roster accuracy (their "joined" line is
+   * emitted elsewhere on invite). GUARDED: a null/empty/self-missing lib roster
+   * is treated as "can't tell" and left untouched — never invent a mass exodus
+   * from a transient partial read.
+   */
+  private fun reconcileRoster(convoPk: Long, libConvoId: String): List<String> {
+    val ctx = NodeRuntime.ctx
+    if (ctx == 0L) return emptyList()
+    val self = NodeRuntime.address?.lowercase()
+    val libAddrs =
+        try {
+          val json = NodeBridge.chatGroupMembers(ctx, libConvoId) ?: return emptyList()
+          val arr = JSONArray(json)
+          (0 until arr.length())
+              .mapNotNull { arr.getJSONObject(it).let { m -> if (m.isNull("account")) null else m.optString("account").lowercase() } }
+              .filter { it.isNotBlank() }
+              .toSet()
+        } catch (t: Throwable) {
+          Log.w(TAG, "group members unavailable for $libConvoId: ${t.message}")
+          return emptyList()
+        }
+    // Trust guard: an empty roster, or one missing our own address, is a partial
+    // read — do nothing rather than falsely report everyone as having left.
+    if (libAddrs.isEmpty() || (self != null && self !in libAddrs)) return emptyList()
+
+    val dbAddrs = requireDb().groupMemberAddresses(convoPk).map { it.lowercase() }.toSet()
+    val left = (dbAddrs - libAddrs).filter { it != self }
+    val joined = (libAddrs - dbAddrs).filter { it != self }
+    val now = System.currentTimeMillis()
+    for (addr in joined) requireDb().addGroupMember(convoPk, addr, isSelf = false, addedAt = now)
+    for (addr in left) requireDb().removeGroupMember(convoPk, addr)
+    return left
+  }
+
 
   /**
    * Ensure our OWN address is on a group's roster (isSelf=true). Idempotent —

@@ -353,6 +353,17 @@ addLogosChatListener(e => {
       if (joined != null) {
         s.pushSystemLine(e.convoPk, `${describePeer(joined)} joined`);
       }
+      // #116: anyone the lib roster diff found missing → "<x> left".
+      if (e.detail != null && e.detail.length > 0) {
+        try {
+          const left: string[] = JSON.parse(e.detail).left ?? [];
+          for (const addr of left) {
+            s.pushSystemLine(e.convoPk!, `${describePeer(addr)} left`);
+          }
+        } catch {
+          // malformed detail — ignore, the roster is still reconciled native-side.
+        }
+      }
       notifyJoin(e.convoPk);
     }
     s.refreshConversations();
