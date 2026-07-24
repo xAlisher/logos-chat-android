@@ -173,7 +173,12 @@ export function ChatScreen() {
             onRetry={() => retry(convoPk, item.msgPk)}
           />
         )}
-        contentContainerStyle={styles.list}
+        // flex:1 so the list owns the free space and the composer keeps its
+        // intrinsic height — without it, an EMPTY inverted list mismeasures
+        // under KeyboardAvoidingView and collapses the composer to ~0 height
+        // (the empty-group bug from M2').
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
       />
       <View style={styles.composer}>
         <TextInput
@@ -203,7 +208,8 @@ export function ChatScreen() {
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.canvas},
-  list: {padding: spacing.lg, gap: spacing.sm},
+  list: {flex: 1},
+  listContent: {padding: spacing.lg, gap: spacing.sm},
   bubbleWrap: {maxWidth: layout.bubbleMaxWidthPct, gap: 2},
   wrapPeer: {alignSelf: 'flex-start', alignItems: 'flex-start'},
   wrapOwn: {alignSelf: 'flex-end', alignItems: 'flex-end'},
@@ -228,6 +234,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: spacing.md,
+    minHeight: 60, // never collapse (empty-group composer bug, M2')
   },
   input: {
     ...type.body,
