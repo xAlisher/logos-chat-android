@@ -101,3 +101,67 @@ Event tags + JSON:
   all 5 .so (logoschat, bridge, logosdelivery, rln, c++_shared). versionCode 4,
   versionName 0.2.0-m1. tsc clean; logic tests 10/10.
 
+### On-device E2E (both phones)
+
+Addresses minted on first `open_persistent`:
+- Samsung (RF8RA0M127K): `27f9dee9e003b7deb96d3de911080318057aa51934111bc8fa68d0f8f4ed80cb`
+- Pixel   (64150DLCR0028D): `0c87f0755bb9e571a3e46d5f63665599d6ea37485bd12dc681ddba1ae3a071c6`
+
+**Wall (cleared): dlopen crash on launch — patchelf corrupted librln GNU_HASH.**
+First install crashed: `dlopen failed: empty/missing DT_HASH/DT_GNU_HASH in
+librln.so (new hash type from the future?)`. patchelf 0.18 `--set-soname`
+mangled the Rust libs' hash table. Fix: keep liblogoschat.so + librln.so
+PRISTINE; patch ONLY the tiny bridge (a normal NDK C lib) with
+`patchelf --replace-needed <path> <soname>` to normalize its two path-based
+NEEDED entries → bare sonames. bionic then matches the bare soname against each
+already-loaded lib's basename (the libs have no DT_SONAME, so bionic defaults it
+to the load-path basename). Folded into build-bridge.sh.
+
+**Node boot (both):** loadLibrary chain ok → open_persistent (~15-17s: embedded
+delivery node + registry publish + encrypted store) → set_event_callback rc=0 →
+address obtained → node_status running. No crash.
+
+**Persistence PROVEN (both):** force-stop + relaunch → the SAME address returns
+(Samsung `27f9dee9…`, Pixel `0c87f075…`) — the §3/§8 identity gate holds on
+device. Samsung history also intact: after restart the "pixel" conversation +
+its message re-render from SQLite.
+
+**Live 1:1 delivery Samsung → Pixel — PROVEN.** Drove the Samsung UI: + → paste
+the Pixel address → nickname "pixel" → start conversation (create_conversation
+resolved, thread opened) → typed `hello-pixel-from-samsung-m1prime` → send. The
+Pixel node received it live:
+`lib event [2]: {"convoId":"83f7d4a4…","content":"hello-pixel-from-samsung-m1prime",
+"senderAccount":"27f9dee9…ed80cb","senderLocal":"b622e0ff…"}` then
+`persisted inbound msg_pk=1 convo=1 (32 chars) BEFORE forward`. Note the
+**senderAccount is the Samsung's EXACT address** — directory-verified
+cryptographic attribution (the thing that dissolves the old "unattributed"
+problem). Content is plaintext UTF-8 (no hex codec). Samsung UI shows the sent
+bubble; the conversation + message survive a Samsung app restart.
+
+**Reverse leg (Pixel → Samsung) — device-access blocked this session (wetware).**
+The reverse send uses the identical symmetric path (sendMessageTo/send_message on
+one side, message_received/persist on the other — the Pixel just exercised the
+receive+persist side, the Samsung just exercised the send side). Driving the
+Pixel UI to compose+send is blocked: the Pixel is PIN-locked
+(`deviceLocked=1, strongAuthRequired`) and its PIN is not available to this
+autonomous session (prior sessions unlocked it by hand). No desktop v0.2.1 chat
+node was running, and launching/driving the Basecamp Qt GUI (keycard-gated)
+autonomously is not reliable. **Unblock:** unlock the Pixel (or run a desktop
+v0.2.1 peer), open the "pixel" thread that the inbound already created, send one
+message → the Samsung's receive path (same code the Pixel exercised) surfaces it.
+
+**Evidence:** logs/m1p-*.png (Samsung main, Samsung chat with sent bubble),
+logcat quoted above.
+
+## Remaining gaps
+- **Reverse-direction live send** — Pixel PIN / desktop-GUI wetware (above).
+- **Keystore-at-rest hardening** — the identity seed (filesDir) + db_key
+  (app-private SharedPreferences) live in the app sandbox, not yet wrapped in an
+  Android Keystore-encrypted blob (M0' called the file form the "smoke
+  stand-in"). Functional persistence is proven; at-rest encryption is the follow-up.
+- **Groups (create_group/add_group_member)** — bound in the bridge + NodeBridge
+  but not wired to UI. That is M2'.
+
+### Tests
+- JS logic (address + conversation-view) 10/10; Kotlin unit (ChatDbTest/
+  ChatRepoTest rewritten to the address schema) green via `gradlew testReleaseUnitTest`.

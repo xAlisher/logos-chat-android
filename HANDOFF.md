@@ -270,3 +270,69 @@ candidate to upstream to logos-messaging once M1' exercises it.
 
 **App source NOT touched** (that's M1'); old logos-libchat-android NOT touched.
 Build tree at /extra/tmp/libchat-mls-build (libchat clone + patched, target/).
+
+---
+
+### M1' RESULT (2026-07-24, Fable — autonomous) ✅ retarget + 1:1 delivery proven; reverse leg wetware-gated
+
+**What retargeted.** The whole app now runs on the NEW pure-Rust `libchat`
+(stable hex ADDRESSES + persistent identity + MLS), replacing the ephemeral
+intro-bundle model. Single lib (dual-binary std/mix GONE). versionCode 4 /
+`0.2.0-m1`. Full detail: `docs/m1prime-log.md`.
+
+**New native bridge/model.**
+- jniLibs: `liblogoschat.so` + `liblogosdelivery.so` + `librln.so` +
+  `libc++_shared.so` (from logos-libchat-mls-android/prebuilt). Load order
+  c++_shared→rln→logosdelivery→logoschat→bridge.
+- `logoschat_jni.c` rewritten to the 12 new verbs — values returned directly (the
+  old on_response/cb_result request-callback machinery is gone); new event
+  callback `(int event_type, const char* json, void*)`.
+- Kotlin: NodeRuntime.start = `open_persistent` (identity seed in filesDir, db_key
+  in app-private SharedPreferences); NodeBridge/LogosChatModule address verbs
+  (getMyAddress/createConversation/sendMessageTo/setNickname/…). ChatDb =
+  `logoschat_mls.db` keyed by peer_address + lib_convo_id + nickname; ChatRepo
+  binds convoId↔address via the directory-verified `senderAccount`.
+- JS: address-based stores + screens (MyAddress QR, address Scan/New-conversation,
+  mix-free Chat/Settings).
+
+**Wall (cleared).** First install crashed: `dlopen … empty/missing DT_HASH/
+DT_GNU_HASH in librln.so`. patchelf `--set-soname` corrupts the Rust libs' hash.
+Fix: keep the big libs PRISTINE, patch only the tiny bridge with
+`--replace-needed` to turn its path-based NEEDED into bare sonames. Now in
+build-bridge.sh. **Rebuild the bridge after any .so swap still holds.**
+
+**1:1 E2E on both phones.**
+- **Persistent stable address PROVEN on BOTH** (force-stop + relaunch → identical
+  address: Samsung `27f9dee9…ed80cb`, Pixel `0c87f075…071c6`; Samsung history
+  intact across restart).
+- **Live delivery Samsung → Pixel PROVEN** with cryptographic sender attribution
+  (Pixel's `message_received.senderAccount` == Samsung's exact address), exact
+  plaintext content, persist-before-forward on the Pixel, and Samsung-side
+  persistence of the sent message/conversation across app restart.
+- **Reverse leg (Pixel → Samsung) NOT demonstrated live this session** — the Pixel
+  is PIN-locked (`deviceLocked=1`) so its UI couldn't be driven to compose+send,
+  and no desktop v0.2.1 chat node was running. It is the identical symmetric code
+  path (the Pixel already exercised receive+persist; the Samsung already exercised
+  send). **Unblock:** unlock the Pixel (or run a desktop v0.2.1 peer), open the
+  inbound-created "pixel" thread, send one message.
+
+**What was deleted.** Intro-bundle exchange, session-epoch schema (epochs/
+sessions/expired/re-introduce), unattributed/pending/merge/AttachContact, MIX/
+Private-routing (config + UI + native mix status/send-gate), dual-binary variant
+machinery + ProcessPhoenix/PhoenixActivity, hex codec. Old `logoschat.db`
+abandoned for `logoschat_mls.db`.
+
+**Walls / remaining gaps.**
+- Reverse-direction live send — Pixel PIN / desktop-GUI wetware (above).
+- Keystore-at-rest hardening — identity seed + db_key are in the app sandbox, not
+  yet a Keystore-encrypted blob (functional persistence proven; at-rest crypto is
+  the follow-up).
+- Groups (`create_group`/`add_group_member`) bound in the bridge but not wired to
+  UI — that's **M2'**.
+- Tests: JS logic (address + conversation-view, 10/10) and Kotlin unit
+  (ChatDbTest/ChatRepoTest rewritten to the address schema — `gradle
+  testReleaseUnitTest` green) both pass. The headless interop harness (desktop
+  peer for the new lib) is still M3'.
+
+Both phones left on the `0.2.0-m1` build, node auto-started, stable address.
+Not released (M2' groups + tests first).

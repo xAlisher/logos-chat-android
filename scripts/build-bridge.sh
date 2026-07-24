@@ -27,7 +27,22 @@ rm -rf "$OUT"
   NDK_LIBS_OUT="$OUT/libs"
 
 cp "$OUT/libs/arm64-v8a/liblogoschat_bridge.so" "$JNILIBS/arm64-v8a/"
-echo "bridge -> $JNILIBS/arm64-v8a/liblogoschat_bridge.so"
+BRIDGE="$JNILIBS/arm64-v8a/liblogoschat_bridge.so"
+
+# Normalize the bridge's DT_NEEDED entries. liblogoschat.so + librln.so are Rust
+# cdylibs with NO DT_SONAME, so ndk-build records the ABSOLUTE build-tree path as
+# the NEEDED string — which won't resolve on device. We patch ONLY the tiny bridge
+# (a plain NDK C lib with a normal hash — safe to patchelf) to use the bare
+# sonames; the big libs stay pristine (patchelf corrupts their GNU_HASH). At
+# runtime bionic matches the bare soname against the already-loaded lib's basename.
+READELF="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+for path in $("$READELF" -d "$BRIDGE" | awk '/NEEDED/ {print $NF}' | tr -d '[]' | grep '/'); do
+  base="$(basename "$path")"
+  echo "  normalize NEEDED: $path -> $base"
+  patchelf --replace-needed "$path" "$base" "$BRIDGE"
+done
+
+echo "bridge -> $BRIDGE"
 file "$JNILIBS/arm64-v8a/liblogoschat_bridge.so" 2>/dev/null || true
 "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm" -D \
   "$JNILIBS/arm64-v8a/liblogoschat_bridge.so" | grep -c Java_com_logoschat \
