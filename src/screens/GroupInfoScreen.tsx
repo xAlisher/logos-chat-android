@@ -2,12 +2,15 @@
 // "Add member" reuses the polished Scan screen in addMember mode (camera + paste),
 // which calls addMember and pops back here.
 import React, {useCallback, useEffect, useState} from 'react';
-import {Text, TextInput, View, Pressable, FlatList, StyleSheet} from 'react-native';
+import {Text, TextInput, View, Pressable, FlatList, ToastAndroid, StyleSheet} from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import {useFocusEffect, useNavigation, useRoute} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
+import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon} from '../components/OverflowMenu';
+import {LabelModal} from '../components/LabelModal';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
@@ -25,6 +28,10 @@ export function GroupInfoScreen() {
   const members = useChatStore(s => s.members[convoPk]) ?? [];
   const loadMembers = useChatStore(s => s.loadMembers);
   const setNickname = useChatStore(s => s.setNickname);
+  const startConversation = useChatStore(s => s.startConversation);
+  // The member a row-menu / label editor is acting on.
+  const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
+  const [labelMember, setLabelMember] = useState<{address: string; label: string | null} | null>(null);
 
   // A joiner never learns the group's real name (#102) — let it be named locally.
   const displayName = convo != null ? convoDisplayName(convo) : `group #${convoPk}`;
@@ -81,7 +88,11 @@ export function GroupInfoScreen() {
   const renderMember = ({item}: {item: GroupMember}) => {
     const label = item.isSelf ? 'You' : labelFor(item.address);
     return (
-      <View style={styles.memberRow}>
+      <Pressable
+        style={styles.memberRow}
+        disabled={item.isSelf}
+        onPress={() => setMenuMember({address: item.address, label: labelFor(item.address)})}
+        testID={`member-${item.address}`}>
         <View style={styles.memberDot} />
         <View style={styles.memberText}>
           <Text
@@ -93,8 +104,66 @@ export function GroupInfoScreen() {
             {shortAddress(item.address)}
           </Text>
         </View>
-      </View>
+      </Pressable>
     );
+  };
+
+  // Actions for a tapped roster member (never self).
+  const menuItems =
+    menuMember == null
+      ? []
+      : [
+          {
+            key: 'label',
+            label: menuMember.label ? 'Edit label' : 'Add label',
+            icon: <TagIcon color={colors.textDim} />,
+            onPress: () => setLabelMember(menuMember),
+          },
+          {
+            key: 'copy-address',
+            label: 'Copy address',
+            icon: <CopyIcon color={colors.textDim} />,
+            onPress: () => {
+              Clipboard.setString(menuMember.address);
+              ToastAndroid.show('Copied', ToastAndroid.SHORT);
+            },
+          },
+          {
+            key: 'send-message',
+            label: 'Send message',
+            icon: <MessageCircleIcon color={colors.textDim} />,
+            onPress: () => openDirect(menuMember.address),
+          },
+        ];
+
+  // Resolve-or-create the 1:1 with `address` and open it.
+  const openDirect = (address: string) => {
+    const existing = Object.values(conversations).find(
+      c => !c.isGroup && c.peerAddress?.toLowerCase() === address.toLowerCase(),
+    );
+    const go = (pk: number) =>
+      navigation.navigate('Chat', {convoPk: pk, convoName: '', isGroup: false});
+    if (existing != null) {
+      go(existing.convoPk);
+    } else {
+      startConversation(address)
+        .then(go)
+        .catch(e => useNodeStore.setState({error: `could not open: ${e?.message ?? e}`}));
+    }
+  };
+
+  // Save a label for a member: reuse the 1:1 with them, else create the contact.
+  const saveMemberLabel = (address: string, label: string) => {
+    const existing = Object.values(conversations).find(
+      c => !c.isGroup && c.peerAddress?.toLowerCase() === address.toLowerCase(),
+    );
+    const done = () => setLabelMember(null);
+    (existing != null
+      ? setNickname(existing.convoPk, label)
+      : startConversation(address, {nickname: label || undefined}).then(() => {})
+    )
+      .then(done)
+      .catch(e => useNodeStore.setState({error: `label failed: ${e?.message ?? e}`}));
   };
 
   return (
@@ -155,6 +224,19 @@ export function GroupInfoScreen() {
           adding sends an MLS Welcome; the member appears in their conversations list.
         </Text>
       </View>
+      <OverflowMenu
+        visible={menuMember != null}
+        items={menuItems}
+        onClose={() => setMenuMember(null)}
+        anchor="center"
+        testID="member-menu"
+      />
+      <LabelModal
+        visible={labelMember != null}
+        label={labelMember?.label ?? null}
+        onClose={() => setLabelMember(null)}
+        onSave={v => labelMember != null && saveMemberLabel(labelMember.address, v)}
+      />
     </View>
   );
 }
