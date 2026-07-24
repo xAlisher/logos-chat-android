@@ -1,4 +1,5 @@
 <resources>
     <!-- Theme canvas (docs/theme.md §1) — used for the black system bars (#54). -->
     <color name="canvas">#0A0A0A</color>
+    <color name="ic_launcher_background">#161616</color>
 </resources>
