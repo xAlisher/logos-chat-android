@@ -8,74 +8,62 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Durable app-side store — docs/architecture.md §4, implemented EXACTLY.
+ * Durable app-side store — M1' address model.
  *
- * The lib is ephemeral by design (invariant #6): identity, ratchet state and lib
- * conversationIds die with the process. Everything durable lives here:
- *  - `epochs`        — one row per chat_new (a node lifetime)
- *  - `contacts`      — peers + their last-seen intro bundle (opaque; names NOT authenticated)
- *  - `conversations` — STABLE app-level identity (convo_pk survives restarts)
- *  - `convo_sessions`— binds an ephemeral lib conversationId to a convo_pk within one epoch
- *  - `messages`      — full durable history
+ * The NEW libchat has a PERSISTENT identity (stable hex address) and keeps its own
+ * crypto/MLS state in an encrypted SQLite DB. This app-side store keeps the UI
+ * conveniences the lib doesn't expose: message history, nickname, unread, last
+ * message preview — keyed by the STABLE PEER ADDRESS.
  *
- * All timestamps are ms since epoch. `content` is decoded UTF-8 text (the hex
- * decode happens before persist). Writers: the "logoschat-events" HandlerThread
- * (inbound persist-before-forward) and the "logoschat-node" executor (outbound);
- * SQLiteDatabase serializes access internally.
+ * Tables:
+ *  - `kv`            — settings (display name, node config, auto-restart)
+ *  - `conversations` — one row per peer. `peer_address` (hex, stable) is the
+ *                      natural key; `lib_convo_id` is the lib's conversation id we
+ *                      send on (bound lazily from create_conversation or the first
+ *                      inbound event). Either may be null transiently.
+ *  - `messages`      — full durable history.
+ *
+ * No epochs, no sessions, no intro bundles, no merge, no expired — all gone with
+ * the ephemeral model. Timestamps are ms since epoch; `content` is UTF-8 text.
+ * Writers: the "logoschat-events" HandlerThread (inbound persist-before-forward)
+ * and the "logoschat-node" executor (outbound); SQLite serializes internally.
  */
 class ChatDb(context: Context, name: String? = DB_NAME) :
     SQLiteOpenHelper(context, name, null, DB_VERSION) {
 
   companion object {
-    const val DB_NAME = "logoschat.db"
+    // New DB file for the address model — the old ephemeral `logoschat.db`
+    // (epochs/sessions/bundles) is abandoned; its identity no longer exists.
+    const val DB_NAME = "logoschat_mls.db"
     const val DB_VERSION = 1
   }
 
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT)")
     db.execSQL(
-        """CREATE TABLE epochs(
-             epoch_id INTEGER PRIMARY KEY AUTOINCREMENT,
-             started_at INT, ended_at INT, mix_enabled INT DEFAULT 0)""")
-    db.execSQL(
-        """CREATE TABLE contacts(
-             contact_id INTEGER PRIMARY KEY, display_name TEXT,
-             last_bundle TEXT, bundle_seen_at INT)""")
-    db.execSQL(
         """CREATE TABLE conversations(
-             convo_pk INTEGER PRIMARY KEY,
-             contact_id INT REFERENCES contacts,
+             convo_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+             peer_address TEXT,
+             lib_convo_id TEXT,
+             nickname TEXT,
              created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
     db.execSQL(
-        """CREATE TABLE convo_sessions(
-             session_id INTEGER PRIMARY KEY,
-             convo_pk INT REFERENCES conversations,
-             epoch_id INT REFERENCES epochs,
-             lib_conversation_id TEXT,
-             direction TEXT CHECK(direction IN ('initiated','accepted')),
-             created_at INT,
-             UNIQUE(epoch_id, lib_conversation_id))""")
-    db.execSQL(
         """CREATE TABLE messages(
-             msg_pk INTEGER PRIMARY KEY, convo_pk INT, session_id INT,
+             msg_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+             convo_pk INT REFERENCES conversations,
              direction TEXT CHECK(direction IN ('in','out')),
              content TEXT, sent_at INT,
              status TEXT CHECK(status IN ('pending','sent','failed','received')))""")
     db.execSQL("CREATE INDEX idx_messages_convo ON messages(convo_pk, msg_pk)")
-    db.execSQL("CREATE INDEX idx_sessions_convo ON convo_sessions(convo_pk, epoch_id)")
+    db.execSQL("CREATE INDEX idx_convo_addr ON conversations(peer_address)")
+    db.execSQL("CREATE INDEX idx_convo_lib ON conversations(lib_convo_id)")
   }
 
-  /**
-   * Migrations scaffold: bump [DB_VERSION] and add a `when (v)` step per version.
-   * Each step migrates v-1 → v; the loop applies them in order so any old
-   * version reaches head. NEVER edit shipped steps — append new ones.
-   */
   override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
     var v = oldVersion
     while (v < newVersion) {
       v++
       when (v) {
-        // 2 -> db.execSQL("ALTER TABLE ...")  // example future step
         else -> throw IllegalStateException("no migration to schema v$v")
       }
     }
@@ -94,77 +82,71 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         arrayOf(key, value))
   }
 
-  // -- epochs ----------------------------------------------------------------
-
-  fun openEpoch(startedAt: Long, mixEnabled: Boolean): Long =
-      writableDatabase.insertOrThrow(
-          "epochs",
-          null,
-          ContentValues().apply {
-            put("started_at", startedAt)
-            put("mix_enabled", if (mixEnabled) 1 else 0)
-          })
-
-  fun closeEpoch(epochId: Long, endedAt: Long) {
-    writableDatabase.execSQL(
-        "UPDATE epochs SET ended_at=? WHERE epoch_id=?", arrayOf(endedAt, epochId))
-  }
-
-  // -- contacts --------------------------------------------------------------
-
-  fun insertContact(displayName: String?, bundle: String?, seenAt: Long): Long =
-      writableDatabase.insertOrThrow(
-          "contacts",
-          null,
-          ContentValues().apply {
-            put("display_name", displayName)
-            put("last_bundle", bundle)
-            if (bundle != null) put("bundle_seen_at", seenAt) else putNull("bundle_seen_at")
-          })
-
-  fun updateContactBundle(contactId: Long, bundle: String, seenAt: Long) {
-    writableDatabase.execSQL(
-        "UPDATE contacts SET last_bundle=?, bundle_seen_at=? WHERE contact_id=?",
-        arrayOf(bundle, seenAt, contactId))
-  }
-
-  fun setContactName(contactId: Long, name: String) {
-    writableDatabase.execSQL(
-        "UPDATE contacts SET display_name=? WHERE contact_id=?", arrayOf(name, contactId))
-  }
-
-  /** The contact's stored intro bundle, or null (inbound-only contacts have none). */
-  fun contactBundle(convoPk: Long): String? =
-      readableDatabase
-          .rawQuery(
-              """SELECT ct.last_bundle FROM conversations c
-                 JOIN contacts ct ON ct.contact_id=c.contact_id WHERE c.convo_pk=?""",
-              arrayOf(convoPk.toString()))
-          .use { if (it.moveToFirst()) it.getString(0) else null }
-
-  fun contactIdForConvo(convoPk: Long): Long? =
-      readableDatabase
-          .rawQuery(
-              "SELECT contact_id FROM conversations WHERE convo_pk=?",
-              arrayOf(convoPk.toString()))
-          .use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
-
   // -- conversations ---------------------------------------------------------
 
-  fun insertConversation(contactId: Long?, createdAt: Long): Long =
+  fun insertConversation(
+      peerAddress: String?,
+      libConvoId: String?,
+      nickname: String?,
+      createdAt: Long,
+  ): Long =
       writableDatabase.insertOrThrow(
           "conversations",
           null,
           ContentValues().apply {
-            if (contactId != null) put("contact_id", contactId) else putNull("contact_id")
+            if (peerAddress != null) put("peer_address", peerAddress) else putNull("peer_address")
+            if (libConvoId != null) put("lib_convo_id", libConvoId) else putNull("lib_convo_id")
+            if (nickname != null) put("nickname", nickname) else putNull("nickname")
             put("created_at", createdAt)
             put("last_message_at", createdAt)
             put("unread", 0)
           })
 
-  fun setConversationContact(convoPk: Long, contactId: Long) {
+  /** convo_pk for a peer address, or null. */
+  fun convoPkByAddress(peerAddress: String): Long? =
+      readableDatabase
+          .rawQuery(
+              "SELECT convo_pk FROM conversations WHERE peer_address=? LIMIT 1",
+              arrayOf(peerAddress))
+          .use { if (it.moveToFirst()) it.getLong(0) else null }
+
+  /** convo_pk for a lib conversation id, or null. */
+  fun convoPkByLibId(libConvoId: String): Long? =
+      readableDatabase
+          .rawQuery(
+              "SELECT convo_pk FROM conversations WHERE lib_convo_id=? LIMIT 1",
+              arrayOf(libConvoId))
+          .use { if (it.moveToFirst()) it.getLong(0) else null }
+
+  /** The lib conversation id to send on for this convo, or null (not yet bound). */
+  fun libConvoIdOf(convoPk: Long): String? =
+      readableDatabase
+          .rawQuery(
+              "SELECT lib_convo_id FROM conversations WHERE convo_pk=?",
+              arrayOf(convoPk.toString()))
+          .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
+
+  /** The peer address for this convo, or null (unverified / not yet known). */
+  fun peerAddressOf(convoPk: Long): String? =
+      readableDatabase
+          .rawQuery(
+              "SELECT peer_address FROM conversations WHERE convo_pk=?",
+              arrayOf(convoPk.toString()))
+          .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
+
+  fun setLibConvoId(convoPk: Long, libConvoId: String) {
     writableDatabase.execSQL(
-        "UPDATE conversations SET contact_id=? WHERE convo_pk=?", arrayOf(contactId, convoPk))
+        "UPDATE conversations SET lib_convo_id=? WHERE convo_pk=?", arrayOf(libConvoId, convoPk))
+  }
+
+  fun setPeerAddress(convoPk: Long, peerAddress: String) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET peer_address=? WHERE convo_pk=?", arrayOf(peerAddress, convoPk))
+  }
+
+  fun setNickname(convoPk: Long, nickname: String) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET nickname=? WHERE convo_pk=?", arrayOf(nickname, convoPk))
   }
 
   fun deleteConversation(convoPk: Long) {
@@ -172,7 +154,6 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     db.beginTransaction()
     try {
       db.execSQL("DELETE FROM messages WHERE convo_pk=?", arrayOf(convoPk))
-      db.execSQL("DELETE FROM convo_sessions WHERE convo_pk=?", arrayOf(convoPk))
       db.execSQL("DELETE FROM conversations WHERE convo_pk=?", arrayOf(convoPk))
       db.setTransactionSuccessful()
     } finally {
@@ -196,48 +177,10 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         "UPDATE conversations SET unread=0 WHERE convo_pk=?", arrayOf(convoPk))
   }
 
-  // -- sessions --------------------------------------------------------------
-
-  fun insertSession(
-      convoPk: Long,
-      epochId: Long,
-      libConversationId: String,
-      direction: String,
-      createdAt: Long,
-  ): Long =
-      writableDatabase.insertOrThrow(
-          "convo_sessions",
-          null,
-          ContentValues().apply {
-            put("convo_pk", convoPk)
-            put("epoch_id", epochId)
-            put("lib_conversation_id", libConversationId)
-            put("direction", direction)
-            put("created_at", createdAt)
-          })
-
-  /** (sessionId, convoPk) for a lib conversationId within an epoch, or null. */
-  fun findSessionByLibId(epochId: Long, libConversationId: String): Pair<Long, Long>? =
-      readableDatabase
-          .rawQuery(
-              "SELECT session_id, convo_pk FROM convo_sessions WHERE epoch_id=? AND lib_conversation_id=?",
-              arrayOf(epochId.toString(), libConversationId))
-          .use { if (it.moveToFirst()) Pair(it.getLong(0), it.getLong(1)) else null }
-
-  /** (sessionId, libConversationId) of the conversation's session in the given epoch. */
-  fun currentSession(convoPk: Long, epochId: Long): Pair<Long, String>? =
-      readableDatabase
-          .rawQuery(
-              """SELECT session_id, lib_conversation_id FROM convo_sessions
-                 WHERE convo_pk=? AND epoch_id=? ORDER BY session_id DESC LIMIT 1""",
-              arrayOf(convoPk.toString(), epochId.toString()))
-          .use { if (it.moveToFirst()) Pair(it.getLong(0), it.getString(1)) else null }
-
   // -- messages --------------------------------------------------------------
 
   fun insertMessage(
       convoPk: Long,
-      sessionId: Long,
       direction: String,
       content: String,
       sentAt: Long,
@@ -248,7 +191,6 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           null,
           ContentValues().apply {
             put("convo_pk", convoPk)
-            put("session_id", sessionId)
             put("direction", direction)
             put("content", content)
             put("sent_at", sentAt)
@@ -268,90 +210,49 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
               arrayOf(msgPk.toString()))
           .use { if (it.moveToFirst()) Pair(it.getLong(0), it.getString(1)) else null }
 
-  // -- merge (#24) -----------------------------------------------------------
-
-  /**
-   * Merges a pending inbound conversation into an existing one: sessions +
-   * messages re-point to [targetPk], unread and recency carry over, the pending
-   * row is deleted. Manual attribution — v1 limitation, stated openly.
-   */
-  fun mergeConversation(pendingPk: Long, targetPk: Long) {
-    require(pendingPk != targetPk) { "cannot merge a conversation into itself" }
-    val db = writableDatabase
-    db.beginTransaction()
-    try {
-      db.execSQL(
-          "UPDATE convo_sessions SET convo_pk=? WHERE convo_pk=?", arrayOf(targetPk, pendingPk))
-      db.execSQL(
-          "UPDATE messages SET convo_pk=? WHERE convo_pk=?", arrayOf(targetPk, pendingPk))
-      db.execSQL(
-          """UPDATE conversations SET
-               unread = unread + (SELECT unread FROM conversations WHERE convo_pk=?),
-               last_message_at = MAX(last_message_at,
-                 (SELECT last_message_at FROM conversations WHERE convo_pk=?))
-             WHERE convo_pk=?""",
-          arrayOf(pendingPk, pendingPk, targetPk))
-      db.execSQL("DELETE FROM conversations WHERE convo_pk=?", arrayOf(pendingPk))
-      db.setTransactionSuccessful()
-    } finally {
-      db.endTransaction()
-    }
-  }
-
   // -- query surface for JS --------------------------------------------------
 
-  /**
-   * Contact name for a conversation, or null when it's still pending (inbound,
-   * not yet attributed — #24). Used for notification titles (#26).
-   */
+  /** Display label: nickname, else short address, else "peer #pk". For notifications. */
   fun displayNameFor(convoPk: Long): String? =
       readableDatabase
           .rawQuery(
-              """SELECT ct.display_name FROM conversations c
-                   LEFT JOIN contacts ct ON ct.contact_id=c.contact_id
-                  WHERE c.convo_pk=?""",
+              "SELECT nickname, peer_address FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use { cur ->
-            if (cur.moveToFirst() && !cur.isNull(0)) cur.getString(0).ifEmpty { null } else null
+            if (!cur.moveToFirst()) return@use null
+            val nick = if (cur.isNull(0)) null else cur.getString(0).ifEmpty { null }
+            if (nick != null) return@use nick
+            val addr = if (cur.isNull(1)) null else cur.getString(1)
+            if (addr != null && addr.length >= 8) addr.substring(0, 8) else null
           }
 
-  /**
-   * All conversations, newest-activity first. `expired` = no session bound in
-   * [currentEpochId] (0 = node down ⇒ everything expired). `pending` = inbound
-   * conversation not yet attached to a contact (#24).
-   */
-  fun listConversationsJson(currentEpochId: Long): String {
+  /** All conversations, newest-activity first. */
+  fun listConversationsJson(): String {
     val arr = JSONArray()
     readableDatabase
         .rawQuery(
-            """SELECT c.convo_pk, c.contact_id, ct.display_name,
-                      CASE WHEN ct.last_bundle IS NOT NULL AND ct.last_bundle != '' THEN 1 ELSE 0 END,
+            """SELECT c.convo_pk, c.peer_address, c.nickname, c.lib_convo_id,
                       c.created_at, c.last_message_at, c.unread,
                       (SELECT content FROM messages m WHERE m.convo_pk=c.convo_pk
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       (SELECT direction FROM messages m WHERE m.convo_pk=c.convo_pk
-                         ORDER BY m.msg_pk DESC LIMIT 1),
-                      EXISTS(SELECT 1 FROM convo_sessions s
-                               WHERE s.convo_pk=c.convo_pk AND s.epoch_id=?)
+                         ORDER BY m.msg_pk DESC LIMIT 1)
                FROM conversations c
-               LEFT JOIN contacts ct ON ct.contact_id=c.contact_id
                ORDER BY c.last_message_at DESC""",
-            arrayOf(currentEpochId.toString()))
+            null)
         .use { cur ->
           while (cur.moveToNext()) {
             arr.put(
                 JSONObject().apply {
                   put("convoPk", cur.getLong(0))
-                  if (cur.isNull(1)) put("contactId", JSONObject.NULL) else put("contactId", cur.getLong(1))
-                  if (cur.isNull(2)) put("name", JSONObject.NULL) else put("name", cur.getString(2))
-                  put("hasBundle", cur.getInt(3) == 1)
+                  if (cur.isNull(1)) put("peerAddress", JSONObject.NULL) else put("peerAddress", cur.getString(1))
+                  if (cur.isNull(2)) put("nickname", JSONObject.NULL) else put("nickname", cur.getString(2))
+                  put("bound", !cur.isNull(3))
                   put("createdAt", cur.getLong(4))
                   put("lastMessageAt", cur.getLong(5))
                   put("unread", cur.getInt(6))
                   put("lastText", if (cur.isNull(7)) "" else cur.getString(7))
                   put("lastDirection", if (cur.isNull(8)) "" else cur.getString(8))
-                  put("expired", cur.getInt(9) == 0)
-                  put("pending", cur.isNull(1))
                 })
           }
         }
@@ -361,8 +262,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** Messages newest-first; `beforeMsgPk` 0 = from head; page size [limit]. */
   fun listMessagesJson(convoPk: Long, beforeMsgPk: Long, limit: Int): String {
     val arr = JSONArray()
-    val where =
-        if (beforeMsgPk > 0) "convo_pk=? AND msg_pk<?" else "convo_pk=?"
+    val where = if (beforeMsgPk > 0) "convo_pk=? AND msg_pk<?" else "convo_pk=?"
     val args =
         if (beforeMsgPk > 0) arrayOf(convoPk.toString(), beforeMsgPk.toString())
         else arrayOf(convoPk.toString())
@@ -379,31 +279,6 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("text", cur.getString(2))
                   put("at", cur.getLong(3))
                   put("status", cur.getString(4))
-                })
-          }
-        }
-    return arr.toString()
-  }
-
-  /** Named contacts + whether a bundle is stored — the #24 merge-target list. */
-  fun listContactsJson(): String {
-    val arr = JSONArray()
-    readableDatabase
-        .rawQuery(
-            """SELECT ct.contact_id, ct.display_name,
-                      CASE WHEN ct.last_bundle IS NOT NULL AND ct.last_bundle != '' THEN 1 ELSE 0 END,
-                      (SELECT c.convo_pk FROM conversations c
-                         WHERE c.contact_id=ct.contact_id ORDER BY c.last_message_at DESC LIMIT 1)
-               FROM contacts ct ORDER BY ct.contact_id""",
-            null)
-        .use { cur ->
-          while (cur.moveToNext()) {
-            arr.put(
-                JSONObject().apply {
-                  put("contactId", cur.getLong(0))
-                  if (cur.isNull(1)) put("name", JSONObject.NULL) else put("name", cur.getString(1))
-                  put("hasBundle", cur.getInt(2) == 1)
-                  if (cur.isNull(3)) put("convoPk", JSONObject.NULL) else put("convoPk", cur.getLong(3))
                 })
           }
         }

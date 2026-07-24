@@ -1,10 +1,9 @@
-// chatStore (zustand) — M3 (#22): a live VIEW over the durable native store.
-// SQLite (docs/architecture.md §4) is the source of truth; the lib is ephemeral
-// (invariant #6) and every write happens native-side BEFORE JS sees the event
-// (persist-before-forward, #21). This store only queries + mirrors.
+// chatStore (zustand) — a live VIEW over the durable native store. SQLite is the
+// source of truth; every write happens native-side BEFORE JS sees the event
+// (persist-before-forward). This store only queries + mirrors.
 //
-// Identity: the STABLE convoPk (survives restarts). Ephemeral lib conversation
-// ids never reach the UI — sessions bind them to convoPks natively.
+// Identity: the STABLE convoPk (survives restarts). A conversation is keyed by the
+// peer ADDRESS native-side; the UI works in convoPks.
 import {create} from 'zustand';
 import LogosChat, {addLogosChatListener} from '../native/LogosChat';
 import type {ConversationRow, MessageRow} from '../native/LogosChat';
@@ -14,39 +13,28 @@ export type {ConversationRow as Conversation, MessageRow as Message};
 
 interface ChatState {
   conversations: Record<number, ConversationRow>;
-  /** Per-conversation pages, newest-first (as listed by the DB). */
   messages: Record<number, MessageRow[]>;
-  /** convoPk of the open thread — its inbound messages don't count as unread. */
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
   loadMessages: (convoPk: number) => Promise<void>;
-  /**
-   * Scan/paste → opening message → chat_new_private_conversation. When
-   * convoPk is given the fresh bundle re-introduces INTO that thread (#23).
-   * Resolves the stable convoPk.
-   */
+  /** Create (or reuse) a conversation with a peer address. Resolves convoPk. */
   startConversation: (
-    bundle: string,
-    text: string,
-    opts?: {convoPk?: number; name?: string},
+    peerAddress: string,
+    opts?: {nickname?: string},
   ) => Promise<number>;
-  /** Send into the current-epoch session. Throws code 'expired' when none. */
+  /** Send a message into a conversation. */
   send: (convoPk: number, text: string) => Promise<void>;
-  /** Re-introduce with the STORED bundle, opening message = text (#23). */
-  reintroduceSend: (convoPk: number, text: string) => Promise<void>;
   /** Re-send a failed outbound message. */
   retry: (convoPk: number, msgPk: number) => Promise<void>;
   setActive: (convoPk: number | null) => void;
   markRead: (convoPk: number) => void;
-  /** Attach a pending inbound conversation to a new named contact (#24). */
-  nameConversation: (convoPk: number, name: string) => Promise<void>;
-  /** Merge a pending inbound conversation into an existing thread (#24). */
-  merge: (pendingConvoPk: number, targetConvoPk: number) => Promise<number>;
-  /** Delete a conversation + its messages/sessions and drop it from the list (#71/#72). */
+  /** Set (or change) a conversation's nickname. */
+  setNickname: (convoPk: number, name: string) => Promise<void>;
+  /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
 }
 
-// Pure view helpers live in conversationView.ts (RN-free, unit-tested #49);
+// Pure view helpers live in conversationView.ts (RN-free, unit-tested);
 // re-exported here so existing screen imports keep resolving from chatStore.
 export {sortedConversations, convoDisplayName} from './conversationView';
 
@@ -75,19 +63,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set(s => ({messages: {...s.messages, [convoPk]: rows}}));
   },
 
-  startConversation: async (bundle, text, opts) => {
-    const convoPk =
-      opts?.convoPk != null
-        ? await LogosChat.newPrivateConversationFor(
-            opts.convoPk,
-            bundle,
-            text,
-            opts?.name ?? null,
-          )
-        : await LogosChat.newPrivateConversation(bundle, text);
-    if (opts?.name && opts.convoPk == null) {
-      await LogosChat.nameConversation(convoPk, opts.name);
-    }
+  startConversation: async (peerAddress, opts) => {
+    const convoPk = await LogosChat.createConversation(
+      peerAddress,
+      opts?.nickname ?? null,
+    );
     await get().refreshConversations();
     await get().loadMessages(convoPk);
     return convoPk;
@@ -95,7 +75,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   send: async (convoPk: number, text: string) => {
     // Optimistic pending bubble; the durable row lands native-side and the
-    // reload below replaces this. NO "delivered" ticks ever (invariant #5).
+    // reload below replaces this.
     const temp: MessageRow = {
       msgPk: -Date.now(),
       direction: 'out',
@@ -112,7 +92,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         useNodeStore.setState({error: 'send failed — tap the message to retry'});
       }
     } catch (e: any) {
-      // 'expired' and node-down reject before any row exists — drop the temp
       set(s => ({
         messages: {
           ...s.messages,
@@ -123,12 +102,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     await get().loadMessages(convoPk);
     await get().refreshConversations();
-  },
-
-  reintroduceSend: async (convoPk: number, text: string) => {
-    await LogosChat.reintroduce(convoPk, text);
-    await get().refreshConversations();
-    await get().loadMessages(convoPk);
   },
 
   retry: async (convoPk: number, msgPk: number) => {
@@ -154,16 +127,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     LogosChat.markRead(convoPk).then(() => get().refreshConversations());
   },
 
-  nameConversation: async (convoPk: number, name: string) => {
-    await LogosChat.nameConversation(convoPk, name);
+  setNickname: async (convoPk: number, name: string) => {
+    await LogosChat.setNickname(convoPk, name);
     await get().refreshConversations();
-  },
-
-  merge: async (pendingConvoPk: number, targetConvoPk: number) => {
-    await LogosChat.mergeConversation(pendingConvoPk, targetConvoPk);
-    await get().refreshConversations();
-    await get().loadMessages(targetConvoPk);
-    return targetConvoPk;
   },
 
   remove: async (convoPk: number) => {
@@ -180,8 +146,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 // ---------------------------------------------------------------------------
 // Live refresh: every persisted change arrives as a db_changed event AFTER the
-// SQLite write. Epoch/status flips also change the expired flags, so refresh
-// on node_status too. Initial load happens on module import.
+// SQLite write. Initial load happens on module import.
 
 addLogosChatListener(e => {
   const s = useChatStore.getState();

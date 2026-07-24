@@ -1,5 +1,5 @@
-// Native-stack navigation shell (M1 #10) — themed headers (panel bg, mono titles),
-// dark nav theme so no white flashes between screens.
+// Native-stack navigation shell — themed headers (panel bg, mono titles), dark
+// nav theme so no white flashes between screens.
 import React from 'react';
 import {NavigationContainer, DarkTheme} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
@@ -7,10 +7,9 @@ import {colors, type} from '../theme';
 import type {RootStackParamList} from './types';
 import {ConversationsScreen} from '../screens/ConversationsScreen';
 import {ChatScreen} from '../screens/ChatScreen';
-import {IntroBundleScreen} from '../screens/IntroBundleScreen';
+import {MyAddressScreen} from '../screens/MyAddressScreen';
 import {ScanScreen} from '../screens/ScanScreen';
 import {NewConversationScreen} from '../screens/NewConversationScreen';
-import {AttachContactScreen} from '../screens/AttachContactScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -39,9 +38,6 @@ export function RootNavigator() {
           headerTitleStyle: {...type.title, color: colors.text},
           headerShadowVisible: false,
           contentStyle: {backgroundColor: colors.canvas},
-          // #76: the old standalone MIX pill headerRight is removed everywhere —
-          // mix state now lives in the Conversations node pill (#56) + the
-          // Settings Private-routing block (#60).
         }}>
         <Stack.Screen
           name="Conversations"
@@ -54,24 +50,19 @@ export function RootNavigator() {
           options={({route}) => ({title: route.params.convoName})}
         />
         <Stack.Screen
-          name="IntroBundle"
-          component={IntroBundleScreen}
-          options={{title: 'intro bundle'}}
+          name="MyAddress"
+          component={MyAddressScreen}
+          options={{title: 'my address'}}
         />
         <Stack.Screen
           name="Scan"
           component={ScanScreen}
-          options={{title: 'scan'}}
+          options={{title: 'new chat'}}
         />
         <Stack.Screen
           name="NewConversation"
           component={NewConversationScreen}
           options={{title: 'new conversation'}}
-        />
-        <Stack.Screen
-          name="AttachContact"
-          component={AttachContactScreen}
-          options={{title: 'attach to contact'}}
         />
         <Stack.Screen
           name="Settings"

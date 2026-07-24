@@ -51,9 +51,6 @@ class ChatService : Service() {
             Thread(r, "logoschat-service-poll").apply { isDaemon = true }
           }.also {
             it.scheduleWithFixedDelay({ updateNotification(this) }, 30, 30, TimeUnit.SECONDS)
-            // Mix pool poll (#31): off the JS thread (background-throttle lesson),
-            // on the native executor via NodeRuntime. No-op unless mix is on.
-            it.scheduleWithFixedDelay({ NodeRuntime.pollMixStatus() }, 5, 8, TimeUnit.SECONDS)
           }
     }
     Log.i(TAG, "ChatService foregrounded (dataSync, sticky)")
@@ -136,7 +133,7 @@ class ChatService : Service() {
               PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
       return NotificationCompat.Builder(context, CHANNEL_NODE)
           .setContentTitle("> λ chat — node $status")
-          .setContentText("epoch ${ChatRepo.currentEpochId} · $convos conversations · $msgs messages")
+          .setContentText("$convos conversations · $msgs messages")
           .setSmallIcon(R.drawable.ic_stat_lambda) // λ in the status bar = node running
           .setColor(0xFF10B981.toInt()) // theme accent (docs/theme.md)
           .setOngoing(true)

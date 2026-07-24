@@ -33,11 +33,9 @@ class MainActivity : ReactActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     capture(intent)
-    // Auto-start (#57) is driven from JS on launch (nodeStore.autoStart) so it can
-    // pick the persisted mode, fetch identity, and auto-fetch the intro bundle. The
-    // headless START_STICKY path (ChatService.autoRestartIfWanted) still covers
-    // process-death when JS is absent. After a ProcessPhoenix mode-switch restart
-    // (#59) JS auto-start brings the node up in the newly-loaded variant.
+    // Auto-start is driven from JS on launch (nodeStore.autoStart) so it can fetch
+    // the address once the node is running. The headless START_STICKY path
+    // (ChatService.autoRestartIfWanted) still covers process-death when JS is absent.
   }
 
   override fun onNewIntent(intent: Intent) {

@@ -1,66 +1,46 @@
-// Settings — three blocks (#60): Node toggle · Private routing (+mix pool) · Identity
-// (intro bundle). docs/theme.md §4.
-//
-// Private routing (#30): flipping it restarts the process (ProcessPhoenix, #59) and
-// recreates the node with mixEnabled flipped = a NEW EPOCH + a FRESH KEYPAIR
-// (docs/architecture.md §4/§7). So it resets BOTH the session (open chats expire) AND
-// the identity (new QR/intro bundle — contacts must re-add you). The confirm dialog and
-// the block copy say this honestly; NEVER a silent relay fallback (send gate #32).
+// Settings — two blocks: Node on/off toggle · Identity (my stable address: QR +
+// hex + copy + refresh, plus an optional local display label).
 import React, {useEffect, useState} from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Switch,
   Text,
   TextInput,
   View,
-  Pressable,
   ScrollView,
   StyleSheet,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
 import {StatusPill} from '../components/StatusPill';
-import {PulseDot} from '../components/PulseDot';
 import {QrCard} from '../components/QrCard';
 import {ActionButton} from '../components/ActionButton';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
-import LogosChat from '../native/LogosChat';
-import {buildNodeConfig} from '../config/mix';
-import {MIX_UI_ENABLED} from '../config/features';
 
 export function SettingsScreen() {
   const status = useNodeStore(s => s.status);
-  const introBundle = useNodeStore(s => s.introBundle);
-  const fetchIntroBundle = useNodeStore(s => s.fetchIntroBundle);
+  const myAddress = useNodeStore(s => s.myAddress);
+  const fetchAddress = useNodeStore(s => s.fetchAddress);
   const error = useNodeStore(s => s.error);
   const start = useNodeStore(s => s.start);
   const stop = useNodeStore(s => s.stop);
   const clearError = useNodeStore(s => s.clearError);
 
-  const privateRouting = useSettingsStore(s => s.privateRouting);
   const displayName = useSettingsStore(s => s.displayName);
   const setDisplayName = useSettingsStore(s => s.setDisplayName);
-  const mix = useSettingsStore(s => s.mix);
-  const switching = useSettingsStore(s => s.switching);
-  const setSwitching = useSettingsStore(s => s.setSwitching);
-  const persistPrivateRouting = useSettingsStore(s => s.persistPrivateRouting);
-  const refreshMix = useSettingsStore(s => s.refreshMix);
 
   const busy = status === 'initializing' || status === 'starting';
   const running = status === 'running';
-  const poolShort = !mix.mixReady || mix.mixPoolSize < mix.minPoolSize;
 
-  // Local editable copy of the display name (committed on blur/submit).
   const [nameDraft, setNameDraft] = useState(displayName);
   const [copied, setCopied] = useState(false);
   useEffect(() => setNameDraft(displayName), [displayName]);
 
   useEffect(() => {
-    refreshMix();
-  }, [refreshMix, status]);
+    if (running && myAddress == null) fetchAddress();
+  }, [running, myAddress, fetchAddress]);
 
   useEffect(() => {
     if (!copied) return undefined;
@@ -73,40 +53,8 @@ export function SettingsScreen() {
   };
 
   const onToggleNode = (next: boolean) => {
-    if (next) start(displayName, privateRouting);
+    if (next) start();
     else stop();
-  };
-
-  const applyMode = async (next: boolean) => {
-    setSwitching(true);
-    try {
-      await persistPrivateRouting(next);
-      // Dual-binary (#51/#59): switching loads the other .so variant, which needs a
-      // fresh process — ProcessPhoenix restarts the app; the node auto-comes-up in
-      // the chosen mode (a NEW epoch + a fresh keypair). Execution effectively ends
-      // here (the process is killed).
-      await LogosChat.restartInMode(buildNodeConfig(displayName, next), next);
-    } catch {
-      // Only reached if the restart failed to arm — leave the spinner off.
-      setSwitching(false);
-      refreshMix();
-    }
-  };
-
-  const onTogglePrivateRouting = (next: boolean) => {
-    // Honest copy (coordinator): switching resets identity, not just the session.
-    const body = next
-      ? 'Switching Private routing restarts the node and gives you a NEW identity ' +
-        'and QR. Your current chats will expire and every contact must re-add you ' +
-        'from the new QR. The app will briefly reload. Continue?'
-      : 'Turning off Private routing returns to standard relay messaging. It ' +
-        'restarts the node and gives you a NEW identity and QR — current chats ' +
-        'expire and contacts must re-add you from the new QR. The app will briefly ' +
-        'reload. Continue?';
-    Alert.alert(next ? 'Turn on Private routing?' : 'Turn off Private routing?', body, [
-      {text: 'Cancel', style: 'cancel'},
-      {text: next ? 'Turn on' : 'Turn off', onPress: () => applyMode(next)},
-    ]);
   };
 
   return (
@@ -117,13 +65,9 @@ export function SettingsScreen() {
           <View style={styles.toggleRow}>
             <View style={styles.toggleText}>
               <Text style={[type.title, {color: colors.text}]}>Node</Text>
-              <StatusPill
-                status={status}
-                mixEnabled={privateRouting}
-                mixShort={poolShort}
-              />
+              <StatusPill status={status} />
             </View>
-            {busy || switching ? (
+            {busy ? (
               <ActivityIndicator color={colors.accent} testID="node-busy" />
             ) : (
               <Switch
@@ -137,65 +81,11 @@ export function SettingsScreen() {
           </View>
         </View>
 
-        {/* ── Block 2: Private routing — HIDDEN for now (#81); infra kept ── */}
-        {MIX_UI_ENABLED && (
+        {/* ── Block 2: Identity (my address) ── */}
         <View style={styles.card}>
-          <View style={styles.toggleRow}>
-            <View style={styles.toggleText}>
-              <Text style={[type.title, {color: colors.text}]}>Private routing</Text>
-              <Text style={[type.label, {color: colors.textDim}]}>
-                route every message through the AnonComms mix network (sender
-                anonymity). no silent fallback to relay.
-              </Text>
-            </View>
-            {switching ? (
-              <ActivityIndicator color={colors.accent} testID="mix-switching" />
-            ) : (
-              <Switch
-                testID="private-routing-switch"
-                value={privateRouting}
-                onValueChange={onTogglePrivateRouting}
-                trackColor={{false: colors.border, true: colors.accentPressed}}
-                thumbColor={privateRouting ? colors.accent : colors.textDim}
-              />
-            )}
-          </View>
-          {/* persistent honest note (coordinator #2) */}
-          <Text style={[type.label, {color: colors.textFaint}]}>
-            switching resets your identity — contacts must re-add you.
-          </Text>
-          {switching && (
-            <Text style={[type.label, {color: colors.pulse}]}>
-              reloading app in {privateRouting ? 'private' : 'standard'} mode… (new
-              epoch + new identity — contacts must re-add you)
-            </Text>
-          )}
-          {/* mix pool — revealed only when Private routing is on (#60) */}
-          {privateRouting && (
-            <View style={styles.mixRow}>
-              <PulseDot
-                color={poolShort ? colors.pulse : colors.accent}
-                pulsing={running && poolShort}
-              />
-              <Text
-                style={[type.body, {color: poolShort ? colors.pulse : colors.text}]}
-                testID="mix-pool-indicator">
-                {running
-                  ? `${mix.mixPoolSize} / ${mix.minPoolSize} mix nodes${
-                      poolShort ? ' — waiting for mix peers' : ' — ready'
-                    }`
-                  : '— (node not running)'}
-              </Text>
-            </View>
-          )}
-        </View>
-        )}
+          <Text style={styles.label}>identity (my address)</Text>
 
-        {/* ── Block 3: Identity (intro bundle) ── */}
-        <View style={styles.card}>
-          <Text style={styles.label}>identity (intro bundle)</Text>
-
-          <Text style={[type.label, {color: colors.textDim}]}>display name</Text>
+          <Text style={[type.label, {color: colors.textDim}]}>display label</Text>
           <TextInput
             testID="display-name-input"
             style={styles.nameInput}
@@ -203,7 +93,7 @@ export function SettingsScreen() {
             onChangeText={setNameDraft}
             onBlur={commitName}
             onSubmitEditing={commitName}
-            placeholder="phone-m1"
+            placeholder="(optional local label)"
             placeholderTextColor={colors.textFaint}
             autoCapitalize="none"
             autoCorrect={false}
@@ -213,43 +103,42 @@ export function SettingsScreen() {
             a private label for yourself — not shared with peers.
           </Text>
 
-          {running && introBundle != null ? (
+          {running && myAddress != null ? (
             <>
               <View style={styles.qrWrap}>
-                <QrCard data={introBundle} size={220} />
+                <QrCard data={myAddress} size={220} />
               </View>
-              <Text style={styles.bundle} selectable>
-                {introBundle}
+              <Text style={styles.address} selectable>
+                {myAddress}
               </Text>
-              <View style={styles.bundleActions}>
+              <View style={styles.addressActions}>
                 <ActionButton
-                  testID="copy-bundle"
+                  testID="copy-address"
                   label={copied ? 'copied' : 'copy'}
                   variant="primary"
                   style={{flex: 1}}
                   onPress={() => {
-                    Clipboard.setString(introBundle);
+                    Clipboard.setString(myAddress);
                     setCopied(true);
                   }}
                 />
                 <ActionButton
-                  testID="refresh-bundle"
+                  testID="refresh-address"
                   label="refresh"
                   variant="secondary"
-                  onPress={() => fetchIntroBundle()}
+                  onPress={() => fetchAddress()}
                 />
               </View>
             </>
           ) : (
             <Text style={[type.label, {color: colors.textDim}]}>
-              {running ? 'creating intro bundle…' : '— (start the node to get a QR)'}
+              {running ? 'reading address…' : '— (start the node to get your address)'}
             </Text>
           )}
 
-          {/* honest note (coordinator #3) */}
           <Text style={[type.label, {color: colors.textFaint}]}>
-            this is how people add you. it changes each time the node restarts or you
-            switch Private routing — reshare it after that.
+            this is your stable address — how people add you. it does NOT change
+            between restarts.
           </Text>
         </View>
       </ScrollView>
@@ -270,7 +159,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   label: {...type.label, color: colors.textDim},
-  bundle: {...type.code, color: colors.text},
+  address: {...type.code, color: colors.text},
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -278,7 +167,6 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   toggleText: {flex: 1, gap: spacing.sm},
-  mixRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   nameInput: {
     ...type.body,
     color: colors.text,
@@ -291,20 +179,10 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   qrWrap: {alignItems: 'center', paddingVertical: spacing.sm},
-  bundleActions: {
+  addressActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     marginTop: spacing.sm,
   },
-  btn: {
-    backgroundColor: colors.accent,
-    borderRadius: radii.card,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    alignSelf: 'flex-start',
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  copiedFlash: {...type.label, color: colors.accent},
 });

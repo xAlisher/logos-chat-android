@@ -209,3 +209,64 @@ The current intro-bundle app is the UI shell to retarget, not throw away.
 TMPDIR=/extra/tmp, NDK 27.1.12297006, /extra/tmp for build trees. cairosvg venv at /extra/tmp/svgvenv.
 
 Old-lib work (still valid history): logos-libchat-android (v0.1.0 std + v0.2.0 mix), app v0.1.0–v0.1.3.
+
+---
+
+### M0' RESULT (2026-07-24, Fable — autonomous) ✅ DONE, incl. the persistence gate
+
+**Built:** `liblogoschat.so` — arm64-v8a JNI cdylib wrapping `logos_chat::open`
+(the new MLS/address pure-Rust libchat @ `d2124fd`). 16.7 MB (13.2 MB stripped),
+ELF ARM aarch64, `liblogosdelivery.so` in DT_NEEDED (relocatable soname, #185
+ship-into-APK mode). Reuses the arm64 `liblogosdelivery.so`+`librln.so`+
+`libc++_shared.so` from logos-libdelivery-android verbatim (its `logosdelivery_*`
+ABI is an EXACT match for `logos-delivery-rust/sys.rs` — zero drift).
+
+**Exports (13, C ABI, see include/liblogoschat.h):** `logoschat_gen_address`
+(network-free mint), `logoschat_open`, `logoschat_open_persistent`,
+`logoschat_get_address`, `logoschat_installation_name`,
+`logoschat_create_conversation`, `logoschat_create_group`,
+`logoschat_add_group_member`, `logoschat_list_conversations`,
+`logoschat_send_message`, `logoschat_set_event_callback` (typed Event pump),
+`logoschat_shutdown`, `logoschat_last_error`, `logoschat_free_string`. Mirrors
+the desktop 15-verb/8-event contract, thinned for M0'. `panic="abort"` → errors
+return null/-1 + thread-local message (no unwind).
+
+**On-device smoke (BOTH phones):**
+- Samsung SM-G780G (RF8RA0M127K, arm64, A13): `gen_address` → `994f83dd…`
+  (64-hex) ✓; `open()` full stack → embedded node + registry publish + encrypted
+  DB + address `2cfa879e…` ✓.
+- **Persistence PROVEN on both:** `open_persistent` run twice (each fully
+  starting node → registry → storage → shutdown) prints the SAME address —
+  Samsung `153208a8caf07ce3…3789a5f` (stable), Pixel `aee70196be87f46f…56379a6c`
+  (stable). **The §3/§5/§8 make-or-break identity gate is CLEARED.**
+
+**Walls (all cleared; full tree in the new repo's docs/build-fork-tree.md):**
+1. `logos-delivery-rust/build.rs` panicked on non-macos/linux → added `"android"`
+   arm (one line; relocatable mode skips the patchelf path).
+2. `alloy = "2.0"` default-features drag → pared to
+   `default-features=false, features=["signer-local"]` (conversations uses ONLY
+   `alloy::signers::local::PrivateKeySigner`, one line — the scoping guess of
+   "alloy-primitives" was wrong; it's `signer-local`).
+3. **aws-lc-rs did NOT block** — built first try with `AWS_LC_SYS_CMAKE_BUILDER=1`
+   + NDK cmake toolchain (arm64 needs no NASM). **No ring swap needed.**
+   openmls/libcrux, reqwest/rustls, de-mls, chat-proto all cross-compiled clean.
+4. Persistence: upstream exposes only `::new()`/`::random()` with private keys →
+   additive 4-crate fork (from-bytes on crypto/account/delegate + `open_persistent`/
+   `generate_identity` on the facade). Small, not deep.
+   Only genuine build error was a trivial `Send`/`Sync` bug in our wrapper.
+
+**Repo:** https://github.com/xAlisher/logos-libchat-mls-android (public) — vendors
+prebuilt/arm64-v8a .so's + SHA256SUMS, include/liblogoschat.h, wrapper/ crate,
+patches/libchat-android-arm64.patch, scripts/build-android-arm64.sh + smoke.c,
+docs/{BUILD.md, build-fork-tree.md}, CI build.yml (from-source rebuild + artifact).
+**CI:** triggered (push + workflow_dispatch), not awaited.
+
+**Persistence-gate state = SOLVED at the lib layer.** `logoschat_open_persistent`
+gives a stable address across restarts today, seeds in a 64-byte file. M1' TODO:
+back that seed file with an Android Keystore-encrypted blob (the file form is the
+smoke stand-in) and wire the load-or-create into the Kotlin bridge. No deeper
+libchat fork needed. NOTE: from-bytes constructors are a clean minimal patch —
+candidate to upstream to logos-messaging once M1' exercises it.
+
+**App source NOT touched** (that's M1'); old logos-libchat-android NOT touched.
+Build tree at /extra/tmp/libchat-mls-build (libchat clone + patched, target/).

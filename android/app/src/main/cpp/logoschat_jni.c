@@ -1,16 +1,19 @@
-// JNI bridge for liblogoschat — ported from logos-libdelivery-android/jni/logos_messaging_ffi.c.
-// The hardening transfers verbatim (docs/architecture.md §2.2); only the FFI verbs and the
-// package (com.logoschat — one-way door) change.
+// JNI bridge for the NEW pure-Rust liblogoschat (MLS/address generation).
 //
-// Invariants encoded here (docs/architecture.md §1):
-//   - callbacks fire synchronously on the lib's FFI thread; (msg,len) is NON-NUL-terminated and
-//     only valid during the call → copy immediately, never call back into the lib from a callback
-//   - attach-once-per-thread via pthread_key; AttachCurrentThread OUTSIDE any assert()
-//     (NDEBUG strips asserts — the libdelivery SIGSEGV lesson)
-//   - JNI_OnLoad caches JavaVM*, GLOBAL refs to callback/result classes + method ids
-//   - cb_result/on_response: the response callback fires on success too — only result->error
-//     means failure
-//   - stdout/stderr → logcat (tag "logos-chat-node") so the Nim node's own logs are visible
+// M1' rewrite: the new C ABI (include/liblogoschat.h) returns values DIRECTLY
+// (char* / int) — no request/response callbacks, so the whole old on_response /
+// cb_result machinery is gone. Only the persistent EVENT callback survives, and
+// its signature changed to (int event_type, const char* json, void* user_data).
+//
+// Hardening carried over verbatim (the hard-won lessons):
+//   - stdout/stderr → logcat (the Nim delivery node logs through stdout)
+//   - JNI_OnLoad caches JavaVM* + a GLOBAL ref to EventCallbackManager + the
+//     static method id (the event callback runs on a non-JVM lib thread)
+//   - the event callback attaches the thread ONCE per thread via a pthread_key,
+//     with AttachCurrentThread OUTSIDE any assert() (NDEBUG strips asserts —
+//     the libdelivery release-build SIGSEGV lesson); the key destructor detaches
+//   - never call back into the lib from the callback; the json is already
+//     NUL-terminated by the wrapper (CString) but only valid during the call
 #include "liblogoschat.h"
 #include <android/log.h>
 #include <dlfcn.h>
@@ -27,7 +30,7 @@
 
 // ---------------------------------------------------------------------------
 // stdout/stderr → logcat pump. Android drops app stdout by default; the Nim
-// node logs through chronicles to stdout — pipe it to logcat.
+// delivery node logs through chronicles to stdout — pipe it to logcat.
 static int _logos_logpipe[2];
 static void *_logos_log_pump(void *arg) {
   (void)arg;
@@ -52,62 +55,12 @@ static void logos_redirect_stdio_to_logcat(void) {
 }
 
 // ---------------------------------------------------------------------------
-// cb_result: response captured from a liblogoschat request callback.
-// If `error` is true, `message` holds the error description; otherwise the result.
-typedef struct {
-  bool error;
-  char *message;
-} cb_result;
-
-static void free_cb_result(cb_result *result) {
-  if (result != NULL) {
-    if (result->message != NULL) {
-      free(result->message);
-      result->message = NULL;
-    }
-    free(result);
-  }
-}
-
-// Callback passed to liblogoschat request functions. user_data is a cb_result**.
-// NOTE: fires on SUCCESS too (RET_OK) — only result->error means failure. (msg,len)
-// is non-NUL-terminated: copy with the explicit length, never strlen/strdup.
-static void on_response(int ret, const char *msg, size_t len, void *user_data) {
-  if (user_data == NULL) return;
-  cb_result **data_ref = (cb_result **)user_data;
-
-  if (ret != RET_OK) {
-    (*data_ref) = malloc(sizeof(cb_result));
-    (*data_ref)->error = true;
-    (*data_ref)->message = malloc(len + 1);
-    (*data_ref)->message[0] = '\0';
-    if (msg != NULL && len > 0) strncat((*data_ref)->message, msg, len);
-    return;
-  }
-
-  if (len == 0 || msg == NULL) {
-    msg = "on_response-ok";
-    len = strlen(msg);
-  }
-
-  (*data_ref) = malloc(sizeof(cb_result));
-  (*data_ref)->error = false;
-  (*data_ref)->message = malloc(len + 1);
-  (*data_ref)->message[0] = '\0';
-  strncat((*data_ref)->message, msg, len);
-}
-
-// ---------------------------------------------------------------------------
-// JNI plumbing. JVM pointer + GLOBAL class refs + method ids cached once in
-// JNI_OnLoad — the event callback runs on non-JVM lib threads where local
-// refs / FindClass on an unattached env are unsafe.
+// JNI plumbing. JVM pointer + a GLOBAL ref to EventCallbackManager + the static
+// method id, cached once in JNI_OnLoad. The event callback runs on the lib's
+// own pump thread where FindClass on an unattached env is unsafe.
 static JavaVM *jvm;
-static jclass gChatResultClass;   // com.logoschat.ChatResult
-static jmethodID gChatResultCtor; // (ZLjava/lang/String;)V
-static jclass gChatPtrClass;      // com.logoschat.ChatPtr
-static jmethodID gChatPtrCtor;    // (ZLjava/lang/String;J)V
 static jclass gEventCbClass;      // com.logoschat.EventCallbackManager
-static jmethodID gExecEventCb;    // static execEventCallback(JLjava/lang/String;)V
+static jmethodID gExecEventCb;    // static execLibEvent(ILjava/lang/String;)V
 static pthread_key_t gDetachKey;
 
 static void detach_current_thread(void *unused) {
@@ -122,85 +75,22 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *pjvm, void *reserved) {
   if ((*jvm)->GetEnv(jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK || env == NULL) {
     return JNI_ERR;
   }
-
-  jclass local;
-
-  local = (*env)->FindClass(env, "com/logoschat/ChatResult");
-  gChatResultClass = (jclass)(*env)->NewGlobalRef(env, local);
-  gChatResultCtor =
-      (*env)->GetMethodID(env, gChatResultClass, "<init>", "(ZLjava/lang/String;)V");
-  (*env)->DeleteLocalRef(env, local);
-
-  local = (*env)->FindClass(env, "com/logoschat/ChatPtr");
-  gChatPtrClass = (jclass)(*env)->NewGlobalRef(env, local);
-  gChatPtrCtor =
-      (*env)->GetMethodID(env, gChatPtrClass, "<init>", "(ZLjava/lang/String;J)V");
-  (*env)->DeleteLocalRef(env, local);
-
-  local = (*env)->FindClass(env, "com/logoschat/EventCallbackManager");
+  jclass local = (*env)->FindClass(env, "com/logoschat/EventCallbackManager");
   gEventCbClass = (jclass)(*env)->NewGlobalRef(env, local);
-  gExecEventCb = (*env)->GetStaticMethodID(env, gEventCbClass, "execEventCallback",
-                                           "(JLjava/lang/String;)V");
+  gExecEventCb = (*env)->GetStaticMethodID(env, gEventCbClass, "execLibEvent",
+                                           "(ILjava/lang/String;)V");
   (*env)->DeleteLocalRef(env, local);
-
   pthread_key_create(&gDetachKey, detach_current_thread);
-
-  __android_log_write(ANDROID_LOG_INFO, BRIDGE_TAG, "JNI_OnLoad ok (classes+ids cached)");
+  __android_log_write(ANDROID_LOG_INFO, BRIDGE_TAG, "JNI_OnLoad ok (event class+id cached)");
   return JNI_VERSION_1_6;
 }
 
-// Converts a cb_result into com.logoschat.ChatResult.
-static jobject to_jni_result(JNIEnv *env, cb_result *result) {
-  jboolean error;
-  jstring message;
-  if (result != NULL) {
-    error = result->error ? JNI_TRUE : JNI_FALSE;
-    message = (*env)->NewStringUTF(env, result->message);
-  } else {
-    error = JNI_FALSE;
-    message = (*env)->NewStringUTF(env, "ok");
-  }
-  jobject response =
-      (*env)->NewObject(env, gChatResultClass, gChatResultCtor, error, message);
-  (*env)->DeleteLocalRef(env, message);
-  return response;
-}
-
-// Converts a cb_result + ctx pointer into com.logoschat.ChatPtr. Only an ACTUAL
-// error discards the ctx — on_response also fires on success.
-static jobject to_jni_ptr(JNIEnv *env, cb_result *result, void *ptr) {
-  jboolean error;
-  jstring message;
-  jlong chatPtr;
-  if (result != NULL && result->error) {
-    error = JNI_TRUE;
-    message = (*env)->NewStringUTF(env, result->message);
-    chatPtr = -1;
-  } else {
-    error = JNI_FALSE;
-    message = (*env)->NewStringUTF(env, result != NULL ? result->message : "ok");
-    chatPtr = (jlong)ptr;
-  }
-  jobject response =
-      (*env)->NewObject(env, gChatPtrClass, gChatPtrCtor, error, message, chatPtr);
-  (*env)->DeleteLocalRef(env, message);
-  return response;
-}
-
 // ---------------------------------------------------------------------------
-// Persistent event callback (set_event_callback). The node invokes this from
-// its own worker threads. Attach unconditionally, OUTSIDE any assert (NDEBUG
-// strips asserts — libdelivery's release-build SIGSEGV); the pthread-key
-// destructor detaches on thread exit. NEVER call back into the lib from here.
-typedef struct {
-  jlong chatPtr;
-} cb_env;
-
-static void chat_event_callback(int callerRet, const char *msg, size_t len, void *userData) {
-  (void)callerRet;
-  cb_env *c = (cb_env *)userData;
-  if (c == NULL) return;
-
+// Persistent event callback (logoschat_set_event_callback). The wrapper's pump
+// thread invokes this per event. Attach unconditionally, OUTSIDE any assert; the
+// pthread-key destructor detaches on thread exit. NEVER call back into the lib.
+static void chat_event_callback(int event_type, const char *json, void *user_data) {
+  (void)user_data;
   JNIEnv *env = NULL;
   jint st = (*jvm)->GetEnv(jvm, (void **)&env, JNI_VERSION_1_6);
   if (st == JNI_EDETACHED) {
@@ -211,30 +101,35 @@ static void chat_event_callback(int callerRet, const char *msg, size_t len, void
   } else if (st != JNI_OK || env == NULL) {
     return;
   }
-
-  // (msg,len) is non-NUL-terminated and only valid during this call — copy NOW.
-  jstring message = NULL;
-  if (msg != NULL) {
-    char *copy = malloc(len + 1);
-    if (copy == NULL) return;
-    memcpy(copy, msg, len);
-    copy[len] = '\0';
-    message = (*env)->NewStringUTF(env, copy);
-    free(copy);
-  }
-
-  (*env)->CallStaticVoidMethod(env, gEventCbClass, gExecEventCb, c->chatPtr, message);
+  // json is NUL-terminated (wrapper CString) but only valid during this call.
+  jstring jj = (json != NULL) ? (*env)->NewStringUTF(env, json) : NULL;
+  (*env)->CallStaticVoidMethod(env, gEventCbClass, gExecEventCb, (jint)event_type, jj);
   if ((*env)->ExceptionCheck(env)) {
     (*env)->ExceptionClear(env);
   }
-  if (message != NULL) {
-    (*env)->DeleteLocalRef(env, message);
-  }
-  // No DetachCurrentThread — attach-once-per-thread; pthread key detaches on exit.
+  if (jj != NULL) (*env)->DeleteLocalRef(env, jj);
+  // No DetachCurrentThread — attach-once-per-thread; the key detaches on exit.
 }
 
 // ---------------------------------------------------------------------------
-// com.logoschat.LogosChatModule externals
+// Helpers
+
+// Read the thread-local last error into a fresh Java string ("" if none).
+static jstring last_error_jstr(JNIEnv *env) {
+  const char *e = logoschat_last_error();
+  return (*env)->NewStringUTF(env, e ? e : "");
+}
+
+// Wrap an owned char* from the lib into a Java string and free it (null-safe).
+static jstring take_cstr(JNIEnv *env, char *owned) {
+  if (owned == NULL) return NULL;
+  jstring s = (*env)->NewStringUTF(env, owned);
+  logoschat_free_string(owned);
+  return s;
+}
+
+// ---------------------------------------------------------------------------
+// com.logoschat.NodeBridge externals
 
 JNIEXPORT void JNICALL
 Java_com_logoschat_NodeBridge_chatSetup(JNIEnv *env, jobject thiz) {
@@ -244,164 +139,121 @@ Java_com_logoschat_NodeBridge_chatSetup(JNIEnv *env, jobject thiz) {
                       "stdio redirected to logcat (tag: " NODE_TAG ")");
 }
 
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatNew(JNIEnv *env, jobject thiz, jstring configJson) {
+// open_persistent(db_path, db_key, registry_url|null, identity_path) -> handle | 0.
+JNIEXPORT jlong JNICALL
+Java_com_logoschat_NodeBridge_chatOpenPersistent(JNIEnv *env, jobject thiz,
+                                                 jstring dbPath, jstring dbKey,
+                                                 jstring registryUrl,
+                                                 jstring identityPath) {
   (void)thiz;
-  const char *config = (*env)->GetStringUTFChars(env, configJson, 0);
-  __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG, "chat_new config: %s", config);
-  cb_result *result = NULL;
-  void *ctx = chat_new(config, on_response, (void *)&result);
-  __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG, "chat_new returned ctx=%p err=%s", ctx,
-                      result && result->error ? result->message : "(none)");
-  jobject response = to_jni_ptr(env, result, ctx);
-  (*env)->ReleaseStringUTFChars(env, configJson, config);
-  free_cb_result(result);
-  return response;
-}
-
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatStart(JNIEnv *env, jobject thiz, jlong ctx) {
-  (void)thiz;
-  cb_result *result = NULL;
-  chat_start((void *)ctx, on_response, (void *)&result);
-  jobject response = to_jni_result(env, result);
-  free_cb_result(result);
-  return response;
-}
-
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatStop(JNIEnv *env, jobject thiz, jlong ctx) {
-  (void)thiz;
-  cb_result *result = NULL;
-  chat_stop((void *)ctx, on_response, (void *)&result);
-  jobject response = to_jni_result(env, result);
-  free_cb_result(result);
-  return response;
-}
-
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatDestroy(JNIEnv *env, jobject thiz, jlong ctx) {
-  (void)thiz;
-  cb_result *result = NULL;
-  chat_destroy((void *)ctx, on_response, (void *)&result);
-  jobject response = to_jni_result(env, result);
-  free_cb_result(result);
-  return response;
-}
-
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatGetIdentity(JNIEnv *env, jobject thiz, jlong ctx) {
-  (void)thiz;
-  cb_result *result = NULL;
-  chat_get_identity((void *)ctx, on_response, (void *)&result);
-  jobject response = to_jni_result(env, result);
-  free_cb_result(result);
-  return response;
-}
-
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatCreateIntroBundle(JNIEnv *env, jobject thiz, jlong ctx) {
-  (void)thiz;
-  cb_result *result = NULL;
-  chat_create_intro_bundle((void *)ctx, on_response, (void *)&result);
-  jobject response = to_jni_result(env, result);
-  free_cb_result(result);
-  return response;
-}
-
-// Creates a new private conversation from a peer's intro bundle + a mandatory
-// opening message (hex). Returns EMPTY on success (invariant #3) — only
-// result->error means failure; the conversationId arrives via the
-// new_conversation push, and each side's id is different for the same
-// logical conversation.
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatNewPrivateConversation(
-    JNIEnv *env, jobject thiz, jlong ctx, jstring bundle, jstring contentHex) {
-  (void)thiz;
-  const char *bundleStr = (*env)->GetStringUTFChars(env, bundle, 0);
-  const char *hexStr = (*env)->GetStringUTFChars(env, contentHex, 0);
-  cb_result *result = NULL;
-  chat_new_private_conversation((void *)ctx, on_response, (void *)&result,
-                                bundleStr, hexStr);
-  jobject response = to_jni_result(env, result);
-  (*env)->ReleaseStringUTFChars(env, bundle, bundleStr);
-  (*env)->ReleaseStringUTFChars(env, contentHex, hexStr);
-  free_cb_result(result);
-  return response;
-}
-
-// Sends a message (hex content) into an existing conversation (this side's
-// local convoId). Response message is the messageId on success.
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatSendMessage(
-    JNIEnv *env, jobject thiz, jlong ctx, jstring convoId, jstring contentHex) {
-  (void)thiz;
-  const char *convoStr = (*env)->GetStringUTFChars(env, convoId, 0);
-  const char *hexStr = (*env)->GetStringUTFChars(env, contentHex, 0);
-  cb_result *result = NULL;
-  chat_send_message((void *)ctx, on_response, (void *)&result, convoStr, hexStr);
-  jobject response = to_jni_result(env, result);
-  (*env)->ReleaseStringUTFChars(env, convoId, convoStr);
-  (*env)->ReleaseStringUTFChars(env, contentHex, hexStr);
-  free_cb_result(result);
-  return response;
-}
-
-// Mix protocol status — DUAL-BINARY (#51 option A). The app ships BOTH variants
-// under distinct file names (liblogoschat_std.so / liblogoschat_mix.so, same
-// soname liblogoschat.so) and loads exactly one per process. `chat_get_mix_status`
-// exists ONLY in the mix superset, so this ONE bridge must link against BOTH: we
-// resolve the symbol via dlsym at call time instead of a hard link reference.
-// Absent (standard variant) ⇒ a benign mixEnabled:false snapshot (never called in
-// standard mode anyway — NodeRuntime.pollMixStatus no-ops unless mixEnabled).
-typedef int (*chat_get_mix_status_fn)(void *, FFICallBack, void *);
-
-static chat_get_mix_status_fn resolve_mix_status(void) {
-  static chat_get_mix_status_fn fn = NULL;
-  static bool resolved = false;
-  if (!resolved) {
-    resolved = true;
-    // The loaded variant is a DT_NEEDED of this bridge, so RTLD_DEFAULT (the
-    // bridge's own resolution scope) finds the symbol when present.
-    fn = (chat_get_mix_status_fn)dlsym(RTLD_DEFAULT, "chat_get_mix_status");
-    if (fn == NULL) {
-      // Secondary: the already-loaded soname (System.load'd by absolute path).
-      void *h = dlopen("liblogoschat.so", RTLD_NOW | RTLD_NOLOAD);
-      if (h != NULL) fn = (chat_get_mix_status_fn)dlsym(h, "chat_get_mix_status");
-    }
-    __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG,
-                        "chat_get_mix_status resolved=%p (variant %s mix)",
-                        (void *)fn, fn ? "has" : "lacks");
+  const char *db_path = (*env)->GetStringUTFChars(env, dbPath, 0);
+  const char *db_key = (*env)->GetStringUTFChars(env, dbKey, 0);
+  const char *reg = registryUrl ? (*env)->GetStringUTFChars(env, registryUrl, 0) : NULL;
+  const char *id_path = (*env)->GetStringUTFChars(env, identityPath, 0);
+  __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG,
+                      "open_persistent db=%s registry=%s", db_path, reg ? reg : "(default)");
+  void *handle = logoschat_open_persistent(db_path, db_key, reg, id_path);
+  if (handle == NULL) {
+    __android_log_print(ANDROID_LOG_ERROR, BRIDGE_TAG, "open_persistent failed: %s",
+                        logoschat_last_error());
+  } else {
+    __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG, "open_persistent ok handle=%p", handle);
   }
-  return fn;
+  (*env)->ReleaseStringUTFChars(env, dbPath, db_path);
+  (*env)->ReleaseStringUTFChars(env, dbKey, db_key);
+  if (reg) (*env)->ReleaseStringUTFChars(env, registryUrl, reg);
+  (*env)->ReleaseStringUTFChars(env, identityPath, id_path);
+  return (jlong)handle;
 }
 
-JNIEXPORT jobject JNICALL
-Java_com_logoschat_NodeBridge_chatGetMixStatus(JNIEnv *env, jobject thiz, jlong ctx) {
-  (void)thiz;
-  chat_get_mix_status_fn fn = resolve_mix_status();
-  if (fn == NULL) {
-    jstring m = (*env)->NewStringUTF(
-        env, "{\"mixEnabled\":false,\"mixReady\":false,\"mixPoolSize\":0,\"minPoolSize\":4}");
-    jobject r = (*env)->NewObject(env, gChatResultClass, gChatResultCtor, JNI_FALSE, m);
-    (*env)->DeleteLocalRef(env, m);
-    return r;
-  }
-  cb_result *result = NULL;
-  fn((void *)ctx, on_response, (void *)&result);
-  jobject response = to_jni_result(env, result);
-  free_cb_result(result);
-  return response;
-}
-
-// Registers the persistent event callback for this ctx. MUST be called BEFORE
-// chatStart (invariant #1 — early pushes are lost otherwise); enforced on the
-// Kotlin side in startNode.
 JNIEXPORT void JNICALL
-Java_com_logoschat_NodeBridge_chatSetEventCallback(JNIEnv *env, jobject thiz, jlong ctx) {
+Java_com_logoschat_NodeBridge_chatShutdown(JNIEnv *env, jobject thiz, jlong handle) {
   (void)env; (void)thiz;
-  cb_env *c = (cb_env *)malloc(sizeof(cb_env)); // intentionally leaked: outlives the ctx
-  c->chatPtr = ctx;
-  set_event_callback((void *)ctx, chat_event_callback, (void *)c);
-  __android_log_write(ANDROID_LOG_INFO, BRIDGE_TAG, "event callback registered");
+  if (handle != 0) logoschat_shutdown((void *)handle);
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatGetAddress(JNIEnv *env, jobject thiz, jlong handle) {
+  (void)thiz;
+  return take_cstr(env, logoschat_get_address((void *)handle));
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatInstallationName(JNIEnv *env, jobject thiz, jlong handle) {
+  (void)thiz;
+  return take_cstr(env, logoschat_installation_name((void *)handle));
+}
+
+// create_conversation(peer_address) -> convoId | null (see chatLastError).
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatCreateConversation(JNIEnv *env, jobject thiz,
+                                                     jlong handle, jstring peerAddress) {
+  (void)thiz;
+  const char *peer = (*env)->GetStringUTFChars(env, peerAddress, 0);
+  char *id = logoschat_create_conversation((void *)handle, peer);
+  (*env)->ReleaseStringUTFChars(env, peerAddress, peer);
+  return take_cstr(env, id);
+}
+
+// send_message(convoId, bytes) -> 0 | -1. Content is RAW BYTES (no hex).
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatSendMessage(JNIEnv *env, jobject thiz, jlong handle,
+                                              jstring convoId, jbyteArray content) {
+  (void)thiz;
+  const char *convo = (*env)->GetStringUTFChars(env, convoId, 0);
+  jsize len = (*env)->GetArrayLength(env, content);
+  jbyte *bytes = (*env)->GetByteArrayElements(env, content, NULL);
+  int rc = logoschat_send_message((void *)handle, convo,
+                                  (const unsigned char *)bytes, (size_t)len);
+  (*env)->ReleaseByteArrayElements(env, content, bytes, JNI_ABORT);
+  (*env)->ReleaseStringUTFChars(env, convoId, convo);
+  return rc;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatListConversations(JNIEnv *env, jobject thiz, jlong handle) {
+  (void)thiz;
+  return take_cstr(env, logoschat_list_conversations((void *)handle));
+}
+
+// Group verbs (M2', bound now for forward-compat; not wired to UI yet).
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatCreateGroup(JNIEnv *env, jobject thiz, jlong handle,
+                                              jstring name, jstring desc) {
+  (void)thiz;
+  const char *n = (*env)->GetStringUTFChars(env, name, 0);
+  const char *d = (*env)->GetStringUTFChars(env, desc, 0);
+  char *id = logoschat_create_group((void *)handle, n, d);
+  (*env)->ReleaseStringUTFChars(env, name, n);
+  (*env)->ReleaseStringUTFChars(env, desc, d);
+  return take_cstr(env, id);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatAddGroupMember(JNIEnv *env, jobject thiz, jlong handle,
+                                                 jstring convoId, jstring peerAddress) {
+  (void)thiz;
+  const char *c = (*env)->GetStringUTFChars(env, convoId, 0);
+  const char *p = (*env)->GetStringUTFChars(env, peerAddress, 0);
+  int rc = logoschat_add_group_member((void *)handle, c, p);
+  (*env)->ReleaseStringUTFChars(env, convoId, c);
+  (*env)->ReleaseStringUTFChars(env, peerAddress, p);
+  return rc;
+}
+
+// Register the persistent event callback for this handle. The wrapper spawns a
+// pump; events arriving before this are buffered on the crossbeam channel, so
+// there is no early-event-loss window (unlike the old lib).
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatSetEventCallback(JNIEnv *env, jobject thiz, jlong handle) {
+  (void)env; (void)thiz;
+  int rc = logoschat_set_event_callback((void *)handle, chat_event_callback, NULL);
+  __android_log_print(ANDROID_LOG_INFO, BRIDGE_TAG, "set_event_callback rc=%d", rc);
+  return rc;
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatLastError(JNIEnv *env, jobject thiz) {
+  (void)thiz;
+  return last_error_jstr(env);
 }

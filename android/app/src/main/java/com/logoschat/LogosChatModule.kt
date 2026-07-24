@@ -10,20 +10,14 @@ import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import org.json.JSONObject
-
-/** Result of a chat_new call: error flag + message + the native ctx pointer. */
-class ChatPtr(val error: Boolean, val errorMessage: String, val ptr: Long)
-
-/** Result of any other liblogoschat call: only `error == true` means failure. */
-class ChatResult(val error: Boolean, val message: String)
 
 /**
- * Event pipeline (docs/architecture.md §1 invariant #2): the JNI bridge calls
- * [execEventCallback] synchronously on the LIB's own thread with an already-copied
- * string. We immediately post onto a dedicated HandlerThread and return — never
- * doing real work (and NEVER re-entering the lib) on the lib's thread. All events
- * reach JS on the single "LogosChatEvent" channel.
+ * Event pipeline: the JNI bridge calls [execLibEvent] synchronously on the LIB's
+ * own pump thread with a typed event (int tag + JSON). We immediately post onto a
+ * dedicated HandlerThread and return — never doing real work (and NEVER re-entering
+ * the lib) on the lib's thread. Persist-before-forward: the SQLite write happens on
+ * the HandlerThread BEFORE anything reaches JS. All events reach JS on the single
+ * "LogosChatEvent" channel.
  */
 class EventCallbackManager {
   companion object {
@@ -35,24 +29,20 @@ class EventCallbackManager {
     private val handlerThread = HandlerThread("logoschat-events").apply { start() }
     private val handler = Handler(handlerThread.looper)
 
-    /** Called by the JNI bridge on the lib's FFI thread. Marshal off it immediately. */
-    @JvmStatic
-    fun execEventCallback(chatPtr: Long, evt: String?) {
-      val copy = evt ?: ""
-      handler.post { deliverLibEvent(chatPtr, copy) }
-    }
+    private fun eventName(eventType: Int): String =
+        when (eventType) {
+          ChatRepo.EVENT_CONVERSATION_STARTED -> "conversation_started"
+          ChatRepo.EVENT_MESSAGE_RECEIVED -> "message_received"
+          ChatRepo.EVENT_MEMBERS_CHANGED -> "members_changed"
+          ChatRepo.EVENT_INBOUND_ERROR -> "inbound_error"
+          else -> "unknown"
+        }
 
-    /** Mix pool status (#31) — polled natively, pushed to JS on the same channel. */
-    fun emitMixStatus(statusJson: String) {
-      handler.post {
-        val params =
-            Arguments.createMap().apply {
-              putString("source", "module")
-              putString("eventType", "mix_status")
-              putString("event", statusJson)
-            }
-        emitToJs(params)
-      }
+    /** Called by the JNI bridge on the lib's pump thread. Marshal off it immediately. */
+    @JvmStatic
+    fun execLibEvent(eventType: Int, json: String?) {
+      val copy = json ?: "{}"
+      handler.post { deliverLibEvent(eventType, copy) }
     }
 
     /** Module-level status events go through the same HandlerThread + JS channel. */
@@ -69,29 +59,22 @@ class EventCallbackManager {
       }
     }
 
-    private fun deliverLibEvent(chatPtr: Long, evt: String) {
-      Log.i(TAG, "lib event (ptr=$chatPtr): ${evt.take(300)}")
-      // PERSIST FIRST (docs/architecture.md §2.1): the SQLite write happens here,
-      // on the events HandlerThread, unconditionally — before any JS forwarding.
-      // If JS is dead/throttled the message is already durable.
+    private fun deliverLibEvent(eventType: Int, json: String) {
+      Log.i(TAG, "lib event [$eventType]: ${json.take(300)}")
+      // PERSIST FIRST: the SQLite write happens here, on the events HandlerThread,
+      // unconditionally — before any JS forwarding.
       val outcome =
           try {
-            ChatRepo.handleLibEvent(evt)
+            ChatRepo.handleLibEvent(eventType, json)
           } catch (t: Throwable) {
             Log.e(TAG, "persist failed for lib event", t)
             null
           }
-      val eventType =
-          try {
-            JSONObject(evt).optString("eventType", "unknown")
-          } catch (_: Exception) {
-            "unparsed"
-          }
       val params =
           Arguments.createMap().apply {
             putString("source", "lib")
-            putString("eventType", eventType)
-            putString("event", evt)
+            putString("eventType", eventName(eventType))
+            putString("event", json)
           }
       emitToJs(params)
       if (outcome != null) {
@@ -108,16 +91,7 @@ class EventCallbackManager {
       }
     }
 
-    /**
-     * Inbound-message notification (#26) — after the DB write, never before.
-     * Skipped for the thread that's on screen (same signal as the unread bump);
-     * ChatService.appContext keeps this working when JS is gone entirely.
-     */
-    /**
-     * Is the app actually on screen? Read straight off the ReactContext —
-     * under Bridgeless the LifecycleEventListener callbacks proved unreliable
-     * (HOME left appForeground true → silent thread, docs/m3-log.md).
-     */
+    /** Is the app actually on screen? Read straight off the ReactContext. */
     fun isResumed(): Boolean {
       val rc = reactContext
       val resumed =
@@ -155,15 +129,13 @@ class EventCallbackManager {
 }
 
 /**
- * Thin JS RPC over [NodeRuntime]/[NodeBridge] + the [ChatRepo] query surface
- * (docs/architecture.md §2.3). The node itself is process-wide and — since #25 —
- * kept alive by [ChatService] (dataSync FGS), so nothing here owns state.
+ * Thin JS RPC over [NodeRuntime]/[NodeBridge] + the [ChatDb] query surface. The
+ * node is process-wide and kept alive by [ChatService] (dataSync FGS).
  */
 class LogosChatModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext), com.facebook.react.bridge.LifecycleEventListener {
 
   companion object {
-    /** Forces the NodeBridge loadLibrary chain at app start (#11 AC). */
     @JvmStatic fun ensureLoaded() = NodeBridge.ensureLoaded()
   }
 
@@ -171,12 +143,10 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
 
   init {
     EventCallbackManager.reactContext = reactContext
+    NodeRuntime.attachContext(reactContext)
     reactContext.addLifecycleEventListener(this)
   }
 
-  // A thread being "open on screen" only suppresses its notification while the
-  // app is actually visible — otherwise the last thread you looked at would go
-  // silent forever in the background (observed on-device, docs/m3-log.md).
   override fun onHostResume() {
     ChatRepo.appForeground = true
   }
@@ -189,22 +159,17 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     ChatRepo.appForeground = false
   }
 
-  /**
-   * chat_new → set_event_callback → chat_start (invariant #1) — all inside
-   * NodeRuntime on the node executor. Also foregrounds ChatService and stores
-   * the config so the service can bring the node back JS-independently.
-   */
+  // -- node lifecycle --------------------------------------------------------
+
   @ReactMethod
-  fun startNode(configJson: String, promise: Promise) {
+  fun startNode(promise: Promise) {
     try {
-      val db = ChatRepo.requireDb()
-      db.kvSet(NodeRuntime.KV_NODE_CONFIG, configJson)
-      db.kvSet(NodeRuntime.KV_AUTO_RESTART, "1")
+      ChatRepo.requireDb().kvSet(NodeRuntime.KV_AUTO_RESTART, "1")
       ChatService.start(reactApplicationContext)
     } catch (t: Throwable) {
       Log.w("logos-chat-bridge", "service start failed: ${t.message}")
     }
-    NodeRuntime.start(configJson) { err ->
+    NodeRuntime.start { err ->
       if (err == null) promise.resolve(null)
       else {
         ChatService.stop(reactApplicationContext)
@@ -229,18 +194,141 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     promise.resolve(NodeRuntime.status)
   }
 
-  /**
-   * The liblogoschat variant loaded in THIS process ("std" | "mix"). Dual-binary
-   * (#51): only the "mix" variant can run Private routing. Auto-start (#57) uses
-   * this to fall back to standard if Private routing is persisted but the mix
-   * variant isn't the one loaded (e.g. a stale/failed switch).
-   */
+  /** The client's own stable hex address (the QR/paste peers use to reach us). */
   @ReactMethod
-  fun getLoadedVariant(promise: Promise) {
-    promise.resolve(NodeBridge.loadedVariant)
+  fun getMyAddress(promise: Promise) {
+    val cached = NodeRuntime.address
+    if (cached != null) {
+      promise.resolve(cached)
+      return
+    }
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("get_address", "node not started")
+        return@execute
+      }
+      val a = NodeBridge.chatGetAddress(c)
+      if (a == null) promise.reject("get_address", NodeBridge.chatLastError())
+      else promise.resolve(a)
+    }
   }
 
-  /** Delete a conversation and all its messages + sessions (#71/#72). */
+  @ReactMethod
+  fun getInstallationName(promise: Promise) {
+    promise.resolve(NodeRuntime.installationName ?: "")
+  }
+
+  // -- conversations + messaging ---------------------------------------------
+
+  /**
+   * Create (or reuse) a 1:1 conversation with a peer address. Binds the durable
+   * convoPk to the lib conversation id. Resolves the stable convoPk.
+   */
+  @ReactMethod
+  fun createConversation(peerAddress: String, nickname: String?, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("create_conversation", "node not started")
+        return@execute
+      }
+      val addr = peerAddress.trim().lowercase()
+      try {
+        val convoPk = ChatRepo.ensureConversationForAddress(addr, nickname)
+        val d = ChatRepo.requireDb()
+        if (d.libConvoIdOf(convoPk) == null) {
+          val convoId = NodeBridge.chatCreateConversation(c, addr)
+          if (convoId == null) {
+            // Roll back a freshly-created empty conversation on lib failure.
+            if (d.listMessagesJson(convoPk, 0, 1) == "[]") d.deleteConversation(convoPk)
+            promise.reject("create_conversation", NodeBridge.chatLastError())
+            return@execute
+          }
+          d.setLibConvoId(convoPk, convoId)
+        }
+        promise.resolve(convoPk.toDouble())
+      } catch (t: Throwable) {
+        promise.reject("create_conversation", t)
+      }
+    }
+  }
+
+  /**
+   * Send into a conversation (by stable convoPk). Resolves the lib conversation id
+   * (creating it from the peer address if not yet bound), records the outbound
+   * message, sends raw UTF-8 bytes. Resolves '{"msgPk":n,"status":"sent"|"failed"}'.
+   */
+  @ReactMethod
+  fun sendMessageTo(convoPk: Double, textUtf8: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("send_message", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      var libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        val addr = d.peerAddressOf(pk)
+        if (addr == null) {
+          promise.reject("no_route", "conversation has no peer address to send to")
+          return@execute
+        }
+        libConvoId = NodeBridge.chatCreateConversation(c, addr)
+        if (libConvoId == null) {
+          promise.reject("create_conversation", NodeBridge.chatLastError())
+          return@execute
+        }
+        d.setLibConvoId(pk, libConvoId)
+      }
+      val msgPk = ChatRepo.recordOutgoing(pk, textUtf8)
+      val rc = NodeBridge.chatSendMessage(c, libConvoId, textUtf8.toByteArray(Charsets.UTF_8))
+      val ok = rc == 0
+      ChatRepo.finalizeOutgoing(msgPk, ok)
+      if (!ok) Log.w("logos-chat-bridge", "send failed: ${NodeBridge.chatLastError()}")
+      promise.resolve("""{"msgPk":$msgPk,"status":"${if (ok) "sent" else "failed"}"}""")
+    }
+  }
+
+  /** Re-send a failed outbound message. */
+  @ReactMethod
+  fun retryMessage(msgPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("send_message", "node not started")
+        return@execute
+      }
+      val d = ChatRepo.requireDb()
+      val row = d.outboundMessage(msgPk.toLong())
+      if (row == null) {
+        promise.reject("retry_message", "unknown outbound message")
+        return@execute
+      }
+      val (convoPk, text) = row
+      val libConvoId = d.libConvoIdOf(convoPk)
+      if (libConvoId == null) {
+        promise.reject("no_route", "conversation not bound")
+        return@execute
+      }
+      val rc = NodeBridge.chatSendMessage(c, libConvoId, text.toByteArray(Charsets.UTF_8))
+      ChatRepo.finalizeOutgoing(msgPk.toLong(), rc == 0)
+      promise.resolve("""{"msgPk":${msgPk.toLong()},"status":"${if (rc == 0) "sent" else "failed"}"}""")
+    }
+  }
+
+  @ReactMethod
+  fun setNickname(convoPk: Double, nickname: String, promise: Promise) {
+    try {
+      ChatRepo.requireDb().setNickname(convoPk.toLong(), nickname)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   @ReactMethod
   fun deleteConversation(convoPk: Double, promise: Promise) {
     try {
@@ -252,270 +340,12 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  /**
-   * Latest mix status (#31): {"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,
-   * "minPoolSize":int}. Returns the cached value from the native poller; when the
-   * node is down or not in mix mode, a synthesized mixEnabled:false snapshot.
-   */
-  @ReactMethod
-  fun getMixStatus(promise: Promise) {
-    val cached = NodeRuntime.mixStatusJson
-    if (cached.isNotEmpty() && NodeRuntime.mixEnabled) {
-      promise.resolve(cached)
-    } else {
-      promise.resolve(
-          """{"mixEnabled":${NodeRuntime.mixEnabled},"mixReady":false,"mixPoolSize":0,"minPoolSize":${NodeRuntime.minMixPoolSize}}""")
-    }
-  }
-
-  /**
-   * DUAL-BINARY mode switch (#51 option A). Standard and mix ship as two `.so`s
-   * with the same soname; only one can be loaded per process. So flipping Private
-   * routing can't hot-swap — it: (1) persists the new node config + auto-restart
-   * flag so the node comes back in the new mode, (2) writes the native VARIANT flag
-   * the next process start will load, then (3) RESTARTS THE PROCESS via the
-   * ProcessPhoenix relauncher (#59). On next launch MainApplication loads the chosen
-   * variant and ChatService brings the node up (auto-start, #57). The Promise
-   * resolves just before the restart; JS should treat this as terminal.
-   *
-   * #59: the restart is now the separate-process PhoenixActivity — the v0.1.1
-   * AlarmManager path did not reliably bring MainActivity to the foreground on
-   * Samsung (the app vanished). No KEY_AUTOSTART_ON_LAUNCH one-shot needed anymore
-   * — auto-start (#57) foregrounds the node on every launch.
-   */
-  @ReactMethod
-  fun restartInMode(configJson: String, mix: Boolean, promise: Promise) {
-    try {
-      val db = ChatRepo.requireDb()
-      db.kvSet(NodeRuntime.KV_NODE_CONFIG, configJson)
-      db.kvSet(NodeRuntime.KV_AUTO_RESTART, "1")
-      NodeBridge.setPersistedVariant(reactApplicationContext, mix)
-      Log.i("logos-chat-bridge", "restartInMode: mix=$mix — ProcessPhoenix restart")
-      promise.resolve(null)
-    } catch (t: Throwable) {
-      promise.reject("restart_mode", t)
-      return
-    }
-    PhoenixActivity.restart(reactApplicationContext)
-  }
-
-  /** Persisted app setting (kv) — e.g. the "privateRouting" flag so the mode and
-   * the MIX chrome survive process death / cold start (#30). */
-  @ReactMethod
-  fun getSetting(key: String, promise: Promise) {
-    try {
-      promise.resolve(ChatRepo.requireDb().kvGet(key))
-    } catch (t: Throwable) {
-      promise.reject("db", t)
-    }
-  }
-
-  @ReactMethod
-  fun setSetting(key: String, value: String, promise: Promise) {
-    try {
-      ChatRepo.requireDb().kvSet(key, value)
-      promise.resolve(null)
-    } catch (t: Throwable) {
-      promise.reject("db", t)
-    }
-  }
-
-  /** Resolves the identity JSON, e.g. {"name":"phone-m1"}. */
-  @ReactMethod
-  fun getIdentity(promise: Promise) {
-    NodeRuntime.executor.execute {
-      val c = NodeRuntime.ctx
-      if (c == 0L) {
-        promise.reject("get_identity", "node not started")
-        return@execute
-      }
-      val r = NodeBridge.chatGetIdentity(c)
-      if (r.error) promise.reject("chat_get_identity", r.message)
-      else promise.resolve(r.message)
-    }
-  }
-
-  /** Resolves the logos_chatintro_1_… ASCII bundle string. */
-  @ReactMethod
-  fun createIntroBundle(promise: Promise) {
-    NodeRuntime.executor.execute {
-      val c = NodeRuntime.ctx
-      if (c == 0L) {
-        promise.reject("create_intro_bundle", "node not started")
-        return@execute
-      }
-      val r = NodeBridge.chatCreateIntroBundle(c)
-      if (r.error) promise.reject("chat_create_intro_bundle", r.message)
-      else promise.resolve(r.message)
-    }
-  }
-
-  @ReactMethod
-  fun newPrivateConversation(bundle: String, textUtf8: String, promise: Promise) {
-    startIntro(bundle, textUtf8, existingConvoPk = 0L, contactName = null, promise = promise)
-  }
-
-  /**
-   * Re-introduce with a FRESH bundle into an existing thread (#23): the new
-   * session attaches to the same convo_pk, so history continues in place.
-   */
-  @ReactMethod
-  fun newPrivateConversationFor(
-      convoPk: Double,
-      bundle: String,
-      textUtf8: String,
-      contactName: String?,
-      promise: Promise,
-  ) {
-    startIntro(bundle, textUtf8, convoPk.toLong(), contactName, promise)
-  }
-
-  /**
-   * Re-introduce into an expired thread using the contact's STORED bundle (#23).
-   * Rejects with code "no_bundle" when none is stored (inbound-only contact) —
-   * the UI then asks for a fresh QR.
-   */
-  @ReactMethod
-  fun reintroduce(convoPk: Double, textUtf8: String, promise: Promise) {
-    val bundle = ChatRepo.requireDb().contactBundle(convoPk.toLong())
-    if (bundle.isNullOrEmpty()) {
-      promise.reject("no_bundle", "no stored bundle for this contact — ask for a fresh QR")
-      return
-    }
-    startIntro(bundle, textUtf8, convoPk.toLong(), contactName = null, promise = promise)
-  }
-
-  /**
-   * Durable rows are written BEFORE the lib call (contact + conversation +
-   * armed pending-intro); on lib rejection the fresh rows are rolled back. The
-   * session binds when OUR new_conversation push lands (invariant #3). Resolves
-   * the STABLE convoPk.
-   */
-  private fun startIntro(
-      bundle: String,
-      textUtf8: String,
-      existingConvoPk: Long,
-      contactName: String?,
-      promise: Promise,
-  ) {
-    NodeRuntime.executor.execute {
-      val c = NodeRuntime.ctx
-      if (c == 0L) {
-        promise.reject("new_private_conversation", "node not started")
-        return@execute
-      }
-      // The intro carries an opening message over the transport — gate it too
-      // while mix is on and the pool is short (#32, no relay leak).
-      if (NodeRuntime.mixSendBlocked()) {
-        promise.reject("mix_not_ready", "waiting for mix peers — not sending over relay")
-        return@execute
-      }
-      val (convoPk, created) = ChatRepo.beginIntro(bundle, textUtf8, existingConvoPk, contactName)
-      val r = NodeBridge.chatNewPrivateConversation(c, bundle, hexEncode(textUtf8))
-      if (r.error) {
-        ChatRepo.abortIntro(convoPk, created)
-        promise.reject("chat_new_private_conversation", r.message)
-      } else {
-        promise.resolve(convoPk.toDouble()) // empty response == accepted
-      }
-    }
-  }
-
-  /** DEPRECATED (M2 path): send by ephemeral lib conversationId. */
-  @ReactMethod
-  fun sendMessage(convoId: String, textUtf8: String, promise: Promise) {
-    NodeRuntime.executor.execute {
-      val c = NodeRuntime.ctx
-      if (c == 0L) {
-        promise.reject("send_message", "node not started")
-        return@execute
-      }
-      // Persist first: bind to the session in the current epoch when known.
-      val session = ChatRepo.currentEpochId.let { epoch ->
-        if (epoch != 0L) ChatRepo.requireDb().findSessionByLibId(epoch, convoId) else null
-      }
-      val msgPk = session?.let { (sessionId, convoPk) ->
-        ChatRepo.recordOutgoing(convoPk, sessionId, textUtf8)
-      }
-      val r = NodeBridge.chatSendMessage(c, convoId, hexEncode(textUtf8))
-      if (msgPk != null) ChatRepo.finalizeOutgoing(msgPk, !r.error)
-      if (r.error) promise.reject("chat_send_message", r.message)
-      else promise.resolve(r.message) // messageId (may be empty)
-    }
-  }
-
-  /**
-   * Sends into a STABLE conversation (#22): resolves the current-epoch session;
-   * rejects with code "expired" when there is none (re-introduce required).
-   * Resolves {"msgPk":n,"status":"sent"|"failed"} — the message row is durable
-   * either way.
-   */
-  @ReactMethod
-  fun sendMessageTo(convoPk: Double, textUtf8: String, promise: Promise) {
-    NodeRuntime.executor.execute {
-      val c = NodeRuntime.ctx
-      if (c == 0L) {
-        promise.reject("send_message", "node not started")
-        return@execute
-      }
-      val pk = convoPk.toLong()
-      // ANTI-DOWNGRADE GUARD (#32): while Private routing is on, a message must
-      // NEVER leave over plain relay. If the mix pool is short we refuse the send
-      // natively — before chat_send_message — so the guarantee never depends on
-      // JS timing. (The mix lib itself also refuses relay fallback.)
-      if (NodeRuntime.mixSendBlocked()) {
-        promise.reject("mix_not_ready", "waiting for mix peers — not sending over relay")
-        return@execute
-      }
-      val session = ChatRepo.requireDb().currentSession(pk, ChatRepo.currentEpochId)
-      if (session == null) {
-        promise.reject("expired", "no session in the current epoch — re-introduce first")
-        return@execute
-      }
-      val (sessionId, libConvoId) = session
-      val msgPk = ChatRepo.recordOutgoing(pk, sessionId, textUtf8)
-      val r = NodeBridge.chatSendMessage(c, libConvoId, hexEncode(textUtf8))
-      ChatRepo.finalizeOutgoing(msgPk, !r.error)
-      promise.resolve("""{"msgPk":$msgPk,"status":"${if (r.error) "failed" else "sent"}"}""")
-    }
-  }
-
-  /** Re-send a failed outbound message on its conversation's current session. */
-  @ReactMethod
-  fun retryMessage(msgPk: Double, promise: Promise) {
-    NodeRuntime.executor.execute {
-      val c = NodeRuntime.ctx
-      if (c == 0L) {
-        promise.reject("send_message", "node not started")
-        return@execute
-      }
-      if (NodeRuntime.mixSendBlocked()) {
-        promise.reject("mix_not_ready", "waiting for mix peers — not sending over relay")
-        return@execute
-      }
-      val row = ChatRepo.requireDb().outboundMessage(msgPk.toLong())
-      if (row == null) {
-        promise.reject("retry_message", "unknown outbound message")
-        return@execute
-      }
-      val (convoPk, text) = row
-      val session = ChatRepo.requireDb().currentSession(convoPk, ChatRepo.currentEpochId)
-      if (session == null) {
-        promise.reject("expired", "no session in the current epoch — re-introduce first")
-        return@execute
-      }
-      val r = NodeBridge.chatSendMessage(c, session.second, hexEncode(text))
-      ChatRepo.finalizeOutgoing(msgPk.toLong(), !r.error)
-      promise.resolve("""{"msgPk":${msgPk.toLong()},"status":"${if (r.error) "failed" else "sent"}"}""")
-    }
-  }
-
-  // -- DB query surface (docs/architecture.md §2.3) — reads are fast, run inline
+  // -- DB query surface — reads are fast, run inline --------------------------
 
   @ReactMethod
   fun listConversations(promise: Promise) {
     try {
-      promise.resolve(ChatRepo.requireDb().listConversationsJson(ChatRepo.currentEpochId))
+      promise.resolve(ChatRepo.requireDb().listConversationsJson())
     } catch (t: Throwable) {
       promise.reject("db", t)
     }
@@ -533,23 +363,9 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  fun listContacts(promise: Promise) {
-    try {
-      promise.resolve(ChatRepo.requireDb().listContactsJson())
-    } catch (t: Throwable) {
-      promise.reject("db", t)
-    }
-  }
-
-  @ReactMethod
   fun markRead(convoPk: Double, promise: Promise) {
     try {
       ChatRepo.requireDb().markRead(convoPk.toLong())
-      // Only dismiss the notification when the user is actually looking at the
-      // app. A backgrounded-but-alive ChatScreen re-renders on the inbound
-      // db_changed event and calls markRead ~200ms after the notification is
-      // posted — which silently cancelled every background notification
-      // ("Cannot find enqueued record", docs/m3-log.md).
       if (EventCallbackManager.isResumed()) {
         MessageNotifier.cancelFor(reactApplicationContext, convoPk.toLong())
       }
@@ -559,52 +375,33 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  /** The open thread (0 = none): its inbound messages don't count as unread. */
   @ReactMethod
   fun setActiveConversation(convoPk: Double) {
     ChatRepo.activeConvoPk = convoPk.toLong()
   }
 
-  /** Attach a pending inbound conversation to a NEW named contact (#24). */
-  @ReactMethod
-  fun nameConversation(convoPk: Double, name: String, promise: Promise) {
-    try {
-      val d = ChatRepo.requireDb()
-      val existing = d.contactIdForConvo(convoPk.toLong())
-      if (existing != null) {
-        d.setContactName(existing, name)
-      } else {
-        val cid = d.insertContact(name, null, 0L)
-        d.setConversationContact(convoPk.toLong(), cid)
-      }
-      promise.resolve(null)
-    } catch (t: Throwable) {
-      promise.reject("db", t)
-    }
-  }
-
-  /** Merge a pending inbound conversation into an existing thread (#24). */
-  @ReactMethod
-  fun mergeConversation(pendingConvoPk: Double, targetConvoPk: Double, promise: Promise) {
-    try {
-      ChatRepo.requireDb().mergeConversation(pendingConvoPk.toLong(), targetConvoPk.toLong())
-      promise.resolve(null)
-    } catch (t: Throwable) {
-      promise.reject("db", t)
-    }
-  }
-
-  /** convoPk from a tapped message notification, 0 if none (#26). */
   @ReactMethod
   fun consumeLaunchConvo(promise: Promise) {
     promise.resolve(MainActivity.consumeLaunchConvoPk().toDouble())
   }
 
-  private fun hexEncode(textUtf8: String): String {
-    val bytes = textUtf8.toByteArray(Charsets.UTF_8)
-    val sb = StringBuilder(bytes.size * 2)
-    for (b in bytes) sb.append("%02x".format(b))
-    return sb.toString()
+  @ReactMethod
+  fun getSetting(key: String, promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().kvGet(key))
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
+  fun setSetting(key: String, value: String, promise: Promise) {
+    try {
+      ChatRepo.requireDb().kvSet(key, value)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
   }
 
   @ReactMethod

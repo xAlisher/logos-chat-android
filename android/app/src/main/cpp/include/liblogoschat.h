@@ -1,109 +1,100 @@
-// Generated manually
+// liblogoschat.h — C ABI for the Android arm64 wrapper over the pure-Rust
+// `libchat` (MLS/address generation) facade `logos_chat::open`.
+//
+// Built from github.com/logos-messaging/libchat @ d2124fd (main, 2026-07-24)
+// plus patches/libchat-android-arm64.patch and the wrapper crate in wrapper/.
+//
+// Threading: outbound verbs run on the caller's thread. The event callback set
+// via logoschat_set_event_callback fires on a dedicated pump thread — keep it
+// fast and thread-safe. The underlying workspace is compiled panic="abort", so
+// every entry point returns null / -1 on error (never unwinds) and records a
+// message retrievable via logoschat_last_error (thread-local).
+//
+// Ownership: every char* returned by a logoschat_* function is owned by the
+// caller and must be freed with logoschat_free_string.
+#pragma once
 #ifndef __liblogoschat__
 #define __liblogoschat__
 
 #include <stddef.h>
-#include <stdint.h>
-
-// The possible returned values for the functions that return int
-#define RET_OK 0
-#define RET_ERR 1
-#define RET_MISSING_CALLBACK 2
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef void (*FFICallBack)(int callerRet, const char *msg, size_t len,
-                            void *userData);
+// Event type tags handed to the event callback.
+#define LOGOSCHAT_EVENT_CONVERSATION_STARTED 1
+#define LOGOSCHAT_EVENT_MESSAGE_RECEIVED     2
+#define LOGOSCHAT_EVENT_MEMBERS_CHANGED      3
+#define LOGOSCHAT_EVENT_INBOUND_ERROR        4
 
-//////////////////////////////////////////////////////////////////////////////
-// Client Lifecycle
-//////////////////////////////////////////////////////////////////////////////
+typedef void (*logoschat_event_cb)(int event_type, const char *json, void *user_data);
 
-// Creates a new instance of the chat client.
-// Sets up the chat client from the given configuration.
-// Returns a pointer to the Context needed by the rest of the API functions.
-// configJson: JSON object with fields:
-//   - "name": string - identity name (default: "anonymous")
-//   - "port": int - Waku port (optional)
-//   - "clusterId": int - Waku cluster ID (optional)
-//   - "shardId": int - Waku shard ID (optional)
-//   - "staticPeers": array of strings - static peer multiaddrs (optional)
-void *chat_new(const char *configJson, FFICallBack callback, void *userData);
+// --- Identity / lifecycle ---------------------------------------------------
 
-// Start the chat client and begin listening for messages
-int chat_start(void *ctx, FFICallBack callback, void *userData);
+// Mint a fresh account and return its hex address (64 hex chars). NO network,
+// no node — proves the account/crypto path. Caller frees.
+char *logoschat_gen_address(void);
 
-// Stop the chat client
-int chat_stop(void *ctx, FFICallBack callback, void *userData);
+// Open a client: starts the embedded delivery node, publishes the device bundle
+// to the registry, opens encrypted storage at db_path. registry_url may be NULL
+// (baked-in default). Ephemeral identity — a FRESH address every call. Returns
+// an opaque handle or NULL (see logoschat_last_error). Blocks on network.
+void *logoschat_open(const char *db_path, const char *db_key,
+                     const char *registry_url);
 
-// Destroys an instance of a chat client created with chat_new
-int chat_destroy(void *ctx, FFICallBack callback, void *userData);
+// Open with a PERSISTENT identity loaded (or created) from identity_path
+// (a 64-byte seed file: account seed || delegate seed). First call generates +
+// writes the seeds; later calls reload them, so the address is STABLE across
+// restarts. In production, back identity_path with an Android Keystore-encrypted
+// blob. Returns a handle or NULL.
+void *logoschat_open_persistent(const char *db_path, const char *db_key,
+                                const char *registry_url,
+                                const char *identity_path);
 
-// Sets a callback that will be invoked whenever an event occurs.
-// Events are JSON objects with "eventType" field:
-//   - "new_message":
-//   {"eventType":"new_message","conversationId":"...","messageId":"...","content":"hex...","timestamp":...}
-//   - "new_conversation":
-//   {"eventType":"new_conversation","conversationId":"...","conversationType":"private"}
-//   - "delivery_ack":
-//   {"eventType":"delivery_ack","conversationId":"...","messageId":"..."}
-void set_event_callback(void *ctx, FFICallBack callback, void *userData);
+// Shut down and free a handle from logoschat_open[_persistent]. Invalid after.
+void logoschat_shutdown(void *handle);
 
-//////////////////////////////////////////////////////////////////////////////
-// Client Info
-//////////////////////////////////////////////////////////////////////////////
+// --- Verbs (mirror the desktop chat_module contract) ------------------------
 
-// Get the client's identifier
-int chat_get_id(void *ctx, FFICallBack callback, void *userData);
+// This client's account address (the hex peers paste to reach it). Caller frees.
+char *logoschat_get_address(void *handle);
 
-//////////////////////////////////////////////////////////////////////////////
-// Conversation Operations
-//////////////////////////////////////////////////////////////////////////////
+// This client's installation (device) name. Caller frees.
+char *logoschat_installation_name(void *handle);
 
-// List all conversations as JSON array
-// Returns: JSON array of objects with "id" field
-int chat_list_conversations(void *ctx, FFICallBack callback, void *userData);
+// Create a 1:1 conversation with peer_address (hex). Returns the conversation
+// id, or NULL on failure. Caller frees.
+char *logoschat_create_conversation(void *handle, const char *peer_address);
 
-// Get a specific conversation by ID
-// Returns: JSON object with "id" field
-int chat_get_conversation(void *ctx, FFICallBack callback, void *userData,
-                          const char *convoId);
+// Create a GroupV2 (MLS) conversation. Returns the conversation id. Caller frees.
+char *logoschat_create_group(void *handle, const char *name, const char *desc);
 
-// Create a new private conversation with the given IntroBundle
-// introBundleStr: Intro bundle ASCII string as returned by chat_create_intro_bundle
-// contentHex: Initial message content as hex-encoded string
-int chat_new_private_conversation(void *ctx, FFICallBack callback,
-                                  void *userData, const char *introBundleStr,
-                                  const char *contentHex);
+// Add peer_address (hex) to group convo_id. 0 on success, -1 on failure.
+int logoschat_add_group_member(void *handle, const char *convo_id,
+                               const char *peer_address);
 
-// Send a message to a conversation
-// convoId: Conversation ID string
-// contentHex: Message content as hex-encoded string
-// Returns: Message ID on success
-int chat_send_message(void *ctx, FFICallBack callback, void *userData,
-                      const char *convoId, const char *contentHex);
+// List conversation ids as a JSON array string, e.g. ["id1","id2"]. Caller frees.
+char *logoschat_list_conversations(void *handle);
 
-//////////////////////////////////////////////////////////////////////////////
-// Identity Operations
-//////////////////////////////////////////////////////////////////////////////
+// Encrypt and send content (len bytes) to convo_id. 0 on success, -1 on failure.
+int logoschat_send_message(void *handle, const char *convo_id,
+                           const unsigned char *content, size_t len);
 
-// Get the client identity
-// Returns JSON: {"name": "..."}
-int chat_get_identity(void *ctx, FFICallBack callback, void *userData);
+// Register the event callback: spawns a pump that drains the event stream and
+// invokes cb(event_type, json, user_data) per event. Call once per handle.
+// 0 on success, -1 if already registered / bad handle.
+int logoschat_set_event_callback(void *handle, logoschat_event_cb cb,
+                                 void *user_data);
 
-// Create an IntroBundle for initiating private conversations
-// Returns the intro bundle as an ASCII string (format: logos_chatintro_<version>_<base64url payload>)
-int chat_create_intro_bundle(void *ctx, FFICallBack callback, void *userData);
+// --- Errors / memory --------------------------------------------------------
 
-//////////////////////////////////////////////////////////////////////////////
-// Mix Protocol Status (MIX BUILD ONLY — the superset .so)
-//////////////////////////////////////////////////////////////////////////////
+// The last error string set on THIS thread ("" if none). Valid until the next
+// fallible call on the same thread. Do NOT free.
+const char *logoschat_last_error(void);
 
-// Get mix protocol status.
-// Returns JSON: {"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,"minPoolSize":int}
-int chat_get_mix_status(void *ctx, FFICallBack callback, void *userData);
+// Free a char* returned by any logoschat_* function (NULL-safe).
+void logoschat_free_string(char *ptr);
 
 #ifdef __cplusplus
 }

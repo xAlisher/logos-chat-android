@@ -4,85 +4,89 @@ import android.content.Context
 import android.util.Log
 
 /**
- * The raw JNI surface over liblogoschat — a plain singleton so the node can be
- * driven WITHOUT React Native (ChatService restarts the node after process
- * death with JS long gone; getNativeModule is NULL under Bridgeless anyway —
- * booth's lesson, docs/architecture.md §2.1).
+ * The raw JNI surface over the NEW pure-Rust liblogoschat (MLS/address). A plain
+ * singleton so the node can be driven WITHOUT React Native (ChatService restarts
+ * the node after process death with JS long gone; getNativeModule is NULL under
+ * Bridgeless anyway — booth's lesson).
  *
  * Implemented in `android/app/src/main/cpp/logoschat_jni.c`
  * (`Java_com_logoschat_NodeBridge_*` — rebuilt via scripts/build-bridge.sh).
  *
- * DUAL-BINARY (#51 option A): the app ships BOTH liblogoschat variants under
- * distinct file names but a shared soname `liblogoschat.so`:
- *   - liblogoschat_std.so — standard v0.1.0 (relay mounts; the default)
- *   - liblogoschat_mix.so — mix superset v0.2.0 (adds chat_get_mix_status)
- * You cannot hot-swap two libs with the same soname in one process, so we load
- * EXACTLY ONE per process — the variant the persisted flag selects — by ABSOLUTE
- * PATH via System.load(). Its soname satisfies the bridge's DT_NEEDED
- * `liblogoschat.so`. Flipping Private routing rewrites the flag + restarts the
- * process so the other variant loads fresh (see LogosChatModule.restartInMode).
- * Load order still matters: c++_shared → <variant> → logoschat_bridge (§2.3).
+ * Load order matters (DT_NEEDED chain): libc++_shared -> librln ->
+ * liblogosdelivery -> liblogoschat -> the bridge. We load them in that order via
+ * System.loadLibrary (soname mapping) so each lib's NEEDED is already satisfied.
+ * (The old dual-binary std/mix variant machinery is GONE — one lib now.)
  */
 object NodeBridge {
   private const val TAG = "logos-chat-bridge"
-  const val PREFS = "logoschat_native"
-  const val KEY_VARIANT = "variant" // "std" | "mix"
 
   @Volatile private var loaded = false
-  @Volatile var loadedVariant: String = "std"; private set
-
-  /** Persisted native variant ("std"/"mix"), read at process start BEFORE the DB. */
-  fun persistedVariant(context: Context): String =
-      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_VARIANT, "std")
-          ?: "std"
-
-  /** Write the variant the NEXT process start should load. Does NOT reload now. */
-  fun setPersistedVariant(context: Context, mix: Boolean) {
-    context
-        .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        .edit()
-        .putString(KEY_VARIANT, if (mix) "mix" else "std")
-        .commit() // commit (sync) — the process is about to be killed for the restart
-  }
 
   /**
-   * Load c++_shared → the persisted liblogoschat variant (by absolute path) →
-   * the bridge, once per process. Called from MainApplication.onCreate so a broken
-   * chain fails loudly at app start (#11 AC), not on first JS call.
+   * Load the native chain once per process. Called from MainApplication.onCreate
+   * so a broken chain fails loudly at app start, not on first JS call.
    */
   @JvmStatic
   fun load(context: Context) {
     if (loaded) return
     System.loadLibrary("c++_shared")
-    val variant = persistedVariant(context)
-    val path = context.applicationInfo.nativeLibraryDir + "/liblogoschat_" + variant + ".so"
-    System.load(path)
+    System.loadLibrary("rln")
+    System.loadLibrary("logosdelivery")
+    System.loadLibrary("logoschat")
     System.loadLibrary("logoschat_bridge")
-    loadedVariant = variant
     loaded = true
-    Log.i(TAG, "loadLibrary ok: c++_shared -> $path -> logoschat_bridge (variant=$variant)")
+    Log.i(TAG, "loadLibrary ok: c++_shared -> rln -> logosdelivery -> logoschat -> bridge")
   }
 
   /** No-op retained for call sites; real loading happens in load(context). */
   @JvmStatic fun ensureLoaded() = Unit
 
+  // -- native verbs (see cpp/logoschat_jni.c + include/liblogoschat.h) --------
+
+  /** stdout/stderr -> logcat pump, once per process (call before opening). */
   external fun chatSetup()
-  external fun chatNew(configJson: String): ChatPtr
-  external fun chatStart(ctx: Long): ChatResult
-  external fun chatStop(ctx: Long): ChatResult
-  external fun chatDestroy(ctx: Long): ChatResult
-  external fun chatGetIdentity(ctx: Long): ChatResult
-  external fun chatCreateIntroBundle(ctx: Long): ChatResult
-  external fun chatNewPrivateConversation(ctx: Long, bundle: String, contentHex: String): ChatResult
-  external fun chatSendMessage(ctx: Long, convoId: String, contentHex: String): ChatResult
-  external fun chatSetEventCallback(ctx: Long)
 
   /**
-   * Mix status: {"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,
-   * "minPoolSize":int}. The bridge dlsym's `chat_get_mix_status` at call time, so
-   * this binds against EITHER variant — the standard .so lacks the symbol and the
-   * bridge returns a benign mixEnabled:false snapshot (never reached in standard
-   * mode: NodeRuntime.pollMixStatus no-ops unless mixEnabled).
+   * open_persistent: start the embedded delivery node, publish the device bundle,
+   * open encrypted storage at [dbPath], load-or-create the identity seed at
+   * [identityPath] (STABLE address across restarts). [registryUrl] null = default.
+   * Returns an opaque handle, or 0 on failure (see [chatLastError]). BLOCKS on
+   * network — call off the main thread.
    */
-  external fun chatGetMixStatus(ctx: Long): ChatResult
+  external fun chatOpenPersistent(
+      dbPath: String,
+      dbKey: String,
+      registryUrl: String?,
+      identityPath: String,
+  ): Long
+
+  /** Shut down and free a handle. Invalid after. */
+  external fun chatShutdown(handle: Long)
+
+  /** This client's account address (hex64 peers paste to reach it), or null. */
+  external fun chatGetAddress(handle: Long): String?
+
+  /** This client's installation (device) name, or null. */
+  external fun chatInstallationName(handle: Long): String?
+
+  /** Create a 1:1 conversation with peerAddress (hex). Returns convoId or null. */
+  external fun chatCreateConversation(handle: Long, peerAddress: String): String?
+
+  /** Encrypt + send raw bytes (NOT hex) to convoId. 0 on success, -1 on failure. */
+  external fun chatSendMessage(handle: Long, convoId: String, content: ByteArray): Int
+
+  /** Conversation ids as a JSON array string, or null. */
+  external fun chatListConversations(handle: Long): String?
+
+  /** Create a GroupV2 (MLS) conversation (M2'). Returns convoId or null. */
+  external fun chatCreateGroup(handle: Long, name: String, desc: String): String?
+
+  /** Add peerAddress to group convoId (M2'). 0 on success, -1 on failure. */
+  external fun chatAddGroupMember(handle: Long, convoId: String, peerAddress: String): Int
+
+  /** Register the persistent event callback for this handle. 0 on success. */
+  external fun chatSetEventCallback(handle: Long): Int
+
+  /** The thread-local last-error string ("" if none). Read right after a null/-1. */
+  external fun chatLastError(): String
 }

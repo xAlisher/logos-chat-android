@@ -1,8 +1,8 @@
-// Scanner — #15, docs/theme.md §4. Full-bleed vision-camera preview + useCodeScanner
-// (QR), emerald corner brackets ~240dp, inline validation of the logos_chatintro_1_
-// prefix (invalid QR → unread-colored caption). Paste bundle is ALWAYS reachable —
-// it is the permission-denied / no-camera fallback AND a visible text button under
-// the preview. Valid bundle → haptic + NewConversation (opening-message composer).
+// New chat — scan or paste a peer's ADDRESS (64 hex). Full-bleed vision-camera
+// preview + useCodeScanner (QR), emerald corner brackets, inline validation of the
+// 64-hex address. Paste is ALWAYS reachable — it is the permission-denied /
+// no-camera fallback AND a visible text button under the preview. Valid address →
+// haptic + NewConversation (nickname + start).
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Text,
@@ -12,8 +12,7 @@ import {
   StyleSheet,
   Vibration,
 } from 'react-native';
-import {useNavigation, useRoute} from '@react-navigation/native';
-import type {RouteProp} from '@react-navigation/native';
+import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {
   Camera,
@@ -22,7 +21,7 @@ import {
   useCodeScanner,
 } from 'react-native-vision-camera';
 import {colors, type, spacing, radii} from '../theme';
-import {isIntroBundle} from '../native/LogosChat';
+import {isAddress, normalizeAddress} from '../native/LogosChat';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {ActionButton} from '../components/ActionButton';
 import type {RootStackParamList} from '../navigation/types';
@@ -33,8 +32,6 @@ const BRACKET = 240;
 
 export function ScanScreen() {
   const navigation = useNavigation<Nav>();
-  const route = useRoute<RouteProp<RootStackParamList, 'Scan'>>();
-  const reintroduceConvoPk = route.params?.reintroduceConvoPk;
   const device = useCameraDevice('back');
   const {hasPermission, requestPermission} = useCameraPermission();
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -44,18 +41,17 @@ export function ScanScreen() {
   const acceptedRef = useRef(false);
 
   const accept = useCallback(
-    (bundle: string) => {
+    (address: string) => {
       if (acceptedRef.current) {
         return;
       }
       acceptedRef.current = true;
       Vibration.vibrate(60); // valid-scan haptic
       navigation.replace('NewConversation', {
-        bundle: bundle.trim(),
-        reintroduceConvoPk, // fresh-bundle re-introduce path (#23)
+        address: normalizeAddress(address),
       });
     },
-    [navigation, reintroduceConvoPk],
+    [navigation],
   );
 
   const codeScanner = useCodeScanner({
@@ -63,12 +59,12 @@ export function ScanScreen() {
     onCodeScanned: codes => {
       for (const code of codes) {
         const value = code.value ?? '';
-        if (isIntroBundle(value)) {
+        if (isAddress(value)) {
           accept(value);
           return;
         }
       }
-      setInvalid('not an intro bundle');
+      setInvalid('not a valid address');
     },
   });
 
@@ -77,7 +73,7 @@ export function ScanScreen() {
       requestPermission().then(granted => {
         if (!granted) {
           setPermissionDenied(true);
-          setPasteMode(true); // denied path lands on Paste bundle (AC #15)
+          setPasteMode(true); // denied path lands on Paste address
         }
       });
     }
@@ -94,9 +90,6 @@ export function ScanScreen() {
   const cameraAvailable = hasPermission && device != null;
   const showCamera = cameraAvailable && !pasteMode;
 
-  // Camera mode is full-bleed (no text input focused) — plain View. The paste /
-  // no-camera path carries the bundle TextInput, so it wraps in the keyboard-aware
-  // ScrollView so the field + "use bundle" button clear the soft keyboard (#50).
   if (showCamera) {
     return (
       <View style={styles.root}>
@@ -114,16 +107,16 @@ export function ScanScreen() {
               <View style={[styles.corner, styles.bl]} />
               <View style={[styles.corner, styles.br]} />
             </View>
-            <Text style={styles.caption}>scan a logos_chat intro bundle</Text>
+            <Text style={styles.caption}>scan a peer's address QR</Text>
             {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           </View>
         </View>
         <Pressable
           style={styles.pasteLink}
-          testID="paste-bundle-link"
+          testID="paste-address-link"
           onPress={() => setPasteMode(true)}>
           <Text style={[type.label, {color: colors.accent}]}>
-            paste bundle instead
+            paste address instead
           </Text>
         </Pressable>
       </View>
@@ -136,17 +129,17 @@ export function ScanScreen() {
         <View style={styles.noCamera}>
           {permissionDenied ? (
             <Text style={styles.rationale}>
-              camera permission denied — paste the peer's bundle below instead.
+              camera permission denied — paste the peer's address below instead.
               {'\n'}(grant camera access in system settings to scan QR codes)
             </Text>
           ) : !hasPermission ? (
             <Text style={styles.rationale}>
-              camera access is used only to scan a peer's intro-bundle QR — nothing
-              is recorded.
+              camera access is used only to scan a peer's address QR — nothing is
+              recorded.
             </Text>
           ) : device == null ? (
             <Text style={styles.rationale}>
-              no camera available — paste the peer's bundle below instead
+              no camera available — paste the peer's address below instead
             </Text>
           ) : null}
           {!pasteMode && !hasPermission && !permissionDenied && (
@@ -167,9 +160,9 @@ export function ScanScreen() {
           )}
         </View>
 
-        {/* Paste path — ALWAYS reachable (docs/theme.md §4) */}
+        {/* Paste path — ALWAYS reachable */}
         <View style={styles.pasteCard}>
-          <Text style={[type.label, {color: colors.textDim}]}>paste bundle</Text>
+          <Text style={[type.label, {color: colors.textDim}]}>paste address</Text>
           <TextInput
             style={styles.pasteInput}
             value={pasteText}
@@ -177,25 +170,25 @@ export function ScanScreen() {
               setPasteText(t);
               setInvalid(null);
             }}
-            placeholder="logos_chatintro_1_…"
+            placeholder="64-hex address…"
             placeholderTextColor={colors.textFaint}
             autoCapitalize="none"
             autoCorrect={false}
             multiline
-            testID="paste-bundle-input"
+            testID="paste-address-input"
           />
           {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           <View style={styles.pasteRow}>
             <ActionButton
-              label="use bundle"
+              label="use address"
               variant="primary"
               style={{flex: 1}}
-              testID="paste-bundle-use"
+              testID="paste-address-use"
               onPress={() => {
-                if (isIntroBundle(pasteText)) {
+                if (isAddress(pasteText)) {
                   accept(pasteText);
                 } else {
-                  setInvalid('not an intro bundle');
+                  setInvalid('not a valid address');
                 }
               }}
             />
@@ -283,13 +276,4 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   pasteRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg},
-  useBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radii.card,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    minHeight: 44,
-    justifyContent: 'center',
-  },
-  switchBtn: {minHeight: 44, justifyContent: 'center'},
 });

@@ -1,13 +1,12 @@
-// Conversations list — #18 + M3 #22, docs/theme.md §4. Rows come from the DURABLE
-// store (SQLite) so history is visible across restarts. Dot semantics: accent =
-// live session this epoch, faint = expired (re-introduce to continue), amber =
-// pending inbound awaiting attribution (#24). Unread badge (#EF4444, capped 99+).
+// Conversations list. Rows come from the DURABLE store (SQLite) so history is
+// visible across restarts. Keyed by peer address + nickname. Accent dot = a
+// conversation with a live route; unread badge (#EF4444, capped 99+).
 import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import {colors, type, spacing, layout, radii} from '../theme';
+import {colors, type, spacing, layout} from '../theme';
 import {Brand} from '../components/Brand';
 import {StatusPill} from '../components/StatusPill';
 import {QrIcon} from '../components/QrIcon';
@@ -15,7 +14,6 @@ import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
-import {useSettingsStore} from '../stores/settingsStore';
 import {
   useChatStore,
   sortedConversations,
@@ -23,7 +21,6 @@ import {
 } from '../stores/chatStore';
 import type {Conversation} from '../stores/chatStore';
 import type {RootStackParamList} from '../navigation/types';
-import {CONTACT_ATTACH_ENABLED} from '../config/features';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -56,33 +53,12 @@ function ConversationRow({
       style={styles.row}
       onPress={onPress}
       testID={`convo-${convo.convoPk}`}>
-      <View
-        style={[
-          styles.dot,
-          // #82 — don't amber-flag unknown/pending conversations when the attach
-          // flow is hidden; just show live (accent) vs expired (faint).
-          CONTACT_ATTACH_ENABLED && convo.pending
-            ? styles.dotPending
-            : convo.expired
-            ? styles.dotExpired
-            : null,
-        ]}
-      />
+      <View style={styles.dot} />
       <View style={styles.rowBody}>
-        <Text
-          style={[
-            type.title,
-            // #74 — any EXPIRED session reads gray (dead session, needs
-            // re-introduction) — including an unattributed/pending one from a
-            // previous epoch. A live pending convo (current epoch) stays white.
-            {color: convo.expired ? colors.textDim : colors.text},
-          ]}
-          numberOfLines={1}>
+        <Text style={[type.title, {color: colors.text}]} numberOfLines={1}>
           {convoDisplayName(convo)}
         </Text>
         <Text style={styles.preview} numberOfLines={1}>
-          {/* Always show the last message — the gray title already signals an
-              expired session; the 'session expired' preview was noise. */}
           {convo.lastText || 'new conversation'}
         </Text>
       </View>
@@ -100,15 +76,11 @@ export function ConversationsScreen() {
   const status = useNodeStore(s => s.status);
   const error = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
-  const privateRouting = useSettingsStore(s => s.privateRouting);
-  const mix = useSettingsStore(s => s.mix);
   const conversations = useChatStore(s => s.conversations);
   const refreshConversations = useChatStore(s => s.refreshConversations);
   const remove = useChatStore(s => s.remove);
   const list = sortedConversations(conversations);
-  const mixShort = !mix.mixReady || mix.mixPoolSize < mix.minPoolSize;
 
-  // Swipe commits on release (SwipeRow handles the gesture + haptic) — no dialog.
   const onDeleteConvo = useCallback(
     (convoPk: number) => {
       remove(convoPk).catch(e =>
@@ -118,7 +90,6 @@ export function ConversationsScreen() {
     [remove],
   );
 
-  // DB is the source of truth — re-query whenever the list gains focus.
   useFocusEffect(
     useCallback(() => {
       refreshConversations();
@@ -127,9 +98,7 @@ export function ConversationsScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
-      {/* #56/#70 — single-row header: [logo] · [node pill → Settings] · [QR → bundle].
-          The pill is ABSOLUTELY centered (independent of logo/QR widths) so it sits
-          dead-center of the bar; logo left and QR right sit in the flow. */}
+      {/* Single-row header: [logo] · [node pill → Settings] · [QR → my address]. */}
       <View style={styles.header}>
         <Brand />
         <View style={styles.pillCenter} pointerEvents="box-none">
@@ -137,25 +106,21 @@ export function ConversationsScreen() {
             testID="node-pill"
             hitSlop={8}
             onPress={() => navigation.navigate('Settings')}>
-            <StatusPill
-              status={status}
-              mixEnabled={privateRouting}
-              mixShort={mixShort}
-            />
+            <StatusPill status={status} />
           </Pressable>
         </View>
         <Pressable
           style={styles.qrBtn}
-          testID="open-intro-bundle"
+          testID="open-my-address"
           hitSlop={8}
-          onPress={() => navigation.navigate('IntroBundle')}>
+          onPress={() => navigation.navigate('MyAddress')}>
           <QrIcon size={24} />
         </Pressable>
       </View>
       {list.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>
-            no conversations — scan a peer's QR to start
+            no conversations — tap + to add a peer by address
           </Text>
         </View>
       ) : (
@@ -179,12 +144,9 @@ export function ConversationsScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
-      {/* #55/#73 — new-conversation FAB (emerald, black +), bottom-right. Custom
-          circular button so the + is perfectly flex-centered (paper's FAB icon
-          slot left it optically off). */}
+      {/* new-conversation FAB (emerald, black +), bottom-right. */}
       <Pressable
         testID="new-conversation"
-        // #80 — lift above the gesture pill (no persistent bottom bar on Pixel).
         style={[styles.fab, {bottom: spacing.lg + insets.bottom}]}
         onPress={() => navigation.navigate('Scan')}>
         <Text style={styles.fabPlus}>+</Text>
@@ -221,7 +183,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  listContent: {paddingBottom: 88}, // clearance so the FAB never covers the last row (#55)
+  listContent: {paddingBottom: 88},
   fab: {
     position: 'absolute',
     right: spacing.lg,
@@ -255,8 +217,6 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: colors.accent,
   },
-  dotExpired: {backgroundColor: colors.textFaint},
-  dotPending: {backgroundColor: colors.pulse},
   rowBody: {flex: 1, gap: 2},
   preview: {...type.label, color: colors.textDim},
   rowRight: {alignItems: 'flex-end', gap: spacing.xs},

@@ -6,13 +6,11 @@ import {paperTheme, colors} from './src/theme';
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {useSettingsStore} from './src/stores/settingsStore';
 import {useNodeStore} from './src/stores/nodeStore';
-import {MIX_UI_ENABLED} from './src/config/features';
 
 /**
  * Android 13+ blocks every notification until POST_NOTIFICATIONS is granted at
- * runtime (#26) — the manifest entry alone silently yields importance=NONE, so
- * message notifications never post. Denial is survivable: messages still
- * arrive and persist, they just don't notify.
+ * runtime — the manifest entry alone silently yields importance=NONE. Denial is
+ * survivable: messages still arrive and persist, they just don't notify.
  */
 async function requestNotificationPermission() {
   if (Platform.OS !== 'android' || Number(Platform.Version) < 33) {
@@ -30,21 +28,11 @@ async function requestNotificationPermission() {
 function App() {
   useEffect(() => {
     requestNotificationPermission();
-    // Load the persisted Private routing flag + display name + current mix status
-    // so the header pill + send gate reflect the real mode on cold start (#30/#31),
-    // then AUTO-START the node in the persisted mode (#57). Auto-fetch of the intro
-    // bundle happens on the 'running' node_status event (nodeStore).
+    // Load the local label, then AUTO-START the node. The identity is persistent,
+    // so the address is fetched on the 'running' node_status event (nodeStore).
     (async () => {
       await useSettingsStore.getState().load();
-      // #81 — mix UI hidden: force standard mode so nobody is stuck in mix (also
-      // resets a previously-persisted mix flag).
-      if (!MIX_UI_ENABLED && useSettingsStore.getState().privateRouting) {
-        await useSettingsStore.getState().persistPrivateRouting(false);
-      }
-      const {displayName, privateRouting} = useSettingsStore.getState();
-      await useNodeStore
-        .getState()
-        .autoStart(displayName, MIX_UI_ENABLED && privateRouting);
+      await useNodeStore.getState().autoStart();
     })();
   }, []);
 

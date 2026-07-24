@@ -14,8 +14,6 @@
 # against these classes at runtime, and the callback + result types are only
 # ever referenced from C. R8 must not rename or strip any of them.
 -keep class com.logoschat.NodeBridge { *; }
--keep class com.logoschat.ChatPtr { *; }
--keep class com.logoschat.ChatResult { *; }
 -keep class com.logoschat.EventCallbackManager { *; }
 # The service is started by name from the manifest and re-created by the system
 # after process death (START_STICKY).

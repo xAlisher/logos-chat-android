@@ -1,7 +1,7 @@
 // Shared keyboard-aware screen wrapper (#50). Every input screen wraps its content
 // in this so a bottom-anchored field + its primary button stay visible above the
 // soft keyboard — the bug caught on NewConversation (opening-message field hidden
-// behind the keyboard) and shared by ScanScreen (paste) / AttachContact.
+// behind the keyboard) and shared by ScanScreen (paste) / NewConversation.
 //
 // Dependency-free by design (no react-native-keyboard-controller → no extra native
 // build). The manifest already sets android:windowSoftInputMode="adjustResize", so

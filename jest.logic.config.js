@@ -14,7 +14,7 @@ module.exports = {
     '^react-native$': '<rootDir>/__tests__/support/react-native-stub.js',
   },
   testMatch: [
-    '<rootDir>/__tests__/hexToUtf8.test.ts',
+    '<rootDir>/__tests__/address.test.ts',
     '<rootDir>/__tests__/chatStore.logic.test.ts',
   ],
 };

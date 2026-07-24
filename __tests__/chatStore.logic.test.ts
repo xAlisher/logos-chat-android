@@ -7,19 +7,20 @@ import type {ConversationRow} from '../src/native/LogosChat';
 function row(over: Partial<ConversationRow>): ConversationRow {
   return {
     convoPk: 1,
-    contactId: null,
-    name: null,
-    hasBundle: false,
+    peerAddress: null,
+    nickname: null,
+    bound: false,
     createdAt: 0,
     lastMessageAt: 0,
     unread: 0,
     lastText: '',
     lastDirection: '',
-    expired: false,
-    pending: false,
     ...over,
   };
 }
+
+const ADDR =
+  '88d76d19aabbccddeeff00112233445566778899aabbccddeeff001122338953';
 
 describe('sortedConversations', () => {
   it('orders by most recent activity, newest first', () => {
@@ -37,19 +38,15 @@ describe('sortedConversations', () => {
 });
 
 describe('convoDisplayName', () => {
-  it('uses the contact name when set', () => {
-    expect(convoDisplayName(row({name: 'desktop-m3'}))).toBe('desktop-m3');
+  it('uses the nickname when set', () => {
+    expect(convoDisplayName(row({nickname: 'desktop'}))).toBe('desktop');
   });
 
-  it('labels a pending inbound conversation as unknown (#24)', () => {
-    // bundles are opaque + names unauthenticated, so an un-merged inbound
-    // conversation must read as clearly not-yet-identified, not as a real peer
-    expect(convoDisplayName(row({convoPk: 7, pending: true}))).toBe(
-      'unknown #7',
-    );
+  it('falls back to the short address when no nickname', () => {
+    expect(convoDisplayName(row({peerAddress: ADDR}))).toBe('88d76d…8953');
   });
 
-  it('falls back to a peer label for a named-but-empty non-pending convo', () => {
-    expect(convoDisplayName(row({convoPk: 4, name: ''}))).toBe('peer #4');
+  it('labels an address-less conversation as peer #pk', () => {
+    expect(convoDisplayName(row({convoPk: 7}))).toBe('peer #7');
   });
 });

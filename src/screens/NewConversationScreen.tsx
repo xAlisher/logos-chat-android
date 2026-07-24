@@ -1,8 +1,5 @@
-// New conversation — #16. After scan/paste: the MANDATORY opening-message composer
-// (the lib requires an opening message for chat_new_private_conversation). On send:
-// statusCode==0 == accepted (the call returns empty on success), our LOCAL convoId
-// is bound from the new_conversation push (invariant #3), then we replace into the
-// thread.
+// New conversation — confirm a scanned/pasted peer address, optionally nickname it,
+// then create the 1:1 conversation (create_conversation) and open the thread.
 import React, {useState} from 'react';
 import {
   Text,
@@ -20,6 +17,7 @@ import {ErrorToast} from '../components/ErrorToast';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
+import {shortAddress} from '../native/LogosChat';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -27,31 +25,30 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 export function NewConversationScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteProp<RootStackParamList, 'NewConversation'>>();
-  const {bundle, reintroduceConvoPk} = route.params;
+  const {address} = route.params;
   const status = useNodeStore(s => s.status);
   const startConversation = useChatStore(s => s.startConversation);
-  const [text, setText] = useState('');
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = status === 'running';
-  const canSend = running && text.trim().length > 0 && !busy;
+  const canStart = running && !busy;
 
-  const onSend = async () => {
-    if (!canSend) {
+  const onStart = async () => {
+    if (!canStart) {
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const convoPk = await startConversation(bundle, text.trim(), {
-        convoPk: reintroduceConvoPk,
-        name: name.trim() || undefined,
+      const convoPk = await startConversation(address, {
+        nickname: name.trim() || undefined,
       });
       const convo = useChatStore.getState().conversations[convoPk];
       navigation.replace('Chat', {
         convoPk,
-        convoName: convo != null ? convoDisplayName(convo) : name.trim() || 'peer',
+        convoName:
+          convo != null ? convoDisplayName(convo) : name.trim() || shortAddress(address),
       });
     } catch (e: any) {
       setError(String(e?.message ?? e));
@@ -62,28 +59,22 @@ export function NewConversationScreen() {
   return (
     <View style={styles.root}>
       <KeyboardAwareScreen contentContainerStyle={styles.content}>
-      <View style={styles.card}>
-        <Text style={[type.label, {color: colors.textDim}]}>
-          {reintroduceConvoPk != null
-            ? 're-introducing into an existing thread — fresh peer bundle'
-            : 'peer bundle'}
-        </Text>
-        <Text style={styles.bundle} selectable numberOfLines={3}>
-          {bundle}
-        </Text>
-      </View>
+        <View style={styles.card}>
+          <Text style={[type.label, {color: colors.textDim}]}>peer address</Text>
+          <Text style={styles.address} selectable numberOfLines={2}>
+            {address}
+          </Text>
+        </View>
 
-      {!running && (
-        <Text style={[type.label, {color: colors.unread}]}>
-          node not running — start it in settings first
-        </Text>
-      )}
+        {!running && (
+          <Text style={[type.label, {color: colors.unread}]}>
+            node not running — start it in settings first
+          </Text>
+        )}
 
-      {reintroduceConvoPk == null && (
         <View style={styles.card}>
           <Text style={[type.label, {color: colors.textDim}]}>
-            contact name (optional — bundles are opaque; names are yours, not
-            authenticated)
+            nickname (optional — a private label; the peer never sees it)
           </Text>
           <TextInput
             style={[styles.input, styles.nameInput]}
@@ -94,42 +85,25 @@ export function NewConversationScreen() {
             editable={!busy}
             testID="contact-name-input"
           />
-        </View>
-      )}
-
-      <View style={styles.card}>
-        <Text style={[type.label, {color: colors.textDim}]}>
-          opening message (required)
-        </Text>
-        <TextInput
-          style={styles.input}
-          value={text}
-          onChangeText={setText}
-          placeholder="say hello…"
-          placeholderTextColor={colors.textFaint}
-          multiline
-          editable={!busy}
-          testID="opening-message-input"
-        />
-        <Pressable
-          style={[styles.sendBtn, !canSend && styles.btnDisabled]}
-          disabled={!canSend}
-          onPress={onSend}
-          testID="start-conversation-btn">
-          {busy ? (
-            <ActivityIndicator color={colors.onAccent} />
-          ) : (
-            <Text style={[type.title, {color: colors.onAccent}]}>
-              {'start conversation >>'}
+          <Pressable
+            style={[styles.startBtn, !canStart && styles.btnDisabled]}
+            disabled={!canStart}
+            onPress={onStart}
+            testID="start-conversation-btn">
+            {busy ? (
+              <ActivityIndicator color={colors.onAccent} />
+            ) : (
+              <Text style={[type.title, {color: colors.onAccent}]}>
+                {'start conversation >>'}
+              </Text>
+            )}
+          </Pressable>
+          {busy && (
+            <Text style={[type.label, {color: colors.textDim}]}>
+              opening conversation…
             </Text>
           )}
-        </Pressable>
-        {busy && (
-          <Text style={[type.label, {color: colors.textDim}]}>
-            waiting for conversation to open…
-          </Text>
-        )}
-      </View>
+        </View>
       </KeyboardAwareScreen>
       <ErrorToast message={error} onDismiss={() => setError(null)} />
     </View>
@@ -153,7 +127,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.md,
   },
-  bundle: {...type.code, color: colors.textDim},
+  address: {...type.code, color: colors.text},
   input: {
     ...type.body,
     color: colors.text,
@@ -162,11 +136,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.card,
     padding: spacing.md,
-    minHeight: 72,
-    textAlignVertical: 'top',
+    minHeight: 44,
+    textAlignVertical: 'center',
   },
-  nameInput: {minHeight: 44, textAlignVertical: 'center'},
-  sendBtn: {
+  nameInput: {minHeight: 44},
+  startBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
     paddingHorizontal: spacing.xl,
