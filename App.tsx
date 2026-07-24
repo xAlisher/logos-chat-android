@@ -5,6 +5,7 @@ import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {paperTheme, colors} from './src/theme';
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {useSettingsStore} from './src/stores/settingsStore';
+import {useNodeStore} from './src/stores/nodeStore';
 
 /**
  * Android 13+ blocks every notification until POST_NOTIFICATIONS is granted at
@@ -28,9 +29,15 @@ async function requestNotificationPermission() {
 function App() {
   useEffect(() => {
     requestNotificationPermission();
-    // Load the persisted Private routing flag + current mix status so the MIX
-    // chrome + send gate reflect the real mode on cold start (#30/#31).
-    useSettingsStore.getState().load();
+    // Load the persisted Private routing flag + display name + current mix status
+    // so the header pill + send gate reflect the real mode on cold start (#30/#31),
+    // then AUTO-START the node in the persisted mode (#57). Auto-fetch of the intro
+    // bundle happens on the 'running' node_status event (nodeStore).
+    (async () => {
+      await useSettingsStore.getState().load();
+      const {displayName, privateRouting} = useSettingsStore.getState();
+      await useNodeStore.getState().autoStart(displayName, privateRouting);
+    })();
   }, []);
 
   return (

@@ -12,6 +12,10 @@ interface NodeState {
   error: string | null;
   /** Start the node. `mixEnabled` selects Private routing (#30) — a new epoch. */
   start: (name: string, mixEnabled?: boolean) => Promise<void>;
+  /** Auto-start on app launch (#57): start the node (once) in the persisted mode.
+   * Falls back to standard if Private routing is persisted but the loaded .so
+   * variant isn't 'mix' (dual-binary #51). No-op if already up / starting. */
+  autoStart: (name: string, privateRouting: boolean) => Promise<void>;
   /** Flip Private routing (#30): tear the node down and recreate it in the new
    * mode — a NEW EPOCH, so open sessions expire and need re-introduction (§4/§7).
    * Unlike start(), bypasses the status guard so the mode flip always applies. */
@@ -44,6 +48,24 @@ export const useNodeStore = create<NodeState>((set, get) => ({
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
+  },
+
+  autoStart: async (name: string, privateRouting: boolean) => {
+    const st = get().status;
+    if (st !== 'stopped' && st !== 'error') return; // already up or coming up
+    // Dual-binary (#51): mix mode needs the 'mix' .so loaded in THIS process. If
+    // Private routing is persisted but the loaded variant is 'std' (e.g. a stale
+    // switch), fall back to standard rather than booting a broken mix node (#57).
+    let mixEnabled = privateRouting;
+    if (privateRouting) {
+      try {
+        const variant = await LogosChat.getLoadedVariant();
+        mixEnabled = variant === 'mix';
+      } catch {
+        mixEnabled = false;
+      }
+    }
+    await get().start(name, mixEnabled);
   },
 
   restart: async (name: string, mixEnabled: boolean) => {
@@ -92,6 +114,12 @@ addLogosChatListener(e => {
     useNodeStore.setState({status: e.status});
     if (e.status === 'error' && e.detail) {
       useNodeStore.setState({error: e.detail});
+    }
+    // Auto-fetch the intro bundle the moment the node is running (#57), so the
+    // header QR icon (#56) is instant. The bundle is per-node-run (ephemeral), so
+    // this refreshes on every fresh start; only fetch when we don't already have one.
+    if (e.status === 'running' && useNodeStore.getState().introBundle == null) {
+      useNodeStore.getState().fetchIntroBundle();
     }
   } else if (e.eventType === 'error' && e.source === 'lib') {
     try {

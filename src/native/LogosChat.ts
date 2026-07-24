@@ -70,6 +70,8 @@ interface LogosChatNative {
   startNode(configJson: string): Promise<null>;
   stopNode(): Promise<null>;
   getNodeStatus(): Promise<NodeStatus>;
+  /** The liblogoschat variant loaded in this process: 'std' | 'mix' (#51/#57). */
+  getLoadedVariant(): Promise<string>;
   getIdentity(): Promise<string>; // {"name":"…"}
   createIntroBundle(): Promise<string>; // logos_chatintro_1_…
   // Hex-encoding happens native-side (content is HEX over the FFI, both
