@@ -117,6 +117,37 @@ All decisions are made and specced — **do not re-litigate**:
      wetware-required (no RLN — M4 #33 limit), not faked. Full log: `docs/v011-log.md`.
      Released **v0.1.1**.
 
+8. **v0.1.2** (#59, #60, #56, #55, #54, #57, #58): **COMPLETE ✓ (2026-07-24)** — main-view
+   redesign + automations, all verified on BOTH phones. Released **v0.1.2** (versionCode 3).
+   - **#59 crash fix — DUAL-BINARY KEPT (option 2).** Option 1 (single mix superset that
+     mounts relay in standard mode) was investigated and **ruled out**: the
+     `feat/logos-testnetv02-mix` branch **deleted `mountRelay()` from `waku_client.nim`**
+     (source-level, not a config gate — confirmed against both build source trees), so no
+     `chat_new` config can make the mix `.so` mount relay. Instead the process restart is made
+     bulletproof with **ProcessPhoenix**: new `PhoenixActivity` (`android:process=":phoenix"`)
+     survives the main-process kill, relaunches MainActivity, kills the old pid, exits itself.
+     `MainApplication.onCreate` guards heavy init to the main process. The old AlarmManager
+     restart is gone. Verified toggle on AND off on Samsung + Pixel/GrapheneOS — app returns to
+     the FOREGROUND every time, correct variant loads, node auto-comes-up; no vanish.
+   - **#60 Settings = 3 blocks**: Node on/off toggle · Private routing toggle (+ live mix pool
+     `N/min`, amber PulseDot short / green healthy) · Identity (editable display name persisted
+     in kv `displayName` → node config; honest "not verified" label; live QR + bundle + copy).
+   - **#30 honest identity-reset copy** (coordinator ask, folded into #60): the confirm dialog,
+     a persistent note under the toggle, and the identity-block note all say switching Private
+     routing gives a NEW identity/QR and contacts must re-add you.
+   - **#56 header**: `λ chat` (no `>`) · node pill (encodes mix: `running + mix`, amber-pulsing
+     when pool<min) → Settings · QR icon (react-native-svg, no vector-icons dep) → bundle. Second
+     row removed; standalone MIX pill folded into the node pill on the main view (kept on inner
+     stack headers). **#55 FAB**: react-native-paper MD3 FAB (emerald, black `+` custom-rendered).
+   - **#54 black system nav bar**: theme-level (`styles.xml` + new `colors.xml`), verified on the
+     Samsung (was white) and Pixel.
+   - **#57 automations**: auto-start the node on launch in the persisted mode (App.tsx →
+     `nodeStore.autoStart`, std fallback via native `getLoadedVariant` if mix persisted but the
+     loaded variant isn't mix); auto-fetch the intro bundle on the `running` event (per-run).
+   - **#58**: removed the ThemeDemo route/screen + dev card.
+   - Full log + walls: `docs/v012-log.md`; evidence `logs/v012-*.png`. Both phones left on the
+     v0.1.2 build in **standard** mode, node auto-started, relay mounted.
+
 Build gotchas that keep mattering: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, node 22 via
 `~/.nvm/versions/node/v22.22.2/bin`, `TMPDIR=/extra/tmp`, bridge rebuilds via
 `scripts/build-bridge.sh` only, `ANDROID_SERIAL`/`adb -s RF8RA0M127K` (a Pixel 10,
