@@ -104,6 +104,50 @@ class ChatRepoTest {
     assertNull(ChatRepo.handleLibEvent(ChatRepo.EVENT_MEMBERS_CHANGED, """{"convoId":"x"}"""))
   }
 
+  // -- groups (M2') ----------------------------------------------------------
+
+  @Test
+  fun createGroupConversationBindsAndSeedsSelf() {
+    val pk = ChatRepo.createGroupConversation("dev team", "grp-lib-id", ADDR)
+    assertEquals(pk, db.convoPkByLibId("grp-lib-id"))
+    assertTrue(db.isGroup(pk))
+    assertEquals("dev team", db.displayNameFor(pk))
+    val roster = JSONArray(db.listGroupMembersJson(pk))
+    assertEquals(1, roster.length())
+    assertEquals(ADDR, roster.getJSONObject(0).getString("address"))
+    assertTrue(roster.getJSONObject(0).getBoolean("isSelf"))
+  }
+
+  @Test
+  fun groupWelcomeConversationStartedMarksGroup() {
+    val out = ChatRepo.handleLibEvent(
+        ChatRepo.EVENT_CONVERSATION_STARTED,
+        """{"convoId":"welcome-id","class":"GroupV2"}""")
+    assertEquals("group_ready", out!!.kind)
+    assertTrue(db.isGroup(db.convoPkByLibId("welcome-id")!!))
+  }
+
+  @Test
+  fun membersChangedOnKnownGroupSurfacesRefresh() {
+    val pk = ChatRepo.createGroupConversation("g", "glib", ADDR)
+    val out = ChatRepo.handleLibEvent(
+        ChatRepo.EVENT_MEMBERS_CHANGED, """{"convoId":"glib"}""")
+    assertNotNull(out)
+    assertEquals("members_changed", out!!.kind)
+    assertEquals(pk, out.convoPk)
+  }
+
+  @Test
+  fun groupInboundKeepsPerMessageSenderAndDoesNotSetConversationAddress() {
+    val pk = ChatRepo.createGroupConversation("g", "glib", ADDR)
+    val out = msgReceived("glib", "hi group", "b".repeat(64))
+    assertEquals(pk, out!!.convoPk)
+    // A group has many senders — the conversation address is never overwritten.
+    assertNull(db.peerAddressOf(pk))
+    val msg = JSONArray(db.listMessagesJson(pk, 0, 10)).getJSONObject(0)
+    assertEquals("b".repeat(64), msg.getString("senderAccount")) // per-message attribution
+  }
+
   @Test
   fun outgoingLifecycle_pendingThenSentOrFailed() {
     val pk = ChatRepo.ensureConversationForAddress(ADDR, "peer")

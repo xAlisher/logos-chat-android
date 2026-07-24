@@ -38,6 +38,12 @@ export interface ConversationRow {
   unread: number;
   lastText: string;
   lastDirection: string;
+  /** True for an MLS (GroupV2) conversation. */
+  isGroup: boolean;
+  /** Group display name (groups only), else null. */
+  groupName: string | null;
+  /** App-side member count (groups only). */
+  memberCount: number;
 }
 
 export interface MessageRow {
@@ -46,6 +52,14 @@ export interface MessageRow {
   text: string;
   at: number; // ms epoch
   status: 'pending' | 'sent' | 'failed' | 'received';
+  /** Directory-verified sender (groups: who sent it), else null. */
+  senderAccount: string | null;
+}
+
+/** A group roster entry (app-side, best-effort). */
+export interface GroupMember {
+  address: string;
+  isSelf: boolean;
 }
 
 interface LogosChatNative {
@@ -60,9 +74,15 @@ interface LogosChatNative {
     peerAddress: string,
     nickname: string | null,
   ): Promise<number>;
-  /** Send into a conversation. Resolves '{"msgPk":n,"status":"sent"|"failed"}'. */
+  /** Send into a conversation (1:1 OR group — same verb). Resolves '{"msgPk":n,"status":…}'. */
   sendMessageTo(convoPk: number, textUtf8: string): Promise<string>;
   retryMessage(msgPk: number): Promise<string>;
+  /** Create an MLS (GroupV2) conversation. Resolves the stable convoPk. */
+  createGroup(name: string, description: string | null): Promise<number>;
+  /** Add a peer (by hex address) to a group. */
+  addGroupMember(convoPk: number, peerAddress: string): Promise<null>;
+  /** Group roster (app-side) as JSON GroupMember[]. */
+  listGroupMembers(convoPk: number): Promise<string>;
   setNickname(convoPk: number, nickname: string): Promise<null>;
   listConversations(): Promise<string>; // JSON ConversationRow[]
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;

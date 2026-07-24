@@ -35,7 +35,10 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // New DB file for the address model — the old ephemeral `logoschat.db`
     // (epochs/sessions/bundles) is abandoned; its identity no longer exists.
     const val DB_NAME = "logoschat_mls.db"
-    const val DB_VERSION = 1
+    // v2 (M2'): MLS groups — is_group + group_name on conversations, a
+    // per-message sender_account (groups have many senders), a group_members
+    // roster table.
+    const val DB_VERSION = 2
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -46,14 +49,24 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              peer_address TEXT,
              lib_convo_id TEXT,
              nickname TEXT,
+             is_group INT DEFAULT 0,
+             group_name TEXT,
              created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
     db.execSQL(
         """CREATE TABLE messages(
              msg_pk INTEGER PRIMARY KEY AUTOINCREMENT,
              convo_pk INT REFERENCES conversations,
              direction TEXT CHECK(direction IN ('in','out')),
-             content TEXT, sent_at INT,
+             content TEXT, sent_at INT, sender_account TEXT,
              status TEXT CHECK(status IN ('pending','sent','failed','received')))""")
+    // Group roster (app-side, best-effort): the creator records itself + each
+    // member it adds. The lib does not expose a roster verb in this wrapper, so
+    // joiner-side enumeration is a follow-up (see docs/m2prime-log.md).
+    db.execSQL(
+        """CREATE TABLE group_members(
+             convo_pk INT REFERENCES conversations,
+             address TEXT, is_self INT DEFAULT 0, added_at INT,
+             PRIMARY KEY(convo_pk, address))""")
     db.execSQL("CREATE INDEX idx_messages_convo ON messages(convo_pk, msg_pk)")
     db.execSQL("CREATE INDEX idx_convo_addr ON conversations(peer_address)")
     db.execSQL("CREATE INDEX idx_convo_lib ON conversations(lib_convo_id)")
@@ -64,6 +77,16 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     while (v < newVersion) {
       v++
       when (v) {
+        2 -> {
+          db.execSQL("ALTER TABLE conversations ADD COLUMN is_group INT DEFAULT 0")
+          db.execSQL("ALTER TABLE conversations ADD COLUMN group_name TEXT")
+          db.execSQL("ALTER TABLE messages ADD COLUMN sender_account TEXT")
+          db.execSQL(
+              """CREATE TABLE group_members(
+                   convo_pk INT REFERENCES conversations,
+                   address TEXT, is_self INT DEFAULT 0, added_at INT,
+                   PRIMARY KEY(convo_pk, address))""")
+        }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
     }
@@ -89,6 +112,8 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       libConvoId: String?,
       nickname: String?,
       createdAt: Long,
+      isGroup: Boolean = false,
+      groupName: String? = null,
   ): Long =
       writableDatabase.insertOrThrow(
           "conversations",
@@ -97,10 +122,62 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
             if (peerAddress != null) put("peer_address", peerAddress) else putNull("peer_address")
             if (libConvoId != null) put("lib_convo_id", libConvoId) else putNull("lib_convo_id")
             if (nickname != null) put("nickname", nickname) else putNull("nickname")
+            put("is_group", if (isGroup) 1 else 0)
+            if (groupName != null) put("group_name", groupName) else putNull("group_name")
             put("created_at", createdAt)
             put("last_message_at", createdAt)
             put("unread", 0)
           })
+
+  /** True if this conversation is an MLS group. */
+  fun isGroup(convoPk: Long): Boolean =
+      readableDatabase
+          .rawQuery("SELECT is_group FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .use { it.moveToFirst() && it.getInt(0) == 1 }
+
+  fun setGroupName(convoPk: Long, name: String) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET group_name=? WHERE convo_pk=?", arrayOf(name, convoPk))
+  }
+
+  /** Mark an existing (inbound-created) conversation as a group. */
+  fun markGroup(convoPk: Long, groupName: String?) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET is_group=1, group_name=COALESCE(?,group_name) WHERE convo_pk=?",
+        arrayOf(groupName, convoPk))
+  }
+
+  // -- group members (app-side roster) ---------------------------------------
+
+  fun addGroupMember(convoPk: Long, address: String, isSelf: Boolean, addedAt: Long) {
+    writableDatabase.execSQL(
+        "INSERT INTO group_members(convo_pk,address,is_self,added_at) VALUES(?,?,?,?) " +
+            "ON CONFLICT(convo_pk,address) DO NOTHING",
+        arrayOf(convoPk, address, if (isSelf) 1 else 0, addedAt))
+  }
+
+  fun listGroupMembersJson(convoPk: Long): String {
+    val arr = JSONArray()
+    readableDatabase
+        .rawQuery(
+            "SELECT address, is_self FROM group_members WHERE convo_pk=? ORDER BY is_self DESC, added_at ASC",
+            arrayOf(convoPk.toString()))
+        .use { cur ->
+          while (cur.moveToNext()) {
+            arr.put(
+                JSONObject().apply {
+                  put("address", cur.getString(0))
+                  put("isSelf", cur.getInt(1) == 1)
+                })
+          }
+        }
+    return arr.toString()
+  }
+
+  fun groupMemberCount(convoPk: Long): Int =
+      readableDatabase
+          .rawQuery("SELECT COUNT(*) FROM group_members WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .use { it.moveToFirst(); it.getInt(0) }
 
   /** convo_pk for a peer address, or null. */
   fun convoPkByAddress(peerAddress: String): Long? =
@@ -185,6 +262,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       content: String,
       sentAt: Long,
       status: String,
+      senderAccount: String? = null,
   ): Long =
       writableDatabase.insertOrThrow(
           "messages",
@@ -195,6 +273,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
             put("content", content)
             put("sent_at", sentAt)
             put("status", status)
+            if (senderAccount != null) put("sender_account", senderAccount) else putNull("sender_account")
           })
 
   fun setMessageStatus(msgPk: Long, status: String) {
@@ -212,14 +291,16 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
 
   // -- query surface for JS --------------------------------------------------
 
-  /** Display label: nickname, else short address, else "peer #pk". For notifications. */
+  /** Display label: group name, else nickname, else short address, else "peer #pk". */
   fun displayNameFor(convoPk: Long): String? =
       readableDatabase
           .rawQuery(
-              "SELECT nickname, peer_address FROM conversations WHERE convo_pk=?",
+              "SELECT nickname, peer_address, group_name FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use { cur ->
             if (!cur.moveToFirst()) return@use null
+            val group = if (cur.isNull(2)) null else cur.getString(2).ifEmpty { null }
+            if (group != null) return@use group
             val nick = if (cur.isNull(0)) null else cur.getString(0).ifEmpty { null }
             if (nick != null) return@use nick
             val addr = if (cur.isNull(1)) null else cur.getString(1)
@@ -236,7 +317,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                       (SELECT content FROM messages m WHERE m.convo_pk=c.convo_pk
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       (SELECT direction FROM messages m WHERE m.convo_pk=c.convo_pk
-                         ORDER BY m.msg_pk DESC LIMIT 1)
+                         ORDER BY m.msg_pk DESC LIMIT 1),
+                      c.is_group, c.group_name,
+                      (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk)
                FROM conversations c
                ORDER BY c.last_message_at DESC""",
             null)
@@ -253,6 +336,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("unread", cur.getInt(6))
                   put("lastText", if (cur.isNull(7)) "" else cur.getString(7))
                   put("lastDirection", if (cur.isNull(8)) "" else cur.getString(8))
+                  put("isGroup", cur.getInt(9) == 1)
+                  if (cur.isNull(10)) put("groupName", JSONObject.NULL) else put("groupName", cur.getString(10))
+                  put("memberCount", cur.getInt(11))
                 })
           }
         }
@@ -268,7 +354,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         else arrayOf(convoPk.toString())
     readableDatabase
         .rawQuery(
-            "SELECT msg_pk, direction, content, sent_at, status FROM messages WHERE $where ORDER BY msg_pk DESC LIMIT $limit",
+            "SELECT msg_pk, direction, content, sent_at, status, sender_account FROM messages WHERE $where ORDER BY msg_pk DESC LIMIT $limit",
             args)
         .use { cur ->
           while (cur.moveToNext()) {
@@ -279,6 +365,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("text", cur.getString(2))
                   put("at", cur.getLong(3))
                   put("status", cur.getString(4))
+                  if (cur.isNull(5)) put("senderAccount", JSONObject.NULL) else put("senderAccount", cur.getString(5))
                 })
           }
         }

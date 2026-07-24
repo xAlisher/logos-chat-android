@@ -21,6 +21,7 @@ import {ErrorToast} from '../components/ErrorToast';
 import {TrashIcon} from '../components/TrashIcon';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import type {Message} from '../stores/chatStore';
+import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
 
@@ -33,11 +34,23 @@ function formatTime(at: number): string {
   ).padStart(2, '0')}`;
 }
 
-function Bubble({msg, onRetry}: {msg: Message; onRetry: () => void}) {
+function Bubble({
+  msg,
+  isGroup,
+  onRetry,
+}: {
+  msg: Message;
+  isGroup: boolean;
+  onRetry: () => void;
+}) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
+  // In a group, label incoming bubbles with the directory-verified sender.
+  const senderLabel =
+    isGroup && !own && msg.senderAccount ? shortAddress(msg.senderAccount) : null;
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
+      {senderLabel != null && <Text style={styles.sender}>{senderLabel}</Text>}
       <Pressable
         disabled={!failed}
         onPress={onRetry}
@@ -102,16 +115,28 @@ export function ChatScreen() {
     ]);
   }, [remove, convoPk, navigation]);
 
+  const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
+
   useEffect(() => {
     navigation.setOptions({
       title: convo != null ? convoDisplayName(convo) : ' ',
       headerRight: () => (
-        <Pressable onPress={onTrash} hitSlop={10} testID="chat-delete">
-          <TrashIcon size={22} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          {isGroup && (
+            <Pressable
+              onPress={() => navigation.navigate('GroupInfo', {convoPk})}
+              hitSlop={10}
+              testID="group-info">
+              <Text style={styles.headerIcon}>info</Text>
+            </Pressable>
+          )}
+          <Pressable onPress={onTrash} hitSlop={10} testID="chat-delete">
+            <TrashIcon size={22} />
+          </Pressable>
+        </View>
       ),
     });
-  }, [navigation, convo, onTrash]);
+  }, [navigation, convo, onTrash, isGroup, convoPk]);
 
   const running = nodeStatus === 'running';
   const composerEnabled = running;
@@ -142,7 +167,11 @@ export function ChatScreen() {
         data={messages}
         keyExtractor={m => String(m.msgPk)}
         renderItem={({item}) => (
-          <Bubble msg={item} onRetry={() => retry(convoPk, item.msgPk)} />
+          <Bubble
+            msg={item}
+            isGroup={isGroup}
+            onRetry={() => retry(convoPk, item.msgPk)}
+          />
         )}
         contentContainerStyle={styles.list}
       />
@@ -187,7 +216,10 @@ const styles = StyleSheet.create({
   bubbleOwn: {backgroundColor: colors.accent},
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
+  sender: {...type.caption, color: colors.accent, marginBottom: 2},
   time: {...type.caption, color: colors.textFaint},
+  headerActions: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg},
+  headerIcon: {...type.label, color: colors.accent},
   composer: {
     backgroundColor: colors.pane,
     borderTopColor: colors.border,

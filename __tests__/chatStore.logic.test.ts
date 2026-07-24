@@ -15,6 +15,9 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     unread: 0,
     lastText: '',
     lastDirection: '',
+    isGroup: false,
+    groupName: null,
+    memberCount: 0,
     ...over,
   };
 }
@@ -48,5 +51,25 @@ describe('convoDisplayName', () => {
 
   it('labels an address-less conversation as peer #pk', () => {
     expect(convoDisplayName(row({convoPk: 7}))).toBe('peer #7');
+  });
+
+  it('uses the group name for a group', () => {
+    expect(
+      convoDisplayName(row({isGroup: true, groupName: 'dev team'})),
+    ).toBe('dev team');
+  });
+
+  it('labels an unnamed group as group #pk', () => {
+    expect(
+      convoDisplayName(row({convoPk: 9, isGroup: true, groupName: null})),
+    ).toBe('group #9');
+  });
+
+  it('a group ignores any peer address / nickname fallback', () => {
+    expect(
+      convoDisplayName(
+        row({convoPk: 3, isGroup: true, groupName: 'g', peerAddress: ADDR, nickname: 'x'}),
+      ),
+    ).toBe('g');
   });
 });

@@ -14,11 +14,17 @@ export function sortedConversations(
 }
 
 /**
- * Display name with fallbacks: the user's nickname, else the short peer address,
- * else "peer #pk" for a conversation whose address isn't known yet (an inbound
- * conversation from an as-yet-unverified sender).
+ * Display name with fallbacks: for a group, the group name (else "group #pk");
+ * for a 1:1, the user's nickname, else the short peer address, else "peer #pk"
+ * (an inbound conversation from an as-yet-unverified sender).
  */
 export function convoDisplayName(c: ConversationRow): string {
+  if (c.isGroup) {
+    if (c.groupName != null && c.groupName.length > 0) {
+      return c.groupName;
+    }
+    return `group #${c.convoPk}`;
+  }
   if (c.nickname != null && c.nickname.length > 0) {
     return c.nickname;
   }

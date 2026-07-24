@@ -92,25 +92,43 @@ object ChatRepo {
   fun handleLibEvent(eventType: Int, json: String): Outcome? {
     val evt = try { JSONObject(json) } catch (_: Exception) { return null }
     return when (eventType) {
-      EVENT_CONVERSATION_STARTED -> onConversationStarted(evt.optString("convoId"))
+      EVENT_CONVERSATION_STARTED ->
+          onConversationStarted(evt.optString("convoId"), evt.optString("class"))
       EVENT_MESSAGE_RECEIVED ->
           onMessageReceived(
               evt.optString("convoId"),
               evt.optString("content"),
               if (evt.isNull("senderAccount")) null else evt.optString("senderAccount"))
-      else -> null // members_changed (group, M2'), inbound_error → no durable state
+      EVENT_MEMBERS_CHANGED -> onMembersChanged(evt.optString("convoId"))
+      else -> null // inbound_error → no durable state
     }
   }
 
-  /** A peer opened a conversation with us — ensure a placeholder row exists. */
-  private fun onConversationStarted(libConvoId: String): Outcome? {
+  /** A conversation started — 1:1 or an MLS group Welcome. Ensure a row exists. */
+  private fun onConversationStarted(libConvoId: String, klass: String?): Outcome? {
     if (libConvoId.isEmpty()) return null
     val d = requireDb()
-    if (d.convoPkByLibId(libConvoId) != null) return null // already known
+    val group = isGroupClass(klass)
+    val existing = d.convoPkByLibId(libConvoId)
+    if (existing != null) {
+      // Learned it's a group after the fact (e.g. inbound message arrived first).
+      if (group && !d.isGroup(existing)) d.markGroup(existing, null)
+      return null
+    }
     val now = System.currentTimeMillis()
-    val convoPk = d.insertConversation(null, libConvoId, null, now)
-    Log.i(TAG, "conversation started (inbound): convo=$convoPk lib=$libConvoId")
-    return Outcome("conversation_ready", convoPk, "in", "")
+    val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = group, groupName = null)
+    Log.i(TAG, "conversation started (inbound): convo=$convoPk lib=$libConvoId class=${klass ?: "?"}")
+    return Outcome(if (group) "group_ready" else "conversation_ready", convoPk, "in", "")
+  }
+
+  /** Group roster changed (member add/remove commit). Surface a UI refresh. */
+  private fun onMembersChanged(libConvoId: String): Outcome? {
+    if (libConvoId.isEmpty()) return null
+    val d = requireDb()
+    val convoPk = d.convoPkByLibId(libConvoId) ?: return null
+    if (!d.isGroup(convoPk)) d.markGroup(convoPk, null)
+    Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId")
+    return Outcome("members_changed", convoPk, "in", "")
   }
 
   private fun onMessageReceived(libConvoId: String, content: String, senderAccount: String?): Outcome? {
@@ -118,7 +136,7 @@ object ChatRepo {
     val d = requireDb()
     val now = System.currentTimeMillis()
     // Bind convoId -> conversation. Prefer the lib id; fall back to the peer
-    // address (the conversation we created outbound may carry a different local id).
+    // address (a 1:1 we created outbound may carry a different local id).
     var convoPk = d.convoPkByLibId(libConvoId)
     if (convoPk == null && senderAccount != null) {
       convoPk = d.convoPkByAddress(senderAccount)
@@ -127,13 +145,39 @@ object ChatRepo {
     if (convoPk == null) {
       convoPk = d.insertConversation(senderAccount, libConvoId, null, now)
       Log.i(TAG, "new inbound conversation convo=$convoPk lib=$libConvoId sender=${senderAccount ?: "?"}")
-    } else if (senderAccount != null && d.peerAddressOf(convoPk) == null) {
-      d.setPeerAddress(convoPk, senderAccount) // learn the address from the first verified sender
+    } else if (senderAccount != null && !d.isGroup(convoPk) && d.peerAddressOf(convoPk) == null) {
+      // 1:1 only: learn the peer address from the first verified sender. In a
+      // group there are many senders, so we never overwrite the conversation's
+      // address — attribution lives per-message (sender_account).
+      d.setPeerAddress(convoPk, senderAccount)
     }
-    val msgPk = d.insertMessage(convoPk, "in", content, now, "received")
+    val msgPk = d.insertMessage(convoPk, "in", content, now, "received", senderAccount)
     d.touchConversation(convoPk, now)
     if (activeConvoPk != convoPk) d.bumpUnread(convoPk)
     Log.i(TAG, "persisted inbound msg_pk=$msgPk convo=$convoPk (${content.length} chars) BEFORE forward")
     return Outcome("message", convoPk, "in", content)
+  }
+
+  // -- groups (M2') ----------------------------------------------------------
+
+  private fun isGroupClass(klass: String?): Boolean =
+      klass != null && (klass.startsWith("Group") || klass.contains("group", ignoreCase = true))
+
+  /**
+   * Record a group we just created via the lib. Inserts a bound group
+   * conversation row and seeds the roster with ourselves. Returns convoPk.
+   */
+  fun createGroupConversation(name: String, libConvoId: String, selfAddress: String?): Long {
+    val d = requireDb()
+    val now = System.currentTimeMillis()
+    val convoPk = d.insertConversation(null, libConvoId, null, now, isGroup = true, groupName = name)
+    if (!selfAddress.isNullOrBlank()) d.addGroupMember(convoPk, selfAddress, isSelf = true, addedAt = now)
+    Log.i(TAG, "created group convo=$convoPk lib=$libConvoId name=$name")
+    return convoPk
+  }
+
+  /** Record a member we added to a group (app-side roster). */
+  fun recordGroupMember(convoPk: Long, address: String) {
+    requireDb().addGroupMember(convoPk, address, isSelf = false, addedAt = System.currentTimeMillis())
   }
 }

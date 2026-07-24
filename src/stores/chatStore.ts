@@ -6,23 +6,31 @@
 // peer ADDRESS native-side; the UI works in convoPks.
 import {create} from 'zustand';
 import LogosChat, {addLogosChatListener} from '../native/LogosChat';
-import type {ConversationRow, MessageRow} from '../native/LogosChat';
+import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
 import {useNodeStore} from './nodeStore';
 
 export type {ConversationRow as Conversation, MessageRow as Message};
+export type {GroupMember} from '../native/LogosChat';
 
 interface ChatState {
   conversations: Record<number, ConversationRow>;
   messages: Record<number, MessageRow[]>;
+  members: Record<number, GroupMember[]>;
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
   loadMessages: (convoPk: number) => Promise<void>;
-  /** Create (or reuse) a conversation with a peer address. Resolves convoPk. */
+  /** Create (or reuse) a 1:1 conversation with a peer address. Resolves convoPk. */
   startConversation: (
     peerAddress: string,
     opts?: {nickname?: string},
   ) => Promise<number>;
-  /** Send a message into a conversation. */
+  /** Create an MLS group (name + optional description). Resolves convoPk. */
+  createGroup: (name: string, description?: string) => Promise<number>;
+  /** Add a peer (by hex address) to a group. */
+  addMember: (convoPk: number, address: string) => Promise<void>;
+  /** Load a group's roster (app-side, best-effort). */
+  loadMembers: (convoPk: number) => Promise<void>;
+  /** Send a message into a conversation (1:1 or group). */
   send: (convoPk: number, text: string) => Promise<void>;
   /** Re-send a failed outbound message. */
   retry: (convoPk: number, msgPk: number) => Promise<void>;
@@ -43,6 +51,7 @@ const PAGE = 200;
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: {},
   messages: {},
+  members: {},
   activeConvoPk: null,
 
   refreshConversations: async () => {
@@ -73,6 +82,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return convoPk;
   },
 
+  createGroup: async (name, description) => {
+    const convoPk = await LogosChat.createGroup(name, description ?? null);
+    await get().refreshConversations();
+    await get().loadMessages(convoPk);
+    await get().loadMembers(convoPk);
+    return convoPk;
+  },
+
+  addMember: async (convoPk, address) => {
+    await LogosChat.addGroupMember(convoPk, address);
+    await get().loadMembers(convoPk);
+    await get().refreshConversations();
+  },
+
+  loadMembers: async (convoPk: number) => {
+    const rows: GroupMember[] = JSON.parse(
+      await LogosChat.listGroupMembers(convoPk),
+    );
+    set(s => ({members: {...s.members, [convoPk]: rows}}));
+  },
+
   send: async (convoPk: number, text: string) => {
     // Optimistic pending bubble; the durable row lands native-side and the
     // reload below replaces this.
@@ -82,6 +112,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       text,
       at: Date.now(),
       status: 'pending',
+      senderAccount: null,
     };
     set(s => ({
       messages: {...s.messages, [convoPk]: [temp, ...(s.messages[convoPk] ?? [])]},
@@ -139,7 +170,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete conversations[convoPk];
       const messages = {...s.messages};
       delete messages[convoPk];
-      return {conversations, messages};
+      const members = {...s.members};
+      delete members[convoPk];
+      return {conversations, messages, members};
     });
   },
 }));

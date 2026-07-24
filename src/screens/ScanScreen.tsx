@@ -12,7 +12,8 @@ import {
   StyleSheet,
   Vibration,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
+import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {
   Camera,
@@ -24,6 +25,8 @@ import {colors, type, spacing, radii} from '../theme';
 import {isAddress, normalizeAddress} from '../native/LogosChat';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {ActionButton} from '../components/ActionButton';
+import {useChatStore} from '../stores/chatStore';
+import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -32,6 +35,10 @@ const BRACKET = 240;
 
 export function ScanScreen() {
   const navigation = useNavigation<Nav>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Scan'>>();
+  const mode = route.params?.mode ?? 'newChat';
+  const groupConvoPk = route.params?.groupConvoPk;
+  const addMember = useChatStore(s => s.addMember);
   const device = useCameraDevice('back');
   const {hasPermission, requestPermission} = useCameraPermission();
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -47,11 +54,19 @@ export function ScanScreen() {
       }
       acceptedRef.current = true;
       Vibration.vibrate(60); // valid-scan haptic
-      navigation.replace('NewConversation', {
-        address: normalizeAddress(address),
-      });
+      const addr = normalizeAddress(address);
+      if (mode === 'addMember' && groupConvoPk != null) {
+        addMember(groupConvoPk, addr)
+          .then(() => navigation.goBack())
+          .catch(e => {
+            acceptedRef.current = false;
+            useNodeStore.setState({error: `add member failed: ${e?.message ?? e}`});
+          });
+        return;
+      }
+      navigation.replace('NewConversation', {address: addr});
     },
-    [navigation],
+    [navigation, mode, groupConvoPk, addMember],
   );
 
   const codeScanner = useCodeScanner({

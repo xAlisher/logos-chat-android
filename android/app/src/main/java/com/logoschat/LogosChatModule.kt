@@ -319,6 +319,71 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  // -- groups (M2') ----------------------------------------------------------
+
+  /**
+   * Create an MLS (GroupV2) conversation. Binds the durable convoPk to the lib
+   * group id and seeds the roster with ourselves. Resolves the stable convoPk.
+   */
+  @ReactMethod
+  fun createGroup(name: String, description: String?, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("create_group", "node not started")
+        return@execute
+      }
+      try {
+        val libConvoId = NodeBridge.chatCreateGroup(c, name, description ?: "")
+        if (libConvoId == null) {
+          promise.reject("create_group", NodeBridge.chatLastError())
+          return@execute
+        }
+        val convoPk = ChatRepo.createGroupConversation(name, libConvoId, NodeRuntime.address)
+        promise.resolve(convoPk.toDouble())
+      } catch (t: Throwable) {
+        promise.reject("create_group", t)
+      }
+    }
+  }
+
+  /** Add a peer (by hex address) to a group. Records the member app-side. */
+  @ReactMethod
+  fun addGroupMember(convoPk: Double, peerAddress: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("add_group_member", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      val libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        promise.reject("add_group_member", "group not bound")
+        return@execute
+      }
+      val addr = peerAddress.trim().lowercase()
+      val rc = NodeBridge.chatAddGroupMember(c, libConvoId, addr)
+      if (rc != 0) {
+        promise.reject("add_group_member", NodeBridge.chatLastError())
+        return@execute
+      }
+      ChatRepo.recordGroupMember(pk, addr)
+      promise.resolve(null)
+    }
+  }
+
+  /** Group roster (app-side, best-effort) as JSON: [{address,isSelf},…]. */
+  @ReactMethod
+  fun listGroupMembers(convoPk: Double, promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().listGroupMembersJson(convoPk.toLong()))
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   @ReactMethod
   fun setNickname(convoPk: Double, nickname: String, promise: Promise) {
     try {

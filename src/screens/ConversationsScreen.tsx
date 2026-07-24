@@ -55,11 +55,16 @@ function ConversationRow({
       testID={`convo-${convo.convoPk}`}>
       <View style={styles.dot} />
       <View style={styles.rowBody}>
-        <Text style={[type.title, {color: colors.text}]} numberOfLines={1}>
-          {convoDisplayName(convo)}
-        </Text>
+        <View style={styles.titleRow}>
+          {convo.isGroup && <Text style={styles.groupTag}>group</Text>}
+          <Text
+            style={[type.title, {color: colors.text, flexShrink: 1}]}
+            numberOfLines={1}>
+            {convoDisplayName(convo)}
+          </Text>
+        </View>
         <Text style={styles.preview} numberOfLines={1}>
-          {convo.lastText || 'new conversation'}
+          {convo.lastText || (convo.isGroup ? 'new group' : 'new conversation')}
         </Text>
       </View>
       <View style={styles.rowRight}>
@@ -136,6 +141,7 @@ export function ConversationsScreen() {
                   navigation.navigate('Chat', {
                     convoPk: item.convoPk,
                     convoName: convoDisplayName(item),
+                    isGroup: item.isGroup,
                   })
                 }
               />
@@ -144,6 +150,17 @@ export function ConversationsScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
+      {/* new-group FAB (emerald outline), stacked above the new-chat FAB. */}
+      <Pressable
+        testID="new-group"
+        style={[styles.groupFab, {bottom: spacing.lg + insets.bottom + 68}]}
+        onPress={() => navigation.navigate('NewGroup')}>
+        <View style={styles.groupGlyph}>
+          <View style={styles.groupHead} />
+          <View style={[styles.groupHead, styles.groupHead2]} />
+          <View style={styles.groupBody} />
+        </View>
+      </Pressable>
       {/* new-conversation FAB (emerald, black +), bottom-right. */}
       <Pressable
         testID="new-conversation"
@@ -202,6 +219,50 @@ const styles = StyleSheet.create({
     lineHeight: 34,
     includeFontPadding: false,
     textAlign: 'center',
+  },
+  groupFab: {
+    position: 'absolute',
+    right: spacing.lg + 6,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.panel,
+    borderColor: colors.accent,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+  },
+  groupGlyph: {width: 24, height: 20, alignItems: 'center', justifyContent: 'center'},
+  groupHead: {
+    position: 'absolute',
+    top: 2,
+    left: 5,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.accent,
+  },
+  groupHead2: {left: 13},
+  groupBody: {
+    position: 'absolute',
+    bottom: 2,
+    width: 18,
+    height: 8,
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 6,
+    backgroundColor: colors.accent,
+  },
+  titleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  groupTag: {
+    ...type.caption,
+    color: colors.accent,
+    borderColor: colors.accent,
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    overflow: 'hidden',
   },
   row: {
     height: layout.conversationRowHeight,

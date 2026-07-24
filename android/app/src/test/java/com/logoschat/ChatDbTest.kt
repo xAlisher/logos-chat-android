@@ -144,4 +144,57 @@ class ChatDbTest {
     val unnamed = db.insertConversation(ADDR2, "l2", null, 1000)
     assertEquals(ADDR2.substring(0, 8), db.displayNameFor(unnamed))
   }
+
+  // -- groups (M2') ----------------------------------------------------------
+
+  @Test
+  fun schemaHasGroupTablesAndColumns() {
+    val tables = mutableSetOf<String>()
+    db.readableDatabase
+        .rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null)
+        .use { c -> while (c.moveToNext()) tables.add(c.getString(0)) }
+    assertTrue("missing group_members table", "group_members" in tables)
+    assertEquals(2, db.readableDatabase.version)
+  }
+
+  @Test
+  fun groupConversationSurfacesIsGroupAndName() {
+    val g = db.insertConversation(null, "glib", null, 1000, isGroup = true, groupName = "dev team")
+    assertTrue(db.isGroup(g))
+    assertEquals("dev team", db.displayNameFor(g)) // group name wins
+    val row = JSONArray(db.listConversationsJson()).getJSONObject(0)
+    assertTrue(row.getBoolean("isGroup"))
+    assertEquals("dev team", row.getString("groupName"))
+  }
+
+  @Test
+  fun groupMemberRosterDedupesAndCounts() {
+    val g = db.insertConversation(null, "glib", null, 1000, isGroup = true, groupName = "g")
+    db.addGroupMember(g, ADDR, isSelf = true, addedAt = 1000)
+    db.addGroupMember(g, ADDR2, isSelf = false, addedAt = 1001)
+    db.addGroupMember(g, ADDR2, isSelf = false, addedAt = 1002) // dup → ignored
+    assertEquals(2, db.groupMemberCount(g))
+    val roster = JSONArray(db.listGroupMembersJson(g))
+    assertEquals(2, roster.length())
+    assertTrue(roster.getJSONObject(0).getBoolean("isSelf")) // self first
+    val row = JSONArray(db.listConversationsJson()).getJSONObject(0)
+    assertEquals(2, row.getInt("memberCount"))
+  }
+
+  @Test
+  fun markGroupPromotesInboundConversation() {
+    val pk = db.insertConversation(null, "inbound-glib", null, 1000)
+    assertFalse(db.isGroup(pk))
+    db.markGroup(pk, "welcomed")
+    assertTrue(db.isGroup(pk))
+    assertEquals("welcomed", db.displayNameFor(pk))
+  }
+
+  @Test
+  fun messageStoresSenderAccountForGroupAttribution() {
+    val g = db.insertConversation(null, "glib", null, 1000, isGroup = true, groupName = "g")
+    db.insertMessage(g, "in", "hi all", 1001, "received", ADDR2)
+    val msg = JSONArray(db.listMessagesJson(g, 0, 10)).getJSONObject(0)
+    assertEquals(ADDR2, msg.getString("senderAccount"))
+  }
 }
