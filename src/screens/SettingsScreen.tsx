@@ -23,6 +23,7 @@ import {colors, type, spacing, radii} from '../theme';
 import {StatusPill} from '../components/StatusPill';
 import {PulseDot} from '../components/PulseDot';
 import {QrCard} from '../components/QrCard';
+import {ActionButton} from '../components/ActionButton';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
@@ -33,6 +34,7 @@ import {MIX_UI_ENABLED} from '../config/features';
 export function SettingsScreen() {
   const status = useNodeStore(s => s.status);
   const introBundle = useNodeStore(s => s.introBundle);
+  const fetchIntroBundle = useNodeStore(s => s.fetchIntroBundle);
   const error = useNodeStore(s => s.error);
   const start = useNodeStore(s => s.start);
   const stop = useNodeStore(s => s.stop);
@@ -208,7 +210,7 @@ export function SettingsScreen() {
             returnKeyType="done"
           />
           <Text style={[type.label, {color: colors.textFaint}]}>
-            a label others see — not verified.
+            a private label for yourself — not shared with peers.
           </Text>
 
           {running && introBundle != null ? (
@@ -219,16 +221,24 @@ export function SettingsScreen() {
               <Text style={styles.bundle} selectable>
                 {introBundle}
               </Text>
-              <Pressable
-                testID="copy-bundle"
-                style={styles.btn}
-                onPress={() => {
-                  Clipboard.setString(introBundle);
-                  setCopied(true);
-                }}>
-                <Text style={[type.title, {color: colors.onAccent}]}>copy</Text>
-              </Pressable>
-              {copied && <Text style={styles.copiedFlash}>copied</Text>}
+              <View style={styles.bundleActions}>
+                <ActionButton
+                  testID="copy-bundle"
+                  label={copied ? 'copied' : 'copy'}
+                  variant="primary"
+                  style={{flex: 1}}
+                  onPress={() => {
+                    Clipboard.setString(introBundle);
+                    setCopied(true);
+                  }}
+                />
+                <ActionButton
+                  testID="refresh-bundle"
+                  label="refresh"
+                  variant="secondary"
+                  onPress={() => fetchIntroBundle()}
+                />
+              </View>
             </>
           ) : (
             <Text style={[type.label, {color: colors.textDim}]}>
@@ -281,6 +291,12 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   qrWrap: {alignItems: 'center', paddingVertical: spacing.sm},
+  bundleActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
   btn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
