@@ -4,6 +4,9 @@
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <!-- #77: dark window background so cold-start / the ProcessPhoenix mode-switch
+             restart show the canvas, not a white flash, before RN paints. -->
+        <item name="android:windowBackground">@color/canvas</item>
         <!-- #54: force the system bars to the theme canvas (#0A0A0A) with LIGHT icons
              on every device (Samsung rendered the nav bar white). windowLight*Bar =
              false keeps the icons light against the black bars. -->

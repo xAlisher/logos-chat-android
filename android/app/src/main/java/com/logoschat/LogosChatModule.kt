@@ -240,6 +240,18 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     promise.resolve(NodeBridge.loadedVariant)
   }
 
+  /** Delete a conversation and all its messages + sessions (#71/#72). */
+  @ReactMethod
+  fun deleteConversation(convoPk: Double, promise: Promise) {
+    try {
+      ChatRepo.requireDb().deleteConversation(convoPk.toLong())
+      if (ChatRepo.activeConvoPk == convoPk.toLong()) ChatRepo.activeConvoPk = 0L
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /**
    * Latest mix status (#31): {"mixEnabled":bool,"mixReady":bool,"mixPoolSize":int,
    * "minPoolSize":int}. Returns the cached value from the native poller; when the

@@ -4,7 +4,6 @@
 // pending inbound awaiting attribution (#24). Unread badge (#EF4444, capped 99+).
 import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
-import {FAB} from 'react-native-paper';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
@@ -13,6 +12,7 @@ import {Brand} from '../components/Brand';
 import {StatusPill} from '../components/StatusPill';
 import {QrIcon} from '../components/QrIcon';
 import {UnreadBadge} from '../components/UnreadBadge';
+import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
@@ -66,7 +66,15 @@ function ConversationRow({
         ]}
       />
       <View style={styles.rowBody}>
-        <Text style={[type.title, {color: colors.text}]} numberOfLines={1}>
+        <Text
+          style={[
+            type.title,
+            // #74 — any EXPIRED session reads gray (dead session, needs
+            // re-introduction) — including an unattributed/pending one from a
+            // previous epoch. A live pending convo (current epoch) stays white.
+            {color: convo.expired ? colors.textDim : colors.text},
+          ]}
+          numberOfLines={1}>
           {convoDisplayName(convo)}
         </Text>
         <Text style={styles.preview} numberOfLines={1}>
@@ -92,8 +100,19 @@ export function ConversationsScreen() {
   const mix = useSettingsStore(s => s.mix);
   const conversations = useChatStore(s => s.conversations);
   const refreshConversations = useChatStore(s => s.refreshConversations);
+  const remove = useChatStore(s => s.remove);
   const list = sortedConversations(conversations);
   const mixShort = !mix.mixReady || mix.mixPoolSize < mix.minPoolSize;
+
+  // Swipe commits on release (SwipeRow handles the gesture + haptic) — no dialog.
+  const onDeleteConvo = useCallback(
+    (convoPk: number) => {
+      remove(convoPk).catch(e =>
+        useNodeStore.setState({error: `delete failed: ${e?.message ?? e}`}),
+      );
+    },
+    [remove],
+  );
 
   // DB is the source of truth — re-query whenever the list gains focus.
   useFocusEffect(
@@ -104,11 +123,12 @@ export function ConversationsScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
-      {/* #56 — single-row header: [logo] · [node pill → Settings] · [QR → bundle].
-          The node pill encodes mix state; the old second row is gone. */}
+      {/* #56/#70 — single-row header: [logo] · [node pill → Settings] · [QR → bundle].
+          The pill is ABSOLUTELY centered (independent of logo/QR widths) so it sits
+          dead-center of the bar; logo left and QR right sit in the flow. */}
       <View style={styles.header}>
         <Brand />
-        <View style={styles.headerRight}>
+        <View style={styles.pillCenter} pointerEvents="box-none">
           <Pressable
             testID="node-pill"
             hitSlop={8}
@@ -119,14 +139,14 @@ export function ConversationsScreen() {
               mixShort={mixShort}
             />
           </Pressable>
-          <Pressable
-            style={styles.qrBtn}
-            testID="open-intro-bundle"
-            hitSlop={8}
-            onPress={() => navigation.navigate('IntroBundle')}>
-            <QrIcon size={24} />
-          </Pressable>
         </View>
+        <Pressable
+          style={styles.qrBtn}
+          testID="open-intro-bundle"
+          hitSlop={8}
+          onPress={() => navigation.navigate('IntroBundle')}>
+          <QrIcon size={24} />
+        </Pressable>
       </View>
       {list.length === 0 ? (
         <View style={styles.empty}>
@@ -140,31 +160,30 @@ export function ConversationsScreen() {
           keyExtractor={c => String(c.convoPk)}
           contentContainerStyle={styles.listContent}
           renderItem={({item}) => (
-            <ConversationRow
-              convo={item}
-              onPress={() =>
-                navigation.navigate('Chat', {
-                  convoPk: item.convoPk,
-                  convoName: convoDisplayName(item),
-                })
-              }
-            />
+            <SwipeRow onDelete={() => onDeleteConvo(item.convoPk)}>
+              <ConversationRow
+                convo={item}
+                onPress={() =>
+                  navigation.navigate('Chat', {
+                    convoPk: item.convoPk,
+                    convoName: convoDisplayName(item),
+                  })
+                }
+              />
+            </SwipeRow>
           )}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
-      {/* #55 — new-conversation FAB (MD3, emerald, black +), bottom-right. Opens the
-          scan+paste flow. Custom icon avoids the vector-icons dependency. */}
-      <FAB
+      {/* #55/#73 — new-conversation FAB (emerald, black +), bottom-right. Custom
+          circular button so the + is perfectly flex-centered (paper's FAB icon
+          slot left it optically off). */}
+      <Pressable
         testID="new-conversation"
         style={styles.fab}
-        color={colors.onAccent}
-        customSize={56}
-        icon={({size, color}) => (
-          <Text style={{fontSize: 28, lineHeight: 30, color}}>+</Text>
-        )}
-        onPress={() => navigation.navigate('Scan')}
-      />
+        onPress={() => navigation.navigate('Scan')}>
+        <Text style={styles.fabPlus}>+</Text>
+      </Pressable>
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
   );
@@ -182,7 +201,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
-  headerRight: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  pillCenter: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   qrBtn: {
     minHeight: layout.minTouchTarget,
     minWidth: layout.minTouchTarget,
@@ -194,8 +221,20 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.lg,
     bottom: spacing.lg,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: colors.accent,
-    borderRadius: radii.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+  },
+  fabPlus: {
+    color: colors.onAccent,
+    fontSize: 32,
+    lineHeight: 34,
+    includeFontPadding: false,
+    textAlign: 'center',
   },
   row: {
     height: layout.conversationRowHeight,

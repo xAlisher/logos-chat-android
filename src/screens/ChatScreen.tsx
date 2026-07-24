@@ -10,6 +10,7 @@
 //  - pending inbound (#24): attribution bar → AttachContact.
 import React, {useCallback, useEffect, useState} from 'react';
 import {
+  Alert,
   Text,
   TextInput,
   View,
@@ -24,6 +25,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
+import {TrashIcon} from '../components/TrashIcon';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import type {Message} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
@@ -96,11 +98,33 @@ export function ChatScreen() {
     }, [convoPk, setActive, loadMessages]),
   );
 
+  const remove = useChatStore(s => s.remove);
+  const onTrash = useCallback(() => {
+    Alert.alert('Delete conversation', 'Delete this conversation and all its messages?', [
+      {text: 'Cancel', style: 'cancel'},
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          remove(convoPk)
+            .then(() => navigation.goBack())
+            .catch(e => useNodeStore.setState({error: `delete failed: ${e?.message ?? e}`}));
+        },
+      },
+    ]);
+  }, [remove, convoPk, navigation]);
+
   useEffect(() => {
-    if (convo != null) {
-      navigation.setOptions({title: convoDisplayName(convo)});
-    }
-  }, [navigation, convo]);
+    navigation.setOptions({
+      title: convo != null ? convoDisplayName(convo) : ' ',
+      // #72 — trash top-right: clear the conversation + remove it from the list.
+      headerRight: () => (
+        <Pressable onPress={onTrash} hitSlop={10} testID="chat-delete">
+          <TrashIcon size={22} />
+        </Pressable>
+      ),
+    });
+  }, [navigation, convo, onTrash]);
 
   const running = nodeStatus === 'running';
   const expired = convo?.expired ?? true;

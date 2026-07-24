@@ -4,7 +4,6 @@ import React from 'react';
 import {NavigationContainer, DarkTheme} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {colors, type} from '../theme';
-import {MixPill} from '../components/MixPill';
 import type {RootStackParamList} from './types';
 import {ConversationsScreen} from '../screens/ConversationsScreen';
 import {ChatScreen} from '../screens/ChatScreen';
@@ -40,9 +39,9 @@ export function RootNavigator() {
           headerTitleStyle: {...type.title, color: colors.text},
           headerShadowVisible: false,
           contentStyle: {backgroundColor: colors.canvas},
-          // MIX pill on the header of every stack screen while Private routing
-          // is on (#31) — the forgotten-global-mode guard. Renders null when off.
-          headerRight: () => <MixPill />,
+          // #76: the old standalone MIX pill headerRight is removed everywhere —
+          // mix state now lives in the Conversations node pill (#56) + the
+          // Settings Private-routing block (#60).
         }}>
         <Stack.Screen
           name="Conversations"

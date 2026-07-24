@@ -101,6 +101,7 @@ interface LogosChatNative {
   setActiveConversation(convoPk: number): void;
   nameConversation(convoPk: number, name: string): Promise<null>;
   mergeConversation(pendingConvoPk: number, targetConvoPk: number): Promise<null>;
+  deleteConversation(convoPk: number): Promise<null>;
   /** Latest mix status JSON (MixStatus). Cached from the native poller (#31). */
   getMixStatus(): Promise<string>;
   /**

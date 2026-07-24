@@ -42,6 +42,8 @@ interface ChatState {
   nameConversation: (convoPk: number, name: string) => Promise<void>;
   /** Merge a pending inbound conversation into an existing thread (#24). */
   merge: (pendingConvoPk: number, targetConvoPk: number) => Promise<number>;
+  /** Delete a conversation + its messages/sessions and drop it from the list (#71/#72). */
+  remove: (convoPk: number) => Promise<void>;
 }
 
 // Pure view helpers live in conversationView.ts (RN-free, unit-tested #49);
@@ -162,6 +164,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().refreshConversations();
     await get().loadMessages(targetConvoPk);
     return targetConvoPk;
+  },
+
+  remove: async (convoPk: number) => {
+    await LogosChat.deleteConversation(convoPk);
+    set(s => {
+      const conversations = {...s.conversations};
+      delete conversations[convoPk];
+      const messages = {...s.messages};
+      delete messages[convoPk];
+      return {conversations, messages};
+    });
   },
 }));
 

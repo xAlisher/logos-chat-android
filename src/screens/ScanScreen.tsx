@@ -24,6 +24,7 @@ import {
 import {colors, type, spacing, radii} from '../theme';
 import {isIntroBundle} from '../native/LogosChat';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
+import {ActionButton} from '../components/ActionButton';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -185,8 +186,10 @@ export function ScanScreen() {
           />
           {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           <View style={styles.pasteRow}>
-            <Pressable
-              style={styles.useBtn}
+            <ActionButton
+              label="use bundle"
+              variant="primary"
+              style={{flex: 1}}
               testID="paste-bundle-use"
               onPress={() => {
                 if (isIntroBundle(pasteText)) {
@@ -194,19 +197,14 @@ export function ScanScreen() {
                 } else {
                   setInvalid('not an intro bundle');
                 }
-              }}>
-              <Text style={[type.title, {color: colors.onAccent}]}>
-                use bundle
-              </Text>
-            </Pressable>
+              }}
+            />
             {cameraAvailable && (
-              <Pressable
-                style={styles.switchBtn}
-                onPress={() => setPasteMode(false)}>
-                <Text style={[type.label, {color: colors.accent}]}>
-                  back to camera
-                </Text>
-              </Pressable>
+              <ActionButton
+                label="back to camera"
+                variant="secondary"
+                onPress={() => setPasteMode(false)}
+              />
             )}
           </View>
         </View>
