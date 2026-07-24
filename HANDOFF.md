@@ -5,6 +5,43 @@ have everything. Delete/refresh this file as work progresses.
 
 ---
 
+## 🎨 v0.3.0 — Basecamp-orange UI redesign (2026-07-24) ✅ built + on-device verified
+
+17 user-requested changes filed as **#85–#102** and implemented in `7a1fc39` (+ foundation
+`3059600`), built as **v0.3.0 / versionCode 7**, installed + verified on the Samsung.
+Implemented via 7 parallel agents on **disjoint file sets** (theme/stores/nav owned centrally
+first, so no two agents touched the same file).
+
+**Landed & verified:** orange accent `#FF5000` replacing emerald (#98); lucide
+`messages-square` as the brand mark, node-status-tinted, replacing `λ chat` (#90/#100) and as
+launcher/status icon; single `+` Material speed-dial → Contact/Group (#89); contact/group row
+glyphs (#99); tap-title → Contact modal with full hex + Copy + local label (#92) → two-line
+title (#93) → attribution line above incoming bubbles (#94); always-editable composer with
+node-state-coloured send (#101, orange/amber verified); empty-thread composer collapse fixed
+durably (#84); "Add members" rename (#96) + the new **Add Members** screen — inline paste+Add,
+Scan QR, checkbox contact picker, bottom CTA, toast (#97); joiner roster seeds self + records
+observed senders (#95, ChatRepo only, no `.so` change); display label removed (#85); node
+toggle removed, node always-on (#86); Refresh clarified + feedback (#87); capitalization (#88).
+**Settings screen deleted entirely** (nothing left to hold) — identity lives on My Address,
+node state in the header icon. All green removed (per follow-up), group tag dropped from rows.
+
+**Found + filed while verifying:**
+- **#103 (real bug)** — an MLS group created in a PREVIOUS node session cannot accept members:
+  `add_group_member failed: convo with id … was not found`. The app's SQLite history renders
+  fine, masking that the **lib does not rehydrate MLS group state across a node restart**. A
+  fresh group works end-to-end (roster updates + joiner receives the Welcome), so this is
+  scoped to stale groups, not the new screen. Likely needs the same `from_bytes` rehydration
+  treatment the M1' patch gave identity+conversations.
+- Add Members used to swallow per-address failures and still toast success — now surfaces the
+  real error and only reports members that actually landed.
+
+**Open:** #95 (joiner-side roster fill unverified on the Pixel), #102 (joiner shows
+`group #N`, not the real group name), #103 (above), plus #83's literal 3-simultaneous-members.
+Tests: JS logic **17/17** (+4 `knownContacts`), Kotlin **27/27**, `assembleRelease` green.
+**Not released** — v0.3.0 is built + installed but no GitHub release cut yet.
+
+---
+
 ## ⏩ FINAL PASS RESULT (2026-07-24, Opus — autonomous) ✅ shipped v0.2.0
 
 The MLS/address rebuild is **done, tested, and released**. Scoping ✓ → M0' ✓ → M1' ✓ →
