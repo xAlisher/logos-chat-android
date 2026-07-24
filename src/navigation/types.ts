@@ -8,5 +8,4 @@ export type RootStackParamList = {
   /** Attach a pending inbound conversation to a contact (#24). */
   AttachContact: {convoPk: number};
   Settings: undefined;
-  ThemeDemo: undefined;
 };

@@ -13,7 +13,6 @@ import {ScanScreen} from '../screens/ScanScreen';
 import {NewConversationScreen} from '../screens/NewConversationScreen';
 import {AttachContactScreen} from '../screens/AttachContactScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
-import {ThemeDemoScreen} from '../screens/ThemeDemoScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -79,11 +78,6 @@ export function RootNavigator() {
           name="Settings"
           component={SettingsScreen}
           options={{title: 'settings'}}
-        />
-        <Stack.Screen
-          name="ThemeDemo"
-          component={ThemeDemoScreen}
-          options={{title: 'theme demo'}}
         />
       </Stack.Navigator>
     </NavigationContainer>
