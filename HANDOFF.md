@@ -23,11 +23,24 @@ oldest M0–M4 spec is at the bottom and describes the RETIRED ephemeral model).
 - **Issue hygiene:** #35 (group conversations — was "blocked: no FFI") closed as delivered;
   **#83 filed (wetware)** for the 3-party physical-phone group test.
 
+**⏩ UPDATE (2026-07-24 12:24, phones unlocked): two-physical-phone MLS group PROVEN.**
+Ran #83 on-device (Samsung + Pixel 10, both v0.2.0). MLS Welcome Samsung→Pixel; group
+messaging BOTH directions with directory-verified per-sender attribution (Pixel sees
+`27f9de…80cb`, Samsung sees `0c87f0…71c6`); **joiner-side persistence across a Pixel
+restart** (group + both messages re-render from SQLite). Evidence `logs/i83-*.png`, full
+writeup in #83 comment. #83 left open ONLY for the literal 3-simultaneous-members case
+(the desktop peer couldn't be the 3rd member — it failed `open_persistent` with a directory
+`http: builder error`, a peer/host issue, not the app). Two NEW findings filed:
+- **#84** — the empty-group composer collapse RECURS after a `members_changed` refresh +
+  keyboard cycle; the v0.2.0 fix (list flex:1 + composer minHeight) is only a partial
+  mitigation. Durable fix: explicit empty-state spacer as list content when 0 messages, or
+  lift the composer out of the KAV/list measure path.
+- **joiner-side group name** — the Pixel shows `group #2` not the real name (same
+  roster/metadata gap that needs a `list_group_members` FFI verb).
+
 **Open (all non-blocking, flagged):**
-- **#83 wetware** — 3-party group on two *physical* phones. The Pixel 10 was PIN-locked the
-  whole run (its PIN isn't available to an autonomous session); the desktop peer covered the
-  counterpart role so 2-party groups + reverse-leg 1:1 are fully proven. Both phones are
-  staged on 0.2.0 — a human just unlocks the Pixel and runs the steps in #83.
+- **#83** — now only the literal 3-members-at-once case (needs the peer's directory-publish
+  fixed, or a 3rd phone). Two-phone group is done.
 - Joiner-side full roster → needs a `list_group_members` FFI verb (an arm64+host `.so`
   rebuild; deferred to keep the verified `.so` untouched).
 - At-rest hardening of the identity seed + db-key via Android Keystore (M1' follow-up).
