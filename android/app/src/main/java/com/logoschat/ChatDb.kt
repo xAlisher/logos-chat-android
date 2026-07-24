@@ -226,6 +226,25 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         "UPDATE conversations SET nickname=? WHERE convo_pk=?", arrayOf(nickname, convoPk))
   }
 
+  /**
+   * Wipe a conversation's CONTENT but keep the conversation itself (#107).
+   * Used for "Wipe group": there is no way to leave a group yet, so the row must
+   * survive to keep receiving new messages — only the local history goes.
+   */
+  fun wipeConversationContent(convoPk: Long) {
+    val db = writableDatabase
+    db.beginTransaction()
+    try {
+      db.execSQL("DELETE FROM messages WHERE convo_pk=?", arrayOf(convoPk))
+      db.execSQL(
+          "UPDATE conversations SET unread=0, last_text='', last_direction='' WHERE convo_pk=?",
+          arrayOf(convoPk))
+      db.setTransactionSuccessful()
+    } finally {
+      db.endTransaction()
+    }
+  }
+
   fun deleteConversation(convoPk: Long) {
     val db = writableDatabase
     db.beginTransaction()

@@ -88,6 +88,8 @@ interface LogosChatNative {
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
   markRead(convoPk: number): Promise<null>;
   setActiveConversation(convoPk: number): void;
+  /** Delete a conversation's messages but KEEP the conversation (#107 wipe). */
+  wipeConversationContent(convoPk: number): Promise<null>;
   deleteConversation(convoPk: number): Promise<null>;
   consumeLaunchConvo(): Promise<number>;
   getSetting(key: string): Promise<string | null>;

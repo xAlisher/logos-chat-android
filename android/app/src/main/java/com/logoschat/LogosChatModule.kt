@@ -434,6 +434,16 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
+  fun wipeConversationContent(convoPk: Double, promise: Promise) {
+    try {
+      ChatRepo.requireDb().wipeConversationContent(convoPk.toLong())
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  @ReactMethod
   fun deleteConversation(convoPk: Double, promise: Promise) {
     try {
       ChatRepo.requireDb().deleteConversation(convoPk.toLong())

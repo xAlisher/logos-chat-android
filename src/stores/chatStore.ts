@@ -38,6 +38,8 @@ interface ChatState {
   markRead: (convoPk: number) => void;
   /** Set (or change) a conversation's nickname. */
   setNickname: (convoPk: number, name: string) => Promise<void>;
+  /** Wipe a group's local content but keep receiving new messages (#107). */
+  wipe: (convoPk: number) => Promise<void>;
   /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
 }
@@ -165,6 +167,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setNickname: async (convoPk: number, name: string) => {
     await LogosChat.setNickname(convoPk, name);
+    await get().refreshConversations();
+  },
+
+  wipe: async (convoPk: number) => {
+    await LogosChat.wipeConversationContent(convoPk);
+    set(s => ({messages: {...s.messages, [convoPk]: []}}));
     await get().refreshConversations();
   },
 
