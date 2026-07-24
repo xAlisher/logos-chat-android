@@ -1,0 +1,10 @@
+PEER ADDRESS: bde795afb9c6e19e7b76308acb864aa49c7ea2d8f83c6782b04727fe7b643938
+READY
+CONVO: 5ae64a55922e004aad9611b6455a6c5c
+SEND rc=0
+[EVT 07:27:41.182] type=2 message_received json={"convoId":"5ae64a55922e004aad9611b6455a6c5c","content":"reply-to-peer-from-samsung-m2prime","senderAccount":"27f9dee9e003b7deb96d3de911080318057aa51934111bc8fa68d0f8f4ed80cb","senderLocal":"b622e0ff19bc7a25936e4620053e660db58d9e51b50d00e544283d080b4f9f35"}
+[EVT 07:28:02.916] type=2 message_received json={"convoId":"5ae64a55922e004aad9611b6455a6c5c","content":"samsung-to-peer-take2","senderAccount":"27f9dee9e003b7deb96d3de911080318057aa51934111bc8fa68d0f8f4ed80cb","senderLocal":"b622e0ff19bc7a25936e4620053e660db58d9e51b50d00e544283d080b4f9f35"}
+[EVT 07:30:58.901] type=1 conversation_started json={"convoId":"f0dea77099","class":"Group"}
+[EVT 07:32:42.145] type=3 members_changed json={"convoId":"f0dea77099"}
+SEND rc=0
+[EVT 07:34:34.621] type=2 message_received json={"convoId":"f0dea77099","content":"hello-group-from-samsung-m2prime","senderAccount":"27f9dee9e003b7deb96d3de911080318057aa51934111bc8fa68d0f8f4ed80cb","senderLocal":"b622e0ff19bc7a25936e4620053e660db58d9e51b50d00e544283d080b4f9f35"}

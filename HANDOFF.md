@@ -336,3 +336,63 @@ abandoned for `logoschat_mls.db`.
 
 Both phones left on the `0.2.0-m1` build, node auto-started, stable address.
 Not released (M2' groups + tests first).
+
+---
+
+### M2' RESULT (2026-07-24, Fable — autonomous) ✅ groups end-to-end + reverse-leg 1:1 closed, all peer-verified
+
+**Full detail: `docs/m2prime-log.md`. Evidence: `logs/m2p-*.png`, `logs/m2p-peer-interop.log`.**
+Samsung on the new `0.2.0-m2` build (versionCode 5); the Pixel is untouched (PIN-locked, still m1).
+
+**A. Headless MLS/address desktop peer (the interop rig) — built + committed.**
+`logos-libchat-mls-android/scripts/desktop-peer-mls/{peer.c,peer.sh,README.md}`.
+Built the SAME `extensions/liblogoschat-android` wrapper for the HOST (x86_64, no
+`--target`) against the installed Basecamp x86_64 `liblogosdelivery.so` (+`librln`)
+via `LOGOS_DELIVERY_LIB_DIR`+`LOGOS_DELIVERY_RELOCATABLE=1` → a host `liblogoschat.so`
+(14 exports). The peer dlopens it: `open_persistent` → stable address → event
+callback (timestamped JSON) → stdin loop (`address`/`newconvo`/`send`/`newgroup`/
+`addmember`/`groupsend`/`list`/`quit`). This is the scriptable rig for reverse-leg +
+group tests. **Wall:** a FIFO-driven peer needs a persistent writer
+(`sleep 100000 > fifo &`) or the first command EOFs it.
+
+**B. MLS groups wired end-to-end — Kotlin+JS+UI only (NO bridge/.so change; the
+group verbs already shipped in the M1' ABI).**
+- ChatDb **v2 (+migration)**: `is_group`+`group_name` on conversations, per-message
+  `sender_account`, a `group_members` roster table; group-aware `listConversations`/
+  `listMessages`/`displayNameFor`.
+- ChatRepo: `ConversationStarted.class` → mark group; `members_changed` → UI refresh;
+  group inbound keeps per-message sender + never overwrites the convo address;
+  `createGroupConversation`/`recordGroupMember`.
+- LogosChatModule: `createGroup`/`addGroupMember`/`listGroupMembers` (group send
+  reuses `sendMessageTo`).
+- JS+UI: `createGroup`/`addMember`/`loadMembers` + `members` state; a **new-group FAB**
+  above the `+` FAB; **NewGroup** (name+desc), **GroupInfo** (roster+add-member), a
+  **Scan `addMember` mode**; Chat shows a group-info button + **per-sender attribution**
+  on group bubbles; list rows carry a `group` tag. All KEEP-list polish preserved.
+
+**C. Verification (Samsung ⇄ peer) — every AC met with evidence.**
+- **Reverse-leg 1:1 BOTH ways** (retires the M1' Pixel-PIN block): peer→Samsung
+  `hi-samsung-from-peer-m2prime` (senderAccount = peer's exact addr, persisted BEFORE
+  forward); Samsung→peer `reply-to-peer-…`/`samsung-to-peer-take2` (senderAccount =
+  Samsung's exact addr).
+- **Groups:** Samsung creates `m2-demo-group` (convo=3, lib `f0dea77099`) → adds the
+  peer (GroupInfo shows 2 members; peer surfaces `conversation_started{class:Group}` +
+  `members_changed`) → **Samsung→group→peer** `hello-group-from-samsung-m2prime` and
+  **peer→group→Samsung** `hello-from-peer-into-group-m2prime`, both with correct
+  directory-verified per-sender attribution (Samsung thread renders the peer bubble
+  labelled `bde795…3938`). **Group history persists across a Samsung restart** (`db
+  open: 3 conversations, 6 messages, schema v2`; group+messages re-render from SQLite).
+- **Tests:** JS logic **13/13** (+3 group), Kotlin unit **27/27** (+8 group);
+  **assembleRelease green** (R8 on; no new JNI classes → keep-rules suffice, proven by
+  the minified build running the group flows on-device). versionCode 5 / `0.2.0-m2`.
+
+**Walls (all cleared, in `docs/m2prime-log.md`):** FIFO-peer EOF; **Play Protect
+"send app for a security check?" dialog silently hung `adb install` ~5 min** (fix:
+dismiss + `settings put global verifier_verify_adb_installs 0`); version-bump-after-
+build; a cosmetic empty-group composer-collapse (re-enter renders it; follow-up polish).
+
+**Remaining for the final pass:** 3-party group (needs the Pixel unlocked + m2);
+joiner-side full roster (needs a `list_group_members` verb → an arm64+host `.so`
+rebuild, deferred to keep the working M1' `.so`); the empty-group composer polish;
+Keystore-at-rest (unchanged M1' follow-up). Samsung left on `0.2.0-m2` with a live
+1:1 (peer) + the group persisted; **not released** (final tests+CI+release+retro next).
