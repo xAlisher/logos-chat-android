@@ -1,9 +1,16 @@
 // Native-stack navigation shell — themed headers (panel bg, mono titles), dark
 // nav theme so no white flashes between screens.
-import React from 'react';
-import {NavigationContainer, DarkTheme} from '@react-navigation/native';
+import React, {useCallback, useEffect} from 'react';
+import {AppState} from 'react-native';
+import {
+  NavigationContainer,
+  DarkTheme,
+  createNavigationContainerRef,
+} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {colors, type} from '../theme';
+import LogosChat from '../native/LogosChat';
+import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import type {RootStackParamList} from './types';
 import {ConversationsScreen} from '../screens/ConversationsScreen';
 import {ChatScreen} from '../screens/ChatScreen';
@@ -17,6 +24,28 @@ import {ContactsScreen} from '../screens/ContactsScreen';
 import {AboutScreen} from '../screens/AboutScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+// #162: a tapped message notification lands in MainActivity, which stashes the
+// convoPk; the native side exposes it once via consumeLaunchConvo(). Consume it
+// on nav-ready (cold start) and on every foreground (warm resume) and open the
+// thread. Native zeroes the pk on read, so a normal launch navigates nowhere.
+async function openLaunchConvo() {
+  try {
+    const pk = await LogosChat.consumeLaunchConvo();
+    if (pk > 0 && navigationRef.isReady()) {
+      await useChatStore.getState().refreshConversations();
+      const convo = useChatStore.getState().conversations[pk];
+      navigationRef.navigate('Chat', {
+        convoPk: pk,
+        convoName: convo != null ? convoDisplayName(convo) : '',
+        isGroup: convo?.isGroup ?? false,
+      });
+    }
+  } catch {
+    // no pending convo / native not ready — nothing to do
+  }
+}
 
 const navTheme = {
   ...DarkTheme,
@@ -32,8 +61,22 @@ const navTheme = {
 };
 
 export function RootNavigator() {
+  // Warm-resume: onNewIntent already refreshed the launch pk before we foreground.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', s => {
+      if (s === 'active') {
+        openLaunchConvo();
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
+  const onReady = useCallback(() => {
+    openLaunchConvo(); // cold-start deep link
+  }, []);
+
   return (
-    <NavigationContainer theme={navTheme}>
+    <NavigationContainer ref={navigationRef} theme={navTheme} onReady={onReady}>
       <Stack.Navigator
         initialRouteName="Conversations"
         screenOptions={{
