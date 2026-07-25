@@ -7,6 +7,7 @@
 import {create} from 'zustand';
 import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat';
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
+import MeshCore, {addMeshListener} from '../native/MeshCore';
 import {useNodeStore} from './nodeStore';
 
 export type {ConversationRow as Conversation, MessageRow as Message};
@@ -70,6 +71,8 @@ interface ChatState {
   reviveAndSend: (convoPk: number, text: string) => Promise<{invited: number; total: number}>;
   /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
+  /** #167: get-or-create a MeshCore channel conversation (by idx). Resolves convoPk. */
+  openMeshChannel: (idx: number, name: string) => Promise<number>;
 }
 
 // Pure view helpers live in conversationView.ts (RN-free, unit-tested);
@@ -193,11 +196,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     try {
       if (transport === 'mesh') {
-        throw new Error('MeshCore transport not wired yet (#166)');
-      }
-      const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
-      if (res.status === 'failed') {
-        useNodeStore.setState({error: 'send failed — tap the message to retry'});
+        // #167: a mesh channel conversation carries lib_convo_id "mesh:chan:<idx>".
+        const convo = get().conversations[convoPk];
+        const m = convo?.libConvoId?.match(/^mesh:chan:(\d+)$/);
+        if (m == null) {
+          throw new Error('unsupported mesh conversation');
+        }
+        await MeshCore.sendChannelText(parseInt(m[1], 10), text);
+        // Persist to the shared timeline (the optimistic bubble is replaced below).
+        await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+      } else {
+        const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
+        if (res.status === 'failed') {
+          useNodeStore.setState({error: 'send failed — tap the message to retry'});
+        }
       }
     } catch (e: any) {
       set(s => ({
@@ -325,7 +337,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {conversations, messages, members};
     });
   },
+
+  openMeshChannel: async (idx: number, name: string) => {
+    const convoPk = await LogosChat.upsertMeshChannel(idx, name);
+    await get().refreshConversations();
+    await get().loadMessages(convoPk);
+    return convoPk;
+  },
 }));
+
+// #167: inbound MeshCore channel messages → persist into the shared timeline and
+// refresh. The channel's display name comes from meshStore if we know it, else a
+// sensible default (idx 0 is the public channel).
+addMeshListener(e => {
+  const channelIdx = e.channelIdx;
+  const text = e.text;
+  const at = e.at;
+  if (e.eventType !== 'channelMessage' || channelIdx == null || text == null || at == null) {
+    return;
+  }
+  (async () => {
+    try {
+      const name = channelIdx === 0 ? 'Public' : `Channel ${channelIdx}`;
+      const convoPk = await LogosChat.upsertMeshChannel(channelIdx, name);
+      await LogosChat.recordMeshMessage(
+        convoPk,
+        'in',
+        text,
+        at,
+        e.fromName && e.fromName.length > 0 ? e.fromName : null,
+      );
+      await useChatStore.getState().refreshConversations();
+      if (useChatStore.getState().activeConvoPk === convoPk) {
+        await useChatStore.getState().loadMessages(convoPk);
+      }
+    } catch {
+      // best-effort: a persistence hiccup shouldn't crash the event pump
+    }
+  })();
+});
 
 /**
  * Resolve when the invitee's join commits for `convoPk` (a members_changed for

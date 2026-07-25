@@ -11,7 +11,7 @@ import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
 import {SpeedDialFab, GroupGlyph} from '../components/SpeedDialFab';
-import {HexAvatar, avatarSeed} from '../components/HexAvatar';
+import {HexAvatar, avatarSeed, convoKind} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SideMenu, type MenuView} from '../components/SideMenu';
 import {
@@ -65,11 +65,7 @@ function ConversationRow({
       onLongPress={e => onLongPress(e.nativeEvent.pageY)}
       delayLongPress={300}
       testID={`convo-${convo.convoPk}`}>
-      <HexAvatar
-        seed={avatarSeed(convo)}
-        kind={convo.isGroup ? 'group' : 'contact'}
-        size={32}
-      />
+      <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={32} />
       <View style={styles.rowBody}>
         <View style={styles.titleRow}>
           <Text
@@ -278,11 +274,7 @@ export function ConversationsScreen() {
         header={
           rowMenu != null ? (
             <View style={styles.rowMenuHeader}>
-              <HexAvatar
-                seed={avatarSeed(rowMenu)}
-                kind={rowMenu.isGroup ? 'group' : 'contact'}
-                size={32}
-              />
+              <HexAvatar seed={avatarSeed(rowMenu)} kind={convoKind(rowMenu)} size={32} />
               <Text
                 style={[type.title, {color: colors.text, flexShrink: 1}]}
                 numberOfLines={1}>

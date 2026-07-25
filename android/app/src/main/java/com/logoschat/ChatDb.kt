@@ -144,6 +144,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       isGroup: Boolean = false,
       groupName: String? = null,
       createdByMe: Boolean = false,
+      transport: String = "logos",
   ): Long =
       writableDatabase.insertOrThrow(
           "conversations",
@@ -155,10 +156,48 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
             put("is_group", if (isGroup) 1 else 0)
             put("created_by_me", if (createdByMe) 1 else 0)
             if (groupName != null) put("group_name", groupName) else putNull("group_name")
+            put("transport", transport)
             put("created_at", createdAt)
             put("last_message_at", createdAt)
             put("unread", 0)
           })
+
+  /**
+   * #167: get-or-create the local conversation mirroring a MeshCore channel.
+   * Keyed by `lib_convo_id` = "mesh:chan:<idx>" (also the avatar seed). Stored as a
+   * group-like mesh conversation (transport='mesh', is_group=1).
+   */
+  fun upsertMeshChannel(channelKey: String, name: String): Long {
+    convoPkByLibId(channelKey)?.let { return it }
+    return insertConversation(
+        peerAddress = null,
+        libConvoId = channelKey,
+        nickname = null,
+        createdAt = System.currentTimeMillis(),
+        isGroup = true,
+        groupName = name,
+        transport = "mesh")
+  }
+
+  /** #167: record a mesh message in the durable store; bumps unread for inbound
+   *  into a non-active thread. Returns the new msg_pk. */
+  fun recordMeshMessage(
+      convoPk: Long,
+      direction: String,
+      text: String,
+      at: Long,
+      senderName: String?,
+      isActive: Boolean,
+  ): Long {
+    val status = if (direction == "out") "sent" else "received"
+    val msgPk = insertMessage(convoPk, direction, text, at, status, senderName, "mesh")
+    touchConversation(convoPk, at)
+    if (direction == "in" && !isActive) {
+      writableDatabase.execSQL(
+          "UPDATE conversations SET unread = unread + 1 WHERE convo_pk=?", arrayOf(convoPk))
+    }
+    return msgPk
+  }
 
   /** True if this conversation is an MLS group. */
   fun isGroup(convoPk: Long): Boolean =

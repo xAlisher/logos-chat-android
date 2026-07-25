@@ -15,10 +15,17 @@ import {
   StyleSheet,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
+import {HexAvatar} from '../components/HexAvatar';
 import {useMeshStore} from '../stores/meshStore';
+import {useChatStore} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
+import type {RootStackParamList} from '../navigation/types';
+
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 // Android 12+ needs BLUETOOTH_SCAN + BLUETOOTH_CONNECT granted at runtime.
 async function ensureBlePermissions(): Promise<boolean> {
@@ -35,9 +42,11 @@ async function ensureBlePermissions(): Promise<boolean> {
 }
 
 export function MeshCoreScreen() {
+  const navigation = useNavigation<Nav>();
   const status = useMeshStore(s => s.status);
   const selfPubkey = useMeshStore(s => s.selfPubkey);
   const selfName = useMeshStore(s => s.selfName);
+  const channels = useMeshStore(s => s.channels);
   const error = useMeshStore(s => s.error);
   const connect = useMeshStore(s => s.connect);
   const disconnect = useMeshStore(s => s.disconnect);
@@ -47,6 +56,16 @@ export function MeshCoreScreen() {
 
   const connected = status === 'connected';
   const connecting = status === 'connecting';
+
+  // #167: open (get-or-create) a mesh channel conversation and go to its thread.
+  const openChannel = async (idx: number, name: string) => {
+    try {
+      const convoPk = await useChatStore.getState().openMeshChannel(idx, name);
+      navigation.navigate('Chat', {convoPk, convoName: name, isGroup: true});
+    } catch (e: any) {
+      useMeshStore.setState({error: `could not open channel: ${e?.message ?? e}`});
+    }
+  };
 
   const onConnect = async () => {
     const ok = await ensureBlePermissions();
@@ -83,6 +102,36 @@ export function MeshCoreScreen() {
               <Text style={[type.code, {color: colors.textDim}]} numberOfLines={1}>
                 {selfPubkey != null ? shortAddress(selfPubkey) : '…'}
               </Text>
+            </View>
+
+            {/* #167: channels — public + any joined slots. Tap to open the thread. */}
+            <View style={styles.card}>
+              <Text style={styles.cardLabel}>Channels</Text>
+              <Text style={[type.caption, {color: colors.textFaint}]}>
+                Group messages over the mesh — encrypted by a shared channel key,
+                NOT MLS.
+              </Text>
+              {channels
+                .filter(ch => ch.idx !== 0)
+                .map(ch => (
+                  <Pressable
+                    key={ch.idx}
+                    style={styles.chRow}
+                    onPress={() => openChannel(ch.idx, ch.name || `Channel ${ch.idx}`)}
+                    testID={`mesh-channel-${ch.idx}`}>
+                    <HexAvatar seed={`mesh:chan:${ch.idx}`} kind="mesh" size={28} />
+                    <Text style={[type.body, {color: colors.text}]} numberOfLines={1}>
+                      {ch.name || `Channel ${ch.idx}`}
+                    </Text>
+                  </Pressable>
+                ))}
+              <Pressable
+                style={styles.chRow}
+                onPress={() => openChannel(0, 'Public')}
+                testID="mesh-channel-public">
+                <HexAvatar seed="mesh:chan:0" kind="mesh" size={28} />
+                <Text style={[type.body, {color: colors.text}]}>Public channel</Text>
+              </Pressable>
             </View>
 
             <View style={styles.card}>
@@ -152,6 +201,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cardLabel: {...type.caption, color: colors.textFaint, textTransform: 'uppercase'},
+  chRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xs},
   input: {
     ...type.body,
     color: colors.text,

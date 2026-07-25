@@ -25,7 +25,7 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
-import {HexAvatar, avatarSeed} from '../components/HexAvatar';
+import {HexAvatar, avatarSeed, convoKind} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
@@ -440,11 +440,7 @@ export function ChatScreen() {
         // Leading identicon matches the conversation list (#118): a group is
         // seeded by its shared lib id (azure), a 1:1 by the peer address (orange).
         const avatar = (
-          <HexAvatar
-            seed={avatarSeed(convo)}
-            kind={isGroup ? 'group' : 'contact'}
-            size={28}
-          />
+          <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={28} />
         );
         if (isGroup) {
           return (

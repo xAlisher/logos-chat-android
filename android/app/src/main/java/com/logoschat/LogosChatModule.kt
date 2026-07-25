@@ -455,6 +455,38 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #167: get-or-create the local conversation mirroring a MeshCore channel. */
+  @ReactMethod
+  fun upsertMeshChannel(idx: Double, name: String, promise: Promise) {
+    try {
+      val key = "mesh:chan:${idx.toInt()}"
+      promise.resolve(ChatRepo.requireDb().upsertMeshChannel(key, name).toDouble())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /** #167: persist a mesh message (channel/DM) in the shared timeline. Returns msgPk. */
+  @ReactMethod
+  fun recordMeshMessage(
+      convoPk: Double,
+      direction: String,
+      text: String,
+      at: Double,
+      senderName: String?,
+      promise: Promise,
+  ) {
+    try {
+      val pk = convoPk.toLong()
+      val isActive = ChatRepo.activeConvoPk == pk
+      val msgPk =
+          ChatRepo.requireDb().recordMeshMessage(pk, direction, text, at.toLong(), senderName, isActive)
+      promise.resolve(msgPk.toDouble())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /**
    * Is a group still operable by the lib? (#112)
    *

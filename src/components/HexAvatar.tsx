@@ -17,6 +17,18 @@ import {colors} from '../theme';
 // Dark → near-white. The top of each ramp is close to white so bright cells pop.
 const CONTACT_RAMP = ['#B8420E', '#FF5000', '#FF7A33', '#FFB27A', '#FFE4D0'];
 const GROUP_RAMP = ['#0B5C8A', '#0EA5E9', '#38BDF8', '#7DD3FC', '#E0F5FF'];
+// #167: a MeshCore identity (channel or mesh peer) — green, distinct from the
+// Logos orange/azure so "this is a different network" reads at a glance.
+const MESH_RAMP = ['#166534', '#22C55E', '#4ADE80', '#86EFAC', '#DCFCE7'];
+
+/** MeshCore ('mesh') is a third identity kind alongside Logos contact/group. */
+export type AvatarKind = 'contact' | 'group' | 'mesh';
+const RAMPS: Record<AvatarKind, string[]> = {
+  contact: CONTACT_RAMP,
+  group: GROUP_RAMP,
+  mesh: MESH_RAMP,
+};
+const PREFIX: Record<AvatarKind, string> = {contact: 'c:', group: 'g:', mesh: 'm:'};
 
 // mulberry32 seeded via an xmur3 hash of the seed — deterministic per identity.
 function rng(seed: string): () => number {
@@ -49,10 +61,10 @@ export interface IdenticonCell {
 
 export function identiconCells(
   seed: string,
-  kind: 'contact' | 'group',
+  kind: AvatarKind,
 ): IdenticonCell[] {
-  const ramp = kind === 'group' ? GROUP_RAMP : CONTACT_RAMP;
-  const r = rng((kind === 'group' ? 'g:' : 'c:') + seed);
+  const ramp = RAMPS[kind];
+  const r = rng(PREFIX[kind] + seed);
   const cells: IdenticonCell[] = [];
   // Only the left three columns are decided; columns 0,1 mirror to 4,3.
   for (let x = 0; x < 3; x++) {
@@ -76,7 +88,7 @@ export function HexAvatar({
   size = 40,
 }: {
   seed: string;
-  kind: 'contact' | 'group';
+  kind: AvatarKind;
   size?: number;
 }) {
   const cell = size / AVATAR_N;
@@ -121,4 +133,16 @@ export function avatarSeed(convo: {
     return convo.libConvoId ?? `pk${convo.convoPk}`;
   }
   return convo.peerAddress ?? `pk${convo.convoPk}`;
+}
+
+/** The avatar kind for a conversation (#167): a MeshCore conversation is 'mesh'
+ *  (green) regardless of channel-vs-DM; otherwise Logos group/contact. */
+export function convoKind(convo: {
+  transport: 'logos' | 'mesh';
+  isGroup: boolean;
+}): AvatarKind {
+  if (convo.transport === 'mesh') {
+    return 'mesh';
+  }
+  return convo.isGroup ? 'group' : 'contact';
 }

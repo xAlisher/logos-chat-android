@@ -3,8 +3,12 @@
 // shape + lifecycle of nodeStore.ts. Phase 0 only (issue #166): connect / disconnect
 // / set advert name. Channels, DMs and the group-mirror bridge come in Phases 1-2.
 import {create} from 'zustand';
-import MeshCore, {addMeshListener, parseSelfInfo} from '../native/MeshCore';
-import type {MeshStatus} from '../native/MeshCore';
+import MeshCore, {
+  addMeshListener,
+  parseChannels,
+  parseSelfInfo,
+} from '../native/MeshCore';
+import type {MeshChannel, MeshStatus} from '../native/MeshCore';
 
 interface MeshState {
   status: MeshStatus;
@@ -12,12 +16,21 @@ interface MeshState {
   selfPubkey: string | null;
   /** The radio's broadcast advert label — null until connected. */
   selfName: string | null;
+  /** Occupied channel slots on the radio; hydrated on connect + after mutations. */
+  channels: MeshChannel[];
   error: string | null;
-  /** Scan → connect → APP_START; hydrates selfPubkey/selfName on success. */
+  /** Scan → connect → APP_START; hydrates selfPubkey/selfName + channels on success. */
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   /** Set the radio's broadcast advert label; updates selfName on success. */
   setName: (name: string) => Promise<void>;
+  /** Refresh the channel list from the radio. */
+  loadChannels: () => Promise<void>;
+  /**
+   * Create a channel in the first free slot with the given name + 16-byte secret
+   * (`secretHex` = 32 hex chars), then reload the channel list.
+   */
+  addChannel: (name: string, secretHex: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -25,6 +38,7 @@ export const useMeshStore = create<MeshState>((set, get) => ({
   status: 'disconnected',
   selfPubkey: null,
   selfName: null,
+  channels: [],
   error: null,
 
   connect: async () => {
@@ -39,6 +53,8 @@ export const useMeshStore = create<MeshState>((set, get) => ({
       if (info) {
         set({selfPubkey: info.pubkeyHex, selfName: info.name});
       }
+      // Now connected — hydrate the channel list (best-effort; own try/catch).
+      await get().loadChannels();
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -48,7 +64,7 @@ export const useMeshStore = create<MeshState>((set, get) => ({
     try {
       await MeshCore.disconnect();
       // Status flips to 'disconnected' via the event; drop the stale self-info.
-      set({selfPubkey: null, selfName: null});
+      set({selfPubkey: null, selfName: null, channels: []});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -63,6 +79,28 @@ export const useMeshStore = create<MeshState>((set, get) => ({
     }
   },
 
+  loadChannels: async () => {
+    try {
+      const json = await MeshCore.getChannels();
+      set({channels: parseChannels(json)});
+    } catch (e: any) {
+      set({error: String(e?.message ?? e)});
+    }
+  },
+
+  addChannel: async (name: string, secretHex: string) => {
+    try {
+      // First free private slot (idx 0 is reserved for the public channel).
+      const taken = new Set(get().channels.map(c => c.idx));
+      let idx = 1;
+      while (taken.has(idx)) idx += 1;
+      await MeshCore.setChannel(idx, name, secretHex);
+      await get().loadChannels();
+    } catch (e: any) {
+      set({error: String(e?.message ?? e)});
+    }
+  },
+
   clearError: () => set({error: null}),
 }));
 
@@ -71,11 +109,12 @@ addMeshListener(e => {
   console.log('[MeshCoreEvent]', JSON.stringify(e));
   if (e.eventType === 'status' && e.status) {
     useMeshStore.setState({status: e.status});
-    // A drop clears self-info; the link no longer speaks for that identity.
+    // A drop clears self-info + channels; the link no longer speaks for that identity.
     if (e.status === 'disconnected') {
-      useMeshStore.setState({selfPubkey: null, selfName: null});
+      useMeshStore.setState({selfPubkey: null, selfName: null, channels: []});
     }
   }
-  // 'frame' events (async pushes / inbound protocol frames) are surfaced for
-  // Phase 1+ (channels, DMs); Phase 0 has no consumer for them yet.
+  // 'channelMessage' events (inbound mesh channel text) are consumed by the app's
+  // chatStore, NOT here — meshStore only owns radio link + channel-list state.
+  // 'frame' events (async pushes / raw protocol frames) remain for debugging.
 });

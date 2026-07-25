@@ -102,6 +102,16 @@ interface LogosChatNative {
   setNickname(convoPk: number, nickname: string): Promise<null>;
   /** #153: set the local verified flag for a contact. */
   setVerified(convoPk: number, verified: boolean): Promise<null>;
+  /** #167: get-or-create the local conversation mirroring a MeshCore channel idx. */
+  upsertMeshChannel(idx: number, name: string): Promise<number>;
+  /** #167: persist a mesh message (channel/DM) in the shared timeline. Returns msgPk. */
+  recordMeshMessage(
+    convoPk: number,
+    direction: string,
+    text: string,
+    at: number,
+    senderName: string | null,
+  ): Promise<number>;
   listConversations(): Promise<string>; // JSON ConversationRow[]
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
   markRead(convoPk: number): Promise<null>;

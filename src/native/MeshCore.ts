@@ -18,8 +18,18 @@ export interface MeshSelfInfo {
   name: string;
 }
 
+/** A MeshCore channel slot (Phase 1): pre-shared 16-byte symmetric key + label. */
+export interface MeshChannel {
+  /** Channel slot index on the radio (0 = public, 1-7+ private). */
+  idx: number;
+  /** Channel label (≤32 bytes UTF-8). */
+  name: string;
+  /** The 16-byte channel secret as 32 lowercase hex chars. */
+  secretHex: string;
+}
+
 export interface MeshCoreEvent {
-  // 'status' | 'frame'
+  // 'status' | 'frame' | 'channelMessage'
   eventType: string;
   /** Present when eventType === 'status'. */
   status?: MeshStatus;
@@ -27,6 +37,16 @@ export interface MeshCoreEvent {
   resp?: number;
   /** Present when eventType === 'frame': the full raw frame as lowercase hex. */
   hex?: string;
+
+  // -- eventType === 'channelMessage' (inbound mesh channel text) -------------
+  /** The channel slot the message arrived on. */
+  channelIdx?: number;
+  /** Plaintext sender label (may be '' if the payload carried no "name: " prefix). */
+  fromName?: string;
+  /** The message body (the payload with any leading "name: " stripped). */
+  text?: string;
+  /** Message timestamp in epoch milliseconds (firmware seconds × 1000). */
+  at?: number;
 }
 
 interface MeshCoreNative {
@@ -43,6 +63,28 @@ interface MeshCoreNative {
   setAdvertName(name: string): Promise<null>;
   /** Broadcast a self-advert now. Resolves on BLE write-ack. */
   sendSelfAdvert(): Promise<null>;
+
+  // -- Phase 1: channels ------------------------------------------------------
+  /**
+   * Walk the radio's channel slots and resolve with a JSON array of the occupied
+   * ones: a stringified {@link MeshChannel}[]. Parse with {@link parseChannels}.
+   */
+  getChannels(): Promise<string>;
+  /**
+   * Create/overwrite channel slot `idx` with `name` and the 16-byte secret
+   * (`secretHex` = 32 hex chars). Resolves on firmware RESP_CODE_OK.
+   */
+  setChannel(idx: number, name: string, secretHex: string): Promise<null>;
+  /**
+   * Send plain text to channel slot `idx`. Resolves when the radio accepts it
+   * (firmware RESP_CODE_OK). Text should respect the ~133-char mesh cap.
+   */
+  sendChannelText(idx: number, text: string): Promise<null>;
+  /**
+   * Drain all messages queued on the radio, emitting a 'channelMessage'
+   * MeshCoreEvent per inbound channel message. Resolves once the queue is empty.
+   */
+  syncMessages(): Promise<null>;
 }
 
 const native: MeshCoreNative = NativeModules.MeshCore;
@@ -64,6 +106,26 @@ export function parseSelfInfo(json: string): MeshSelfInfo | null {
     // fall through
   }
   return null;
+}
+
+/** Parse the JSON getChannels resolves with. Returns [] if malformed. */
+export function parseChannels(json: string): MeshChannel[] {
+  try {
+    const arr = JSON.parse(json);
+    if (Array.isArray(arr)) {
+      return arr
+        .filter(
+          (o: any) =>
+            typeof o?.idx === 'number' &&
+            typeof o?.name === 'string' &&
+            typeof o?.secretHex === 'string',
+        )
+        .map((o: any) => ({idx: o.idx, name: o.name, secretHex: o.secretHex}));
+    }
+  } catch {
+    // fall through
+  }
+  return [];
 }
 
 export default native;
