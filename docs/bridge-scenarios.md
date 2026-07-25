@@ -74,4 +74,20 @@ Test rig: **Samsung = B**, **Pixel = C**. **A** is simulated by a second mesh no
   verify (old standalone channels won't retro-merge).
 - Filed alongside: #187 (Storage-backed rebuildable group snapshot — research), #188 (system
   lines are a bottom-pinned footer, not time-interleaved), #189 (local mirror start/stop lines).
-- Next: the two reforward directions (S1.3 / S2.3) — the actual A↔C relay.
+- **2026-07-25** — **reforward relay implemented** (the actual A↔C bridge):
+  - Envelope `lr1:<origin>␟<text>` (`src/native/relay.ts`, unit-tested) — carries the ORIGINAL
+    sender and doubles as the loop marker (an already-enveloped message is never re-forwarded).
+  - **mesh→logos** (chatStore `channelMessage`): on a mirrored group + node running, relay the
+    mesh message into Logos via new native `relayToLogos` (transmit-only — no duplicate bubble on
+    B). Guards: skip envelopes and B's own radio echo (`fromName === meshSelfName`).
+  - **logos→mesh** (chatStore `db_changed`): an inbound Logos group message on a mirrored group
+    (mesh connected) is sent onto the channel via `sendChannelText`, truncated to the LoRa cap.
+    `db_changed` 'message' only fires on the Logos path, so mesh-origin messages never bounce back.
+    Content + sender added to the native Outcome/db_changed for this.
+  - **Render** (ChatScreen `Bubble`): a relayed message unwraps to show the ORIGIN sender + real
+    text, marked "via bridge", not verified (a relay is a local assertion, not per-message crypto).
+  - Also #189: local system lines on mirror start/stop.
+  - **Verification**: pure logic unit-tested (43 green). The LoRa round-trip is hardware-bound
+    (two radios, BLE-exclusive) → drive on-device as far as possible; the physical radio exchange
+    needs the user's eyes (wetware).
+- Still to do: #188 (interleave system lines by time — separate build).

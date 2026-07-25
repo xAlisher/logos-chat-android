@@ -53,6 +53,7 @@ import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {Conversation, Message} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
+import {parseRelay} from '../native/relay';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import type {RootStackParamList} from '../navigation/types';
@@ -184,28 +185,43 @@ function Bubble({
   // #168: 'both' = delivered on Logos AND mesh (deduped) — still badge it as mesh-touched.
   const viaMesh = msg.sentVia === 'mesh' || msg.sentVia === 'both';
   const viaLabel = msg.sentVia === 'both' ? 'via mesh + logos · ' : 'via mesh · ';
+  // #168: a bridged (relayed) message carries an envelope naming its ORIGINAL
+  // sender — B (the relayer) signed/sent it, so its raw attribution is B. Unwrap
+  // it: show the real origin + the real text, marked "via bridge" and NOT
+  // verified (a relay is a local assertion, not per-message crypto).
+  const relay = parseRelay(msg.text);
+  const displayText = relay?.text ?? msg.text;
+  const effAttr =
+    relay != null && attribution != null
+      ? {
+          label: relay.origin,
+          hex: 'via bridge',
+          address: relay.origin,
+          verified: false,
+        }
+      : attribution;
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
       {/* Display only (#109): the contact actions live on the bubble long-press.
           A tiny identicon (#118) makes senders distinct in a busy group thread. */}
-      {attribution != null && (
-        <View style={styles.attrRow} testID={`attr-${attribution.address}`}>
-          <HexAvatar seed={attribution.address} kind="contact" size={16} />
+      {effAttr != null && (
+        <View style={styles.attrRow} testID={`attr-${effAttr.address}`}>
+          <HexAvatar seed={effAttr.address} kind="contact" size={16} />
           {/* #122: primary line white; the hex is the gray secondary when a
               label exists, and the white primary itself when there's no label. */}
-          {attribution.label != null ? (
+          {effAttr.label != null ? (
             <Text style={styles.attrLine} numberOfLines={1}>
-              <Text style={{color: colors.text}}>{attribution.label}</Text>
-              <Text style={{color: colors.textDim}}> {attribution.hex}</Text>
+              <Text style={{color: colors.text}}>{effAttr.label}</Text>
+              <Text style={{color: colors.textDim}}> {effAttr.hex}</Text>
             </Text>
           ) : (
             <Text
               style={[styles.attrLine, {color: colors.text}]}
               numberOfLines={1}>
-              {attribution.hex}
+              {effAttr.hex}
             </Text>
           )}
-          {attribution.verified && <VerifiedBadge size={12} />}
+          {effAttr.verified && <VerifiedBadge size={12} />}
         </View>
       )}
       {/* Short tap = retry (failed only); long press = the action menu. The
@@ -223,7 +239,7 @@ function Bubble({
           failed && styles.bubbleFailed,
         ]}>
         <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
-          {msg.text}
+          {displayText}
         </Text>
       </Pressable>
       <View style={styles.timeRow}>

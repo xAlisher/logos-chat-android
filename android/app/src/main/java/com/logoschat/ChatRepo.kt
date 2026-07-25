@@ -33,7 +33,13 @@ object ChatRepo {
   @Volatile var appForeground: Boolean = true
 
   /** What a persisted lib event means for the app — forwarded to JS AFTER the write. */
-  class Outcome(val kind: String, val convoPk: Long, val direction: String, val text: String)
+  class Outcome(
+      val kind: String,
+      val convoPk: Long,
+      val direction: String,
+      val text: String,
+      val sender: String? = null,
+  )
 
   fun init(context: Context) {
     if (db != null) return
@@ -277,7 +283,7 @@ object ChatRepo {
     }
     if (activeConvoPk != convoPk) d.bumpUnread(convoPk)
     Log.i(TAG, "persisted inbound msg_pk=$msgPk convo=$convoPk (${content.length} chars) BEFORE forward")
-    return Outcome("message", convoPk, "in", content)
+    return Outcome("message", convoPk, "in", content, senderAccount)
   }
 
   // -- groups (M2') ----------------------------------------------------------

@@ -16,6 +16,7 @@ module.exports = {
   testMatch: [
     '<rootDir>/__tests__/address.test.ts',
     '<rootDir>/__tests__/chatStore.logic.test.ts',
+    '<rootDir>/__tests__/relay.test.ts',
     '<rootDir>/__tests__/inboundErrors.test.ts',
   ],
 };

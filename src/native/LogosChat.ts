@@ -22,6 +22,10 @@ export interface LogosChatEvent {
   kind?: string; // 'message' | 'conversation_ready' when eventType === 'db_changed'
   convoPk?: number; // stable conversation id for db_changed events
   direction?: string;
+  // For a db_changed 'message' outcome: `detail` is the message content and
+  // `sender` the author account (#168 mesh bridge re-forwards inbound Logos
+  // group messages to the mirrored mesh channel using these).
+  sender?: string;
 }
 
 /** Durable conversation row (SQLite) as JSON — keyed by peer ADDRESS (stable). */
@@ -103,6 +107,11 @@ interface LogosChatNative {
   ): Promise<number>;
   /** Send into a conversation (1:1 OR group — same verb). Resolves '{"msgPk":n,"status":…}'. */
   sendMessageTo(convoPk: number, textUtf8: string): Promise<string>;
+  /**
+   * #168 bridge: transmit `content` into a Logos group WITHOUT recording a local
+   * bubble (the mesh→logos re-forward — B already holds the origin mesh message).
+   */
+  relayToLogos(convoPk: number, content: string): Promise<null>;
   retryMessage(msgPk: number): Promise<string>;
   /** Create an MLS (GroupV2) conversation. Resolves the stable convoPk. */
   createGroup(name: string, description: string | null): Promise<number>;

@@ -8,7 +8,9 @@ import {create} from 'zustand';
 import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat';
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
 import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
+import {isRelay, wrapRelay} from '../native/relay';
 import {useNodeStore} from './nodeStore';
+import {useMeshStore} from './meshStore';
 import {convoDisplayName} from './conversationView';
 
 export type {ConversationRow as Conversation, MessageRow as Message};
@@ -271,12 +273,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     }
     await get().refreshConversations();
+    // #189: local marker — turning mirroring on/off is a per-device action, not
+    // a group event, so it's a local system line (never broadcast).
+    get().pushSystemLine(
+      convoPk,
+      `Now bridging over MeshCore (channel ${idx}) — ${invited} mesh member${
+        invited === 1 ? '' : 's'
+      } invited`,
+    );
     return {channelIdx: idx, invited};
   },
 
   switchGroupToLogos: async (convoPk: number) => {
     await LogosChat.clearMeshMirror(convoPk);
     await get().refreshConversations();
+    get().pushSystemLine(convoPk, 'Stopped MeshCore bridging — Logos only');
   },
 
   send: async (convoPk: number, text: string) => {
@@ -513,13 +524,33 @@ addMeshListener(e => {
               channelIdx,
               channelIdx === 0 ? 'Public' : `Channel ${channelIdx}`,
             );
-      await LogosChat.recordMeshMessage(
-        convoPk,
-        'in',
-        text,
-        at,
-        e.fromName && e.fromName.length > 0 ? e.fromName : null,
-      );
+      const fromName = e.fromName && e.fromName.length > 0 ? e.fromName : null;
+      await LogosChat.recordMeshMessage(convoPk, 'in', text, at, fromName);
+
+      // #168 mesh→logos re-forward: if this channel mirrors a Logos group and
+      // the node is running, relay the message into the group so Logos-only
+      // members (who have no radio) see it — attributed to the mesh sender via
+      // an envelope. Loop guards: never re-forward an already-relayed envelope,
+      // and never re-forward our OWN radio's traffic (a channel echo of our own
+      // send would otherwise bounce into Logos).
+      const meshSelf = useMeshStore.getState().selfName;
+      const nodeRunning = useNodeStore.getState().status === 'running';
+      if (
+        mirroredGroup >= 0 &&
+        nodeRunning &&
+        !isRelay(text) &&
+        (fromName == null || fromName !== meshSelf)
+      ) {
+        try {
+          await LogosChat.relayToLogos(
+            mirroredGroup,
+            wrapRelay(fromName ?? 'mesh', text),
+          );
+        } catch {
+          // a relay failure must not break local persistence of the message
+        }
+      }
+
       await useChatStore.getState().refreshConversations();
       if (useChatStore.getState().activeConvoPk === convoPk) {
         await useChatStore.getState().loadMessages(convoPk);
@@ -668,6 +699,41 @@ addLogosChatListener(e => {
         }
       }
       notifyJoin(e.convoPk);
+    }
+    // #168 logos→mesh re-forward: an inbound Logos group message on a
+    // mesh-mirrored group is relayed onto the mesh channel so mesh-only members
+    // (who have no Logos node) see it — attributed to its Logos sender via an
+    // envelope. `detail` is the content, `sender` the author (both added
+    // natively). Inbound is never our own (MLS drops our echo), and this
+    // db_changed 'message' only fires on the Logos path (recordMeshMessage emits
+    // nothing), so a mesh-origin message never bounces back onto mesh. Loop
+    // guard: never re-forward an already-relayed envelope.
+    if (
+      e.kind === 'message' &&
+      e.direction === 'in' &&
+      e.convoPk != null &&
+      e.detail != null &&
+      !isRelay(e.detail)
+    ) {
+      const convo = s.conversations[e.convoPk];
+      if (
+        convo?.isGroup &&
+        convo.meshMode &&
+        convo.meshChannelIdx != null &&
+        useMeshStore.getState().status === 'connected'
+      ) {
+        const label = e.sender != null ? describePeer(e.sender) : 'logos';
+        // The LoRa datagram is ~133 chars, single-shot; the envelope prefix +
+        // label eat into that, so truncate the relayed text to what fits.
+        const budget = Math.max(0, 120 - label.length);
+        const body =
+          e.detail.length > budget ? `${e.detail.slice(0, budget - 1)}…` : e.detail;
+        MeshCore.sendChannelText(convo.meshChannelIdx, wrapRelay(label, body)).catch(
+          () => {
+            // a relay failure must not break local handling of the message
+          },
+        );
+      }
     }
     s.refreshConversations();
     if (e.convoPk != null && e.convoPk === s.activeConvoPk) {

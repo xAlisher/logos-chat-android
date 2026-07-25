@@ -87,8 +87,12 @@ class EventCallbackManager {
               putDouble("convoPk", outcome.convoPk.toDouble())
               putString("direction", outcome.direction)
               // #116: members_changed carries a {"left":[…]} JSON detail so JS
-              // can render "<x> left" lines. Empty for every other outcome.
+              // can render "<x> left" lines. For a message outcome, `detail` is
+              // the message content and `sender` its author account — the mesh
+              // bridge (#168) re-forwards inbound Logos group messages to the
+              // mirrored mesh channel using these.
               putString("detail", outcome.text)
+              if (outcome.sender != null) putString("sender", outcome.sender)
             }
         emitToJs(repoParams)
       }
@@ -331,6 +335,42 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       ChatRepo.finalizeOutgoing(msgPk, ok)
       if (!ok) Log.w("logos-chat-bridge", "send failed: ${NodeBridge.chatLastError()}")
       promise.resolve("""{"msgPk":$msgPk,"status":"${if (ok) "sent" else "failed"}"}""")
+    }
+  }
+
+  /**
+   * #168 bridge: transmit `content` into a Logos group WITHOUT recording a local
+   * bubble. Used by the mesh→logos re-forward — B already holds the originating
+   * mesh message in the group timeline (recorded on receipt), so relaying it to
+   * the Logos members must NOT create a second, mis-attributed row on B. The
+   * content is a relay envelope ("lr1:<origin>␟<text>") the receivers unwrap.
+   */
+  @ReactMethod
+  fun relayToLogos(convoPk: Double, content: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("relay", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      val libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        promise.reject("relay", "group not bound")
+        return@execute
+      }
+      val bytes = content.toByteArray(Charsets.UTF_8)
+      var rc = NodeBridge.chatSendMessage(c, libConvoId, bytes)
+      if (rc != 0 && isStaleConvoError(NodeBridge.chatLastError())) {
+        val fresh = rebindStaleConversation(c, pk)
+        if (fresh != null) rc = NodeBridge.chatSendMessage(c, fresh, bytes)
+      }
+      if (rc != 0) {
+        promise.reject("relay", NodeBridge.chatLastError())
+        return@execute
+      }
+      promise.resolve(null)
     }
   }
 
