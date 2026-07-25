@@ -343,19 +343,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Persist to the shared timeline (the optimistic bubble is replaced below).
         await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
       } else if (meshMirror) {
-        // #168 (dual-send): mirroring is ADDITIVE. Send on EVERY live transport so
-        // Logos-only AND mesh-only members both receive. If the node is up, Logos
-        // carries + records the outbound bubble and we also transmit on the mesh
-        // channel; if the node is down, it's a mesh-only send (recorded here).
+        // #168 (dual-send): mirroring is ADDITIVE — send on EVERY *live* transport
+        // so Logos-only AND mesh-only members both receive. The mesh leg is
+        // BEST-EFFORT: only attempt it when the radio is actually connected, and a
+        // mesh failure must NOT abort the Logos leg (the bug: a down radio threw
+        // and the Logos send never ran → "no radio connected", nothing delivered).
         const idx = convo!.meshChannelIdx!;
-        await MeshCore.sendChannelText(idx, text);
+        const meshConnected = useMeshStore.getState().status === 'connected';
+        let meshOk = false;
+        if (meshConnected) {
+          try {
+            await MeshCore.sendChannelText(idx, text);
+            meshOk = true;
+          } catch {
+            // radio hiccup — Logos still carries below if the node is up
+          }
+        }
         if (running) {
           const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
           if (res.status === 'failed') {
             useNodeStore.setState({error: 'send failed — tap the message to retry'});
           }
-        } else {
+        } else if (meshOk) {
+          // Node down but the mesh leg went — record the mesh-only outbound.
           await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+        } else {
+          // Neither transport carried it (onSubmit normally gates this).
+          throw new Error('no transport available — connect the radio or the node');
         }
       } else {
         const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
