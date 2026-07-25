@@ -6,7 +6,7 @@
 // ONE header overflow menu, and every per-message action behind a long-press on
 // the bubble. Nothing is edited by tapping a label any more (#106) — a title
 // that silently opened a modal was undiscoverable and easy to hit by accident.
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
   Text,
@@ -51,7 +51,10 @@ import {MeshInfoModal} from '../components/MeshInfoModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
-import type {Conversation, Message} from '../stores/chatStore';
+import type {Conversation, Message, SystemNote} from '../stores/chatStore';
+
+// #188: a timeline row is either a message or an interleaved system line.
+type Row = {kind: 'msg'; msg: Message} | {kind: 'sys'; sys: SystemNote};
 import {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
 import {useNodeStore} from '../stores/nodeStore';
@@ -734,7 +737,24 @@ export function ChatScreen() {
     }
   };
 
-  const empty = messages.length === 0;
+  // #188: interleave system lines (invited/joined/left/mirror) into the timeline
+  // by time, so a message sent AFTER an event renders below it — instead of the
+  // old bottom-pinned footer, which put every system line under every message.
+  // (`dead`/`reviving` stay separate — they are current-state banners, not
+  // historical events.)
+  const rows = useMemo(() => {
+    const merged: Array<{at: number; row: Row}> = [
+      ...messages.map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
+      ...(systemLines ?? []).map(sn => ({
+        at: sn.at,
+        row: {kind: 'sys' as const, sys: sn},
+      })),
+    ];
+    // inverted list → newest first (index 0 renders at the bottom).
+    merged.sort((a, b) => b.at - a.at);
+    return merged.map(x => x.row);
+  }, [messages, systemLines]);
+  const empty = rows.length === 0;
 
   return (
     <KeyboardAvoidingView
@@ -808,21 +828,31 @@ export function ChatScreen() {
       )}
       <FlatList
         inverted
-        data={messages}
-        keyExtractor={m => String(m.msgPk)}
+        data={rows}
+        keyExtractor={r =>
+          r.kind === 'msg' ? `m${r.msg.msgPk}` : `s${r.sys.id}`
+        }
         renderItem={({item}) => {
-          const attribution = resolveAttribution(item, isGroup, convo);
+          if (item.kind === 'sys') {
+            return (
+              <SystemLine testID={`system-${item.sys.id}`}>
+                {item.sys.text}
+              </SystemLine>
+            );
+          }
+          const m = item.msg;
+          const attribution = resolveAttribution(m, isGroup, convo);
           return (
             <Bubble
-              msg={item}
+              msg={m}
               attribution={attribution}
-              onRetry={() => retry(convoPk, item.msgPk)}
+              onRetry={() => retry(convoPk, m.msgPk)}
               onLongPress={pageY => {
                 setBubbleY(pageY);
                 setBubbleTarget({
-                  own: item.direction === 'out',
+                  own: m.direction === 'out',
                   isGroup,
-                  text: item.text,
+                  text: m.text,
                   address: attribution?.address ?? null,
                   label: attribution?.label ?? null,
                 });
@@ -852,12 +882,8 @@ export function ChatScreen() {
       {reviving && (
         <SystemLine testID="group-reviving-line">Re-creating the group…</SystemLine>
       )}
-      {/* Per-member progress: "<label> <hex> invited" then "… joined". */}
-      {(systemLines ?? []).map(n => (
-        <SystemLine key={n.id} testID={`system-${n.id}`}>
-          {n.text}
-        </SystemLine>
-      ))}
+      {/* #188: per-member "invited/joined/left" + mirror lines now interleave
+          into the timeline above (by time), not as a footer under every message. */}
       {dead && !canRevive ? (
         // Member side: no auto re-create. Offer a working way forward instead of
         // a dead composer. Plain New Group screen — we cannot honestly prefill a

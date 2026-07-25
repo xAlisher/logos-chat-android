@@ -27,6 +27,9 @@ export const MESH_INVITE_PREFIX = 'lmi:';
 export interface SystemNote {
   id: string;
   text: string;
+  /** #188: creation time, so system lines interleave into the timeline by time
+   *  instead of being pinned below every message. */
+  at: number;
 }
 
 interface ChatState {
@@ -417,7 +420,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ...s.systemLines,
         [convoPk]: [
           ...(s.systemLines[convoPk] ?? []),
-          {id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, text},
+          {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            text,
+            at: Date.now(),
+          },
         ],
       },
     }));

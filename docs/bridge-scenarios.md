@@ -90,4 +90,30 @@ Test rig: **Samsung = B**, **Pixel = C**. **A** is simulated by a second mesh no
   - **Verification**: pure logic unit-tested (43 green). The LoRa round-trip is hardware-bound
     (two radios, BLE-exclusive) → drive on-device as far as possible; the physical radio exchange
     needs the user's eyes (wetware).
-- Still to do: #188 (interleave system lines by time — separate build).
+- **2026-07-25** — #188 done: system lines (invited/joined/left/mirror) now interleave into the
+  timeline BY TIME (ChatScreen merges messages + system notes, sorted; `SystemNote.at` added),
+  instead of a bottom-pinned footer. `dead`/`reviving` stay as current-state banners.
+
+## Verification status (honest)
+
+**Verified headlessly / by tests:**
+- Bug 2 (add 3rd member) — on-device: `re-created group 33 as 01ee3cb000`, member added; Pixel shows 👥3.
+- Build + typecheck + 43 logic tests (incl. the relay envelope: round-trip, colon-in-text, isRelay
+  loop-guard, sanitization). App installs + runs + node starts on both phones.
+- #188 interleave — verifiable on-device without radios (open a group with system lines + a later
+  message; the message renders below the older system line).
+
+**WETWARE-REQUIRED (physical radios, BLE-exclusive, a transmitting mesh peer):** the LoRa
+round-trip S0.4/S1/S2. Reinstalling the app drops the BLE link, so the radios must be reconnected.
+Steps for the user:
+1. **Free the radios** from the official MeshCore app (disconnect there) so our app can claim them.
+2. **Samsung (B):** open the group → if it says "Group ended when the app restarted", send once to
+   revive (auto-recreate). Connect the radio (MeshCore screen). Then group menu → **Switch to
+   MeshCore** — this sends the NEW-format invite (carries the group id) to mapped members.
+3. **Pixel (C):** connect its radio; it receives the invite and should **bind the channel to the
+   group** (Bug 1 fix) — inbound mesh now lands in the group, not a new "Channel N".
+4. **A (mesh-only peer):** from a second mesh node / the official app on the same channel, send a
+   line → it should appear in the group on **both** Samsung and Pixel as "<A> · via bridge".
+   (Samsung relays mesh→Logos so the Pixel, with no direct mesh path to A's message, still sees it.)
+5. **C (Pixel):** send in the group → Samsung relays Logos→mesh → **A** sees it on the channel.
+Watch `adb logcat -s logos-chat-bridge` on the Samsung for the relay calls.
