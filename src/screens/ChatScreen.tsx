@@ -58,6 +58,7 @@ import type {Conversation, Message, SystemNote} from '../stores/chatStore';
 type Row = {kind: 'msg'; msg: Message} | {kind: 'sys'; sys: SystemNote};
 import {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
+import {deriveComposerState} from '../stores/groupState';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import type {RootStackParamList} from '../navigation/types';
@@ -572,44 +573,29 @@ export function ChatScreen() {
     });
   }, [navigation, convo, isGroup]);
 
-  const running = nodeStatus === 'running';
-  const connecting = nodeStatus === 'initializing' || nodeStatus === 'starting';
-
-  // #168 (Phase 2c): this Logos group is switched to its MeshCore mirror — sends
-  // ride the radio, so it's live regardless of the node.
+  // #193/docs/test-matrix: composer/liveness state is derived by the pure,
+  // unit-tested deriveComposerState — the screen only maps sendColorKind→color
+  // and ANDs canSend with the live text/busy state.
   const meshMode = (convo?.meshMode ?? false) && convo?.meshChannelIdx != null;
-  const overMesh = isMesh || meshMode; // configured to leave over the radio
-  // A mesh send only actually works when the radio is CONNECTED. When it isn't,
-  // a mesh-mirrored group still sends over Logos (dual-send skips mesh), but a
-  // pure mesh channel can't send at all — so gate on the live radio, not just
-  // on being mesh-configured.
-  const meshLive = overMesh && meshStatus === 'connected';
-  const canSend = (meshLive || running) && text.trim().length > 0 && !busy;
-
-  // Submit button color signals the transport actually in play (#169). Green ONLY
-  // when the mesh radio is connected (not merely mesh-configured — the radio can
-  // be down). Otherwise mirror Logos node status (#17): orange running, gray
-  // connecting, red offline.
-  const sendColor = meshLive
-    ? MESH_GREEN
-    : running
-    ? colors.accent
-    : connecting
-    ? colors.nodeConnecting
-    : colors.nodeOffline;
-
-  // #112: a group the lib can no longer operate. Only the CREATOR may revive it;
-  // everyone else is offered a fresh group instead (two re-creators would fork it,
-  // and a joiner's roster is partial (#95) so it would silently drop members).
-  // A pure MeshCore channel (transport==='mesh', isMesh) has no Logos/MLS side, so
-  // it can never be "dead". A mesh-MIRRORED Logos group (transport 'logos',
-  // meshMode) DOES have an MLS side that can fail to rehydrate (#103).
-  const logosDead = isGroup && !isMesh && liveness === 'dead';
-  // The mesh mirror only masks the "ended" state while the radio is ACTUALLY
-  // connected (meshLive) — a dead group with the radio down has NO working
-  // transport, so it should honestly show "ended" + Restart, not a live composer.
-  const dead = logosDead && !meshLive;
-  const canRevive = logosDead && (convo?.createdByMe ?? false);
+  const cs = deriveComposerState({
+    isGroup,
+    isMesh,
+    meshMode,
+    meshStatus,
+    nodeStatus,
+    liveness,
+    createdByMe: convo?.createdByMe ?? false,
+  });
+  const {running, connecting, overMesh, meshLive, dead, canRevive} = cs;
+  const canSend = cs.canSendBase && text.trim().length > 0 && !busy;
+  const sendColor =
+    cs.sendColorKind === 'mesh'
+      ? MESH_GREEN
+      : cs.sendColorKind === 'accent'
+      ? colors.accent
+      : cs.sendColorKind === 'connecting'
+      ? colors.nodeConnecting
+      : colors.nodeOffline;
 
   // #168 (Phase 2b): mesh-mirror banner state. Shown on a Logos group when a radio
   // is connected and the group is either already mirrored or has mapped members.
