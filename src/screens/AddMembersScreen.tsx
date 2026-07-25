@@ -253,11 +253,15 @@ export function AddMembersScreen() {
               <Text style={[type.label, {color: colors.accent}]}>Paste</Text>
             </Pressable>
           </View>
+          {/* #179: inline, SECONDARY (the bottom "Add to group" stays the primary
+              CTA), and disabled until the field holds a plausible 64-hex address
+              (same validator the stage() flow uses). */}
           <ActionButton
             label="Add"
-            variant="primary"
+            variant="secondary"
             style={styles.addBtn}
             testID="add-member-add"
+            disabled={!isAddress(field)}
             onPress={() => stage(field)}
           />
         </View>
