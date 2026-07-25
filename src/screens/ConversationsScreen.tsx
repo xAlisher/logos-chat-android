@@ -2,7 +2,7 @@
 // visible across restarts. Leading element = a HexAvatar generated from the
 // identity (orange for a contact, azure for a group — #117); unread badge.
 import React, {useCallback, useState} from 'react';
-import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
+import {Text, View, Pressable, FlatList, StyleSheet, Vibration} from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
@@ -14,6 +14,13 @@ import {SpeedDialFab} from '../components/SpeedDialFab';
 import {HexAvatar, avatarSeed} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SideMenu, type MenuView} from '../components/SideMenu';
+import {
+  OverflowMenu,
+  UsersIcon,
+  MessageCircleIcon,
+  type MenuItem,
+} from '../components/OverflowMenu';
+import {TrashIcon} from '../components/TrashIcon';
 import {useNodeStore} from '../stores/nodeStore';
 import {
   useChatStore,
@@ -45,14 +52,18 @@ function formatTime(at: number): string {
 function ConversationRow({
   convo,
   onPress,
+  onLongPress,
 }: {
   convo: Conversation;
   onPress: () => void;
+  onLongPress: () => void;
 }) {
   return (
     <Pressable
       style={styles.row}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={300}
       testID={`convo-${convo.convoPk}`}>
       <HexAvatar
         seed={avatarSeed(convo)}
@@ -98,6 +109,8 @@ export function ConversationsScreen() {
   // Side-menu (#125): filter the list (All/Chats/Groups) or open a page.
   const [view, setView] = useState<MenuView>('all');
   const [menuOpen, setMenuOpen] = useState(false);
+  // #131: the row a long-press context menu is acting on.
+  const [rowMenu, setRowMenu] = useState<Conversation | null>(null);
   const all = sortedConversations(conversations);
   const list =
     view === 'chats'
@@ -114,6 +127,64 @@ export function ConversationsScreen() {
     },
     [remove],
   );
+
+  const openChat = useCallback(
+    (c: Conversation) =>
+      navigation.navigate('Chat', {
+        convoPk: c.convoPk,
+        convoName: convoDisplayName(c),
+        isGroup: c.isGroup,
+      }),
+    [navigation],
+  );
+
+  // #131: long-press a row → haptic + a context menu (dim backdrop via the menu's
+  // own modal) with the actions available from the list.
+  const onRowLongPress = useCallback((c: Conversation) => {
+    Vibration.vibrate(18);
+    setRowMenu(c);
+  }, []);
+
+  const rowMenuItems: MenuItem[] =
+    rowMenu == null
+      ? []
+      : rowMenu.isGroup
+      ? [
+          {
+            key: 'open',
+            label: 'Open',
+            icon: <MessageCircleIcon color={colors.textDim} />,
+            onPress: () => openChat(rowMenu),
+          },
+          {
+            key: 'group-info',
+            label: 'Group info',
+            icon: <UsersIcon color={colors.textDim} />,
+            onPress: () => navigation.navigate('GroupInfo', {convoPk: rowMenu.convoPk}),
+          },
+          {
+            key: 'delete',
+            label: 'Delete conversation',
+            icon: <TrashIcon size={20} color={colors.unread} />,
+            onPress: () => onDeleteConvo(rowMenu.convoPk),
+            destructive: true,
+          },
+        ]
+      : [
+          {
+            key: 'open',
+            label: 'Open',
+            icon: <MessageCircleIcon color={colors.textDim} />,
+            onPress: () => openChat(rowMenu),
+          },
+          {
+            key: 'delete',
+            label: 'Delete conversation',
+            icon: <TrashIcon size={20} color={colors.unread} />,
+            onPress: () => onDeleteConvo(rowMenu.convoPk),
+            destructive: true,
+          },
+        ];
 
   useFocusEffect(
     useCallback(() => {
@@ -159,13 +230,8 @@ export function ConversationsScreen() {
             <SwipeRow onDelete={() => onDeleteConvo(item.convoPk)}>
               <ConversationRow
                 convo={item}
-                onPress={() =>
-                  navigation.navigate('Chat', {
-                    convoPk: item.convoPk,
-                    convoName: convoDisplayName(item),
-                    isGroup: item.isGroup,
-                  })
-                }
+                onPress={() => openChat(item)}
+                onLongPress={() => onRowLongPress(item)}
               />
             </SwipeRow>
           )}
@@ -186,6 +252,30 @@ export function ConversationsScreen() {
         onContacts={() => navigation.navigate('Contacts')}
         onAbout={() => navigation.navigate('About')}
         onMyAddress={() => navigation.navigate('MyAddress')}
+      />
+      <OverflowMenu
+        visible={rowMenu != null}
+        anchor="center"
+        items={rowMenuItems}
+        onClose={() => setRowMenu(null)}
+        testID="row-menu"
+        header={
+          rowMenu != null ? (
+            <View style={styles.rowMenuHeader}>
+              <HexAvatar
+                seed={avatarSeed(rowMenu)}
+                kind={rowMenu.isGroup ? 'group' : 'contact'}
+                size={32}
+              />
+              <Text
+                style={[type.title, {color: colors.text, flexShrink: 1}]}
+                numberOfLines={1}>
+                {convoDisplayName(rowMenu)}
+              </Text>
+              {rowMenu.verified && <VerifiedBadge size={14} />}
+            </View>
+          ) : null
+        }
       />
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
@@ -218,6 +308,7 @@ const styles = StyleSheet.create({
   // Balances the 34px avatar on the left so the centered title stays optically
   // centered; the offline transport chip (#146) will live here.
   headerRightSlot: {width: 34, height: 34},
+  rowMenuHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   listContent: {paddingBottom: 88},
   titleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   row: {

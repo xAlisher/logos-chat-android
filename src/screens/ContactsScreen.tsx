@@ -2,14 +2,23 @@
 // conversation list). Source: knownContacts() — every 1:1 peer address (with its
 // local label) plus any addresses seen in group rosters. Tapping a contact opens
 // (or creates) the 1:1 chat. Same compact row + identicon as everywhere (#118).
-import React, {useCallback} from 'react';
-import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
+import React, {useCallback, useState} from 'react';
+import {Text, View, Pressable, FlatList, StyleSheet, Vibration, ToastAndroid} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
+import Clipboard from '@react-native-clipboard/clipboard';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing} from '../theme';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
+import {AddressModal} from '../components/AddressModal';
+import {
+  OverflowMenu,
+  MessageCircleIcon,
+  CopyIcon,
+  type MenuItem,
+} from '../components/OverflowMenu';
+import {QrIcon} from '../components/QrIcon';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {knownContacts} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
@@ -25,6 +34,9 @@ export function ContactsScreen() {
   const members = useChatStore(s => s.members);
   const startConversation = useChatStore(s => s.startConversation);
   const contacts = knownContacts(conversations, members);
+  // #131: long-press context menu + the address viewer it can open.
+  const [menuContact, setMenuContact] = useState<KnownContact | null>(null);
+  const [addressContact, setAddressContact] = useState<KnownContact | null>(null);
 
   // Resolve-or-create the 1:1 with `address` and open it.
   const open = useCallback(
@@ -53,11 +65,43 @@ export function ContactsScreen() {
     [navigation, startConversation],
   );
 
+  const menuItems: MenuItem[] =
+    menuContact == null
+      ? []
+      : [
+          {
+            key: 'message',
+            label: 'Send message',
+            icon: <MessageCircleIcon color={colors.textDim} />,
+            onPress: () => open(menuContact.address),
+          },
+          {
+            key: 'address',
+            label: 'Show address',
+            icon: <QrIcon size={20} color={colors.textDim} />,
+            onPress: () => setAddressContact(menuContact),
+          },
+          {
+            key: 'copy',
+            label: 'Copy address',
+            icon: <CopyIcon color={colors.textDim} />,
+            onPress: () => {
+              Clipboard.setString(menuContact.address);
+              ToastAndroid.show('Copied', ToastAndroid.SHORT);
+            },
+          },
+        ];
+
   const renderItem = useCallback(
     ({item}: {item: KnownContact}) => (
       <Pressable
         style={styles.row}
         onPress={() => open(item.address)}
+        onLongPress={() => {
+          Vibration.vibrate(18); // #131
+          setMenuContact(item);
+        }}
+        delayLongPress={300}
         testID={`contact-${item.address}`}>
         <HexAvatar seed={item.address} kind="contact" size={32} />
         <View style={styles.rowText}>
@@ -110,6 +154,33 @@ export function ContactsScreen() {
           ItemSeparatorComponent={() => <View style={styles.sep} />}
         />
       )}
+      <OverflowMenu
+        visible={menuContact != null}
+        anchor="center"
+        items={menuItems}
+        onClose={() => setMenuContact(null)}
+        testID="contact-menu"
+        header={
+          menuContact != null ? (
+            <View style={styles.menuHeader}>
+              <HexAvatar seed={menuContact.address} kind="contact" size={32} />
+              <Text
+                style={[type.title, {color: colors.text, flexShrink: 1}]}
+                numberOfLines={1}>
+                {menuContact.label ?? shortAddress(menuContact.address)}
+              </Text>
+              {menuContact.verified && <VerifiedBadge size={14} />}
+            </View>
+          ) : null
+        }
+      />
+      <AddressModal
+        visible={addressContact != null}
+        address={addressContact?.address ?? null}
+        label={addressContact?.label ?? null}
+        verified={addressContact?.verified ?? false}
+        onClose={() => setAddressContact(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -126,6 +197,7 @@ const styles = StyleSheet.create({
   },
   rowText: {flex: 1, gap: 0},
   nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  menuHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   sep: {height: 1, backgroundColor: colors.border, marginLeft: spacing.lg},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl},
   emptyText: {...type.label, color: colors.textDim, textAlign: 'center'},

@@ -2,7 +2,7 @@
 // "Add member" reuses the polished Scan screen in addMember mode (camera + paste),
 // which calls addMember and pops back here.
 import React, {useCallback, useEffect, useState} from 'react';
-import {Text, TextInput, View, Pressable, FlatList, ToastAndroid, StyleSheet} from 'react-native';
+import {Text, TextInput, View, Pressable, FlatList, ToastAndroid, StyleSheet, Vibration} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {useFocusEffect, useNavigation, useRoute} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
@@ -105,6 +105,11 @@ export function GroupInfoScreen() {
         style={styles.memberRow}
         disabled={item.isSelf}
         onPress={() => setMenuMember({address: item.address, label: labelFor(item.address)})}
+        onLongPress={() => {
+          Vibration.vibrate(18); // #131: hold a roster member for its menu
+          setMenuMember({address: item.address, label: labelFor(item.address)});
+        }}
+        delayLongPress={300}
         testID={`member-${item.address}`}>
         <HexAvatar seed={item.address} kind="contact" size={32} />
         <View style={styles.memberText}>

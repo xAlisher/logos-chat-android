@@ -197,6 +197,7 @@ export function OverflowMenu({
   items,
   onClose,
   anchor = 'topRight',
+  header,
   testID = 'overflow-menu',
 }: {
   visible: boolean;
@@ -204,6 +205,8 @@ export function OverflowMenu({
   onClose: () => void;
   /** 'topRight' = header ellipsis popup; 'center' = a standalone action sheet. */
   anchor?: 'topRight' | 'center';
+  /** Optional identity header (#131) — who/what this long-press menu acts on. */
+  header?: React.ReactNode;
   testID?: string;
 }) {
   // Close FIRST, then run the action on the next tick: an Alert or a second
@@ -233,6 +236,12 @@ export function OverflowMenu({
         testID={`${testID}-backdrop`}>
         {/* Taps inside the card must not fall through to the backdrop. */}
         <Pressable style={styles.card} onPress={() => {}} testID={testID}>
+          {header != null && (
+            <>
+              <View style={styles.header}>{header}</View>
+              <View style={styles.headerDivider} />
+            </>
+          )}
           {items.map(item => (
             <Pressable
               key={item.key}
@@ -284,4 +293,6 @@ const styles = StyleSheet.create({
   rowIcon: {width: S, alignItems: 'center', justifyContent: 'center'},
   rowLabel: {...type.body, color: colors.text, flexShrink: 1},
   rowLabelDestructive: {color: colors.unread},
+  header: {paddingHorizontal: spacing.lg, paddingVertical: spacing.sm},
+  headerDivider: {height: 1, backgroundColor: colors.border, marginBottom: spacing.xs},
 });

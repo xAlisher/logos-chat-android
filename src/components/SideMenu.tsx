@@ -30,43 +30,43 @@ function Icon({children}: {children: React.ReactNode}) {
     </Svg>
   );
 }
-const stroke = (extra: object = {}) => ({
-  stroke: colors.text,
+const stroke = (color: string, extra: object = {}) => ({
+  stroke: color,
   strokeWidth: 1.8,
   strokeLinecap: 'round' as const,
   ...extra,
 });
-const AllIcon = () => (
+const AllIcon = ({color = colors.text}: {color?: string}) => (
   <Icon>
-    <Line x1="4" y1="7" x2="20" y2="7" {...stroke()} />
-    <Line x1="4" y1="12" x2="20" y2="12" {...stroke()} />
-    <Line x1="4" y1="17" x2="20" y2="17" {...stroke()} />
+    <Line x1="4" y1="7" x2="20" y2="7" {...stroke(color)} />
+    <Line x1="4" y1="12" x2="20" y2="12" {...stroke(color)} />
+    <Line x1="4" y1="17" x2="20" y2="17" {...stroke(color)} />
   </Icon>
 );
-const ChatsIcon = () => (
+const ChatsIcon = ({color = colors.text}: {color?: string}) => (
   <Icon>
-    <Path d="M4 5h16v11H9l-4 3.5V16H4z" {...stroke({strokeLinejoin: 'round'})} />
+    <Path d="M4 5h16v11H9l-4 3.5V16H4z" {...stroke(color, {strokeLinejoin: 'round'})} />
   </Icon>
 );
-const GroupsIcon = () => (
+const GroupsIcon = ({color = colors.text}: {color?: string}) => (
   <Icon>
-    <Circle cx="9" cy="9" r="3" {...stroke()} />
-    <Path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" {...stroke()} />
-    <Path d="M16 6.2a3 3 0 0 1 0 5.6" {...stroke()} />
-    <Path d="M17 14.2c2.4.5 3.5 2.2 3.5 4.8" {...stroke()} />
+    <Circle cx="9" cy="9" r="3" {...stroke(color)} />
+    <Path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" {...stroke(color)} />
+    <Path d="M16 6.2a3 3 0 0 1 0 5.6" {...stroke(color)} />
+    <Path d="M17 14.2c2.4.5 3.5 2.2 3.5 4.8" {...stroke(color)} />
   </Icon>
 );
-const ContactsIcon = () => (
+const ContactsIcon = ({color = colors.text}: {color?: string}) => (
   <Icon>
-    <Circle cx="12" cy="8" r="3.5" {...stroke()} />
-    <Path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" {...stroke()} />
+    <Circle cx="12" cy="8" r="3.5" {...stroke(color)} />
+    <Path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" {...stroke(color)} />
   </Icon>
 );
-const AboutIcon = () => (
+const AboutIcon = ({color = colors.text}: {color?: string}) => (
   <Icon>
-    <Circle cx="12" cy="12" r="9" {...stroke()} />
-    <Line x1="12" y1="11" x2="12" y2="16.5" {...stroke()} />
-    <Rect x="11.1" y="7.3" width="1.8" height="1.8" rx="0.9" fill={colors.text} />
+    <Circle cx="12" cy="12" r="9" {...stroke(color)} />
+    <Line x1="12" y1="11" x2="12" y2="16.5" {...stroke(color)} />
+    <Rect x="11.1" y="7.3" width="1.8" height="1.8" rx="0.9" fill={color} />
   </Icon>
 );
 
@@ -77,18 +77,20 @@ function Item({
   onPress,
   testID,
 }: {
-  icon: React.ReactNode;
+  // Render-prop so the active state can tint the icon too (#156).
+  icon: (color: string) => React.ReactNode;
   label: string;
   active?: boolean;
   onPress: () => void;
   testID: string;
 }) {
+  const tint = active ? colors.accent : colors.text;
   return (
     <Pressable
       style={[styles.item, active && styles.itemActive]}
       onPress={onPress}
       testID={testID}>
-      <View style={styles.itemIcon}>{icon}</View>
+      <View style={styles.itemIcon}>{icon(tint)}</View>
       <Text style={[styles.itemLabel, active && {color: colors.accent}]}>
         {label}
       </Text>
@@ -193,21 +195,21 @@ export function SideMenu({
 
         <View style={styles.group}>
           <Item
-            icon={<AllIcon />}
+            icon={c => <AllIcon color={c} />}
             label="All"
             active={activeView === 'all'}
             onPress={() => pick(() => onSelectView('all'))}
             testID="menu-all"
           />
           <Item
-            icon={<ChatsIcon />}
+            icon={c => <ChatsIcon color={c} />}
             label="Chats"
             active={activeView === 'chats'}
             onPress={() => pick(() => onSelectView('chats'))}
             testID="menu-chats"
           />
           <Item
-            icon={<GroupsIcon />}
+            icon={c => <GroupsIcon color={c} />}
             label="Groups"
             active={activeView === 'groups'}
             onPress={() => pick(() => onSelectView('groups'))}
@@ -219,13 +221,13 @@ export function SideMenu({
 
         <View style={styles.group}>
           <Item
-            icon={<ContactsIcon />}
+            icon={c => <ContactsIcon color={c} />}
             label="Contacts"
             onPress={() => pick(onContacts)}
             testID="menu-contacts"
           />
           <Item
-            icon={<AboutIcon />}
+            icon={c => <AboutIcon color={c} />}
             label="About"
             onPress={() => pick(onAbout)}
             testID="menu-about"
