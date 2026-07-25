@@ -32,6 +32,9 @@ function App() {
     // so the address is fetched on the 'running' node_status event (nodeStore).
     (async () => {
       await useSettingsStore.getState().load();
+      // Hydrate the cached address first so My-address draws the QR instantly,
+      // before the node finishes booting (#119).
+      await useNodeStore.getState().hydrateAddress();
       await useNodeStore.getState().autoStart();
     })();
   }, []);

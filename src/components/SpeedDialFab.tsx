@@ -98,15 +98,16 @@ function MiniAction({
           ],
         },
       ]}>
-      <View style={styles.labelPill}>
-        <Text style={styles.labelText}>{label}</Text>
-      </View>
+      {/* #120: the whole row — label pill AND icon — is one tap target. */}
       <Pressable
         testID={testID}
         hitSlop={6}
-        style={styles.miniBtn}
+        style={styles.miniPress}
         onPress={onPress}>
-        {children}
+        <View style={styles.labelPill}>
+          <Text style={styles.labelText}>{label}</Text>
+        </View>
+        <View style={styles.miniBtn}>{children}</View>
       </Pressable>
     </Animated.View>
   );
@@ -243,6 +244,8 @@ const styles = StyleSheet.create({
   miniRow: {
     position: 'absolute',
     right: spacing.lg + 6,
+  },
+  miniPress: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,

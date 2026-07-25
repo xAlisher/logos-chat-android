@@ -45,13 +45,12 @@ export function MyAddressScreen() {
     <View style={styles.root}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.card}>
-          {!running ? (
+          {/* #119: draw the QR the instant we have an address — from the cache on
+              a warm start, so we don't gate on the node finishing boot. Only the
+              very first run (no cached address yet) shows the waiting state. */}
+          {myAddress == null ? (
             <Text style={[type.label, {color: colors.textDim}]}>
-              node starting…
-            </Text>
-          ) : myAddress == null ? (
-            <Text style={[type.label, {color: colors.textDim}]}>
-              reading address…
+              {running ? 'reading address…' : 'node starting…'}
             </Text>
           ) : (
             <>

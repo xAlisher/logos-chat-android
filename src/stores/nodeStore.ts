@@ -5,6 +5,9 @@ import LogosChat, {addLogosChatListener} from '../native/LogosChat';
 import type {NodeStatus} from '../native/LogosChat';
 import {isBenignInboundError, benignReason} from './inboundErrors';
 
+/** KV key caching the stable address so the QR is instant on next launch (#119). */
+export const KV_MY_ADDRESS = 'myAddress';
+
 interface NodeState {
   status: NodeStatus;
   /** This client's own stable hex address (the QR/paste peers use to reach us). */
@@ -17,6 +20,9 @@ interface NodeState {
   stop: () => Promise<void>;
   /** (Re)read the stable address from the running node. */
   fetchAddress: () => Promise<void>;
+  /** Hydrate myAddress from the KV cache so the QR renders before the node boots
+   *  (#119). The identity is persistent, so a cached value is always valid. */
+  hydrateAddress: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -50,7 +56,9 @@ export const useNodeStore = create<NodeState>((set, get) => ({
   stop: async () => {
     try {
       await LogosChat.stopNode();
-      set({myAddress: null, installationName: null});
+      // Keep myAddress — the identity is stable, so the cached QR stays valid
+      // even while the node is down (#119). Only the live installation name goes.
+      set({installationName: null});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -66,8 +74,24 @@ export const useNodeStore = create<NodeState>((set, get) => ({
         // optional
       }
       set({myAddress: addr, installationName});
+      // Cache it so the next launch draws the QR before the node is up (#119).
+      LogosChat.setSetting(KV_MY_ADDRESS, addr).catch(() => {});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
+    }
+  },
+
+  hydrateAddress: async () => {
+    if (get().myAddress != null) {
+      return;
+    }
+    try {
+      const cached = await LogosChat.getSetting(KV_MY_ADDRESS);
+      if (cached && cached.length > 0 && get().myAddress == null) {
+        set({myAddress: cached});
+      }
+    } catch {
+      // no cache yet — first run; the QR waits for the node as before
     }
   },
 
@@ -84,12 +108,12 @@ addLogosChatListener(e => {
     }
     // The address is stable — fetch it the moment the node is running so the
     // header QR + Settings identity are instant.
-    if (e.status === 'running' && useNodeStore.getState().myAddress == null) {
+    if (e.status === 'running') {
+      // Always re-read on running to reconcile the cache with the live value.
       useNodeStore.getState().fetchAddress();
     }
-    if (e.status === 'stopped') {
-      useNodeStore.setState({myAddress: null});
-    }
+    // Note: myAddress is NOT cleared on 'stopped' — the identity is stable, so the
+    // cached QR stays valid across a node restart (#119).
   } else if (e.eventType === 'inbound_error' && e.source === 'lib') {
     try {
       const parsed = JSON.parse(e.event ?? '{}');
