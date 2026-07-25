@@ -464,13 +464,14 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
       Log.w(TAG, "sendAppStart with no pending connect promise")
       return
     }
-    // TODO(hardware): the real companion CMD_APP_START frame is
-    //   [1][app_ver:1][reserved:6][UTF-8 app_name]. We send the bare command byte
-    //   for the Phase-0 draft; if the firmware ignores a bare APP_START, prepend
-    //   the version + reserved + name preamble per companion_protocol.md.
+    // CMD_APP_START must be >= 8 bytes or the firmware ignores it (verified against
+    // MyMesh.cpp: `cmd_frame[0]==CMD_APP_START && len >= 8`). Layout:
+    //   [0x01][7 reserved bytes][UTF-8 app name]. Firmware replies RESP_CODE_SELF_INFO.
+    val appStart =
+        byteArrayOf(CMD_APP_START, 0, 0, 0, 0, 0, 0, 0) + "logos".toByteArray(Charsets.UTF_8)
     enqueue(
         Command(
-            frame = byteArrayOf(CMD_APP_START),
+            frame = appStart,
             expectedResp = RESP_CODE_SELF_INFO,
             settle = settle,
             parse = { frame -> parseSelfInfo(frame) },
@@ -588,17 +589,22 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
    *   companion_protocol.md when a radio is available and adjust the offsets.
    */
   private fun parseSelfInfo(frame: ByteArray): String {
-    // Strip the leading response-code byte.
-    val payload = if (frame.size > 1) frame.copyOfRange(1, frame.size) else ByteArray(0)
-    val pubkey =
-        if (payload.size >= PUBKEY_LEN) payload.copyOfRange(0, PUBKEY_LEN) else payload.copyOf()
-    val pubkeyHex = pubkey.toHex()
-    val nameBytes =
-        if (payload.size > PUBKEY_LEN) payload.copyOfRange(PUBKEY_LEN, payload.size)
-        else ByteArray(0)
-    // Trim trailing NULs / control bytes that pad a fixed-width name field.
+    // Verified layout (MyMesh.cpp / companion_protocol.md PACKET_SELF_INFO):
+    //   [0]=0x05 [1]=adv_type [2]=tx_power [3]=max_tx_power
+    //   [4..35]=pubkey(32) [36..43]=lat/lon [44..47]=flags [48..55]=freq/bw
+    //   [56]=sf [57]=cr [58..]=device name (UTF-8, variable, no terminator).
+    val pubkeyOffset = 4
+    val nameOffset = 58
+    val pubkeyHex =
+        if (frame.size >= pubkeyOffset + PUBKEY_LEN)
+            frame.copyOfRange(pubkeyOffset, pubkeyOffset + PUBKEY_LEN).toHex()
+        else ""
     val name =
-        String(nameBytes, Charsets.UTF_8).trim().trimEnd(' ').filter { it >= ' ' }
+        if (frame.size > nameOffset)
+            String(frame.copyOfRange(nameOffset, frame.size), Charsets.UTF_8)
+                .trim()
+                .filter { it >= ' ' }
+        else ""
     val obj = org.json.JSONObject()
     obj.put("pubkeyHex", pubkeyHex)
     obj.put("name", name)
