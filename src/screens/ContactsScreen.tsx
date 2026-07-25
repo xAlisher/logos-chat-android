@@ -12,10 +12,12 @@ import {colors, type, spacing} from '../theme';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {AddressModal} from '../components/AddressModal';
+import {LabelModal} from '../components/LabelModal';
 import {
   OverflowMenu,
   MessageCircleIcon,
   CopyIcon,
+  TagIcon,
   type MenuItem,
 } from '../components/OverflowMenu';
 import {QrIcon} from '../components/QrIcon';
@@ -33,10 +35,34 @@ export function ContactsScreen() {
   const conversations = useChatStore(s => s.conversations);
   const members = useChatStore(s => s.members);
   const startConversation = useChatStore(s => s.startConversation);
+  const setNickname = useChatStore(s => s.setNickname);
+  const setVerified = useChatStore(s => s.setVerified);
   const contacts = knownContacts(conversations, members);
-  // #131: long-press context menu + the address viewer it can open.
+  // #131: long-press context menu + the address / label editors it can open.
   const [menuContact, setMenuContact] = useState<KnownContact | null>(null);
   const [addressContact, setAddressContact] = useState<KnownContact | null>(null);
+  const [labelContact, setLabelContact] = useState<KnownContact | null>(null);
+
+  // Persist a label + verified flag for a contact: reuse the 1:1 with them, else
+  // create it (#131 Edit label from the Contacts list).
+  const saveContactLabel = useCallback(
+    async (address: string, label: string, verified: boolean) => {
+      const existing = Object.values(useChatStore.getState().conversations).find(
+        c => !c.isGroup && c.peerAddress?.toLowerCase() === address.toLowerCase(),
+      );
+      try {
+        if (existing != null) {
+          await setNickname(existing.convoPk, label);
+          await setVerified(existing.convoPk, verified);
+        } else {
+          await startConversation(address, {nickname: label || undefined, verified});
+        }
+      } catch (e: any) {
+        useNodeStore.setState({error: `label failed: ${e?.message ?? e}`});
+      }
+    },
+    [setNickname, setVerified, startConversation],
+  );
 
   // Resolve-or-create the 1:1 with `address` and open it.
   const open = useCallback(
@@ -74,6 +100,12 @@ export function ContactsScreen() {
             label: 'Send message',
             icon: <MessageCircleIcon color={colors.textDim} />,
             onPress: () => open(menuContact.address),
+          },
+          {
+            key: 'label',
+            label: menuContact.label ? 'Edit label' : 'Add label',
+            icon: <TagIcon color={colors.textDim} />,
+            onPress: () => setLabelContact(menuContact),
           },
           {
             key: 'address',
@@ -180,6 +212,16 @@ export function ContactsScreen() {
         label={addressContact?.label ?? null}
         verified={addressContact?.verified ?? false}
         onClose={() => setAddressContact(null)}
+      />
+      <LabelModal
+        visible={labelContact != null}
+        label={labelContact?.label ?? null}
+        address={labelContact?.address ?? null}
+        verified={labelContact?.verified ?? false}
+        onClose={() => setLabelContact(null)}
+        onSave={(v, ver) =>
+          labelContact != null && saveContactLabel(labelContact.address, v, ver)
+        }
       />
     </SafeAreaView>
   );
