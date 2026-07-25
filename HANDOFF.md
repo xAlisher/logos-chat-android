@@ -1,3 +1,46 @@
+# CHECKPOINT — 2026-07-26 autonomous backlog sweep (Opus)
+
+Goal this run: clear the actionable backlog (EXCEPT the BLE epic #133/#134–#151 and the
+Keycard/identity epic #69/#61–#68), test end-to-end on the 3 phones with **proof screenshots
+committed to `logs/verification/` and linked from issues**, connect the mesh radio, and build the
+#193 state matrix into headless tests. Open issues: ~65 → **30**.
+
+**Devices — all on WiFi adb (cable-free):** Pixel `192.168.1.39:5555`, Samsung `192.168.1.45:5555`,
+Red Me/Xiaomi `192.168.1.52:5555`. Reconnect a dropped one with `adb connect <ip>:5555`. Mesh
+radio `E8:9C:E9:29:86:AA` is CONNECTED to the Samsung (Transports → MeshCore Online).
+
+**Shipped + closed this run:** #177, #188, #189, #191, #192 (verified), #173 (verified+proof).
+Also fixed + committed (NOT yet closed — close after the final build+on-device pass):
+- send-fallback ("no radio connected" on a mesh-mirror send with radio down → now carries over
+  Logos) `baveoky4o`/committed; proof `logs/verification/send-fallback-and-color-samsung.png`.
+- send-button green ONLY when radio live `726588d`; "ended"+Restart when a dead mirrored group's
+  radio is down `dbe11fb`.
+- #194 clone fix (merged `6997e0f`): recreate bakes `logos-continues:<oldId>`; members fold into
+  the old thread. Headless proof: ChatDbTest fold test. **On-device confounded by #195** (Red Me
+  node has no peers → never gets welcomes).
+- #158/#160 (merged `e7e7c1c` + manifest predictive-back `72c4399`), #174-lists (merged),
+  #190/#178/#179/#174-chat (merged `2417e25`).
+- **deriveComposerState** extracted from ChatScreen → `src/stores/groupState.ts` (pure) + the
+  12-cell #193 matrix as `__tests__/groupState.test.ts`. **Tests now 96** (63 JS logic + 33 Kotlin).
+- `docs/test-matrix.md` (the #193 matrix as headless/ADB/wetware scenarios).
+
+**In flight:** worktree agent for #172 (persist mesh contacts to DB) — merge when it lands.
+
+**NEXT (in order):**
+1. Merge #172 worktree, then **build once** (`cd android && JAVA_HOME=…jdk-17 ./gradlew
+   assembleRelease`) with ALL merges, install to the 3 (WiFi), on-device proof pass.
+2. Close the merged-but-open issues with proof links once verified: #158 #160 #174 #178 #179 #190
+   #194 #172. (#158 edge-swipe wants a real finger swipe — light wetware; adb swipe over-throws.)
+3. Wave 3 (worktree agents, serialize ChatDb writers): #175 (dup-convo reconcile by account),
+   #163 (remove dead FFI + bridge rebuild), #37 (pagination), #38 (DB export), #195 (surface
+   failed-join + re-invite; show "no peers" as a real not-connected state).
+4. Retro + memory update.
+
+**Wetware still open:** #15 (aim camera at a QR), #83/#168 (real LoRa delivery between radios),
+#195 root (a member node with actual peers), #182 (MeshInfoModal scroll — code fix present).
+
+---
+
 # HANDOFF — logos-chat-android (written by Fable, 2026-07-23, for the next agent)
 
 State snapshot for continuing this project with zero session context.
