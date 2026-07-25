@@ -69,7 +69,7 @@ export function NewConversationScreen() {
           <View style={styles.addrRow}>
             <HexAvatar seed={address} kind="contact" size={40} />
             <View style={styles.addrText}>
-              <Text style={[type.label, {color: colors.textDim}]}>Peer Address</Text>
+              <Text style={[type.label, {color: colors.text}]}>Peer address</Text>
               <Text style={styles.address} selectable numberOfLines={2}>
                 {address}
               </Text>

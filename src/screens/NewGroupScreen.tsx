@@ -55,55 +55,56 @@ export function NewGroupScreen() {
       <KeyboardAwareScreen contentContainerStyle={styles.content}>
         {!running && (
           <Text style={[type.label, {color: colors.unread}]}>
-            node not running — start it in settings first
+            Node not running — start it in settings first
           </Text>
         )}
-        <View style={styles.card}>
-          <Text style={[type.label, {color: colors.textDim}]}>group name</Text>
+        {/* Fields laid directly on the page (no modal-looking card), white
+            capitalized labels, first field auto-focused (#154). */}
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Group name</Text>
           <TextInput
             style={styles.input}
             value={name}
             onChangeText={setName}
-            placeholder="name this group…"
+            placeholder="Name this group…"
             placeholderTextColor={colors.textFaint}
             editable={!busy}
+            autoFocus
             testID="group-name-input"
           />
-          <Text style={[type.label, {color: colors.textDim}]}>
-            description (optional)
-          </Text>
+        </View>
+        <View style={styles.field}>
+          <Text style={styles.fieldLabel}>Description (optional)</Text>
           <TextInput
             style={[styles.input, styles.descInput]}
             value={description}
             onChangeText={setDescription}
-            placeholder="what's this group about…"
+            placeholder="What's this group about…"
             placeholderTextColor={colors.textFaint}
             editable={!busy}
             multiline
             testID="group-desc-input"
           />
-          <Pressable
-            style={[styles.createBtn, !canCreate && styles.btnDisabled]}
-            disabled={!canCreate}
-            onPress={onCreate}
-            testID="create-group-btn">
-            {busy ? (
-              <ActivityIndicator color={colors.onAccent} />
-            ) : (
-              <Text style={[type.title, {color: colors.onAccent}]}>
-                {'create group >>'}
-              </Text>
-            )}
-          </Pressable>
-          {busy && (
-            <Text style={[type.label, {color: colors.textDim}]}>
-              creating group (MLS)…
-            </Text>
-          )}
-          <Text style={[type.caption, {color: colors.textFaint}]}>
-            next: invite members to the group.
-          </Text>
         </View>
+        <Pressable
+          style={[styles.createBtn, !canCreate && styles.btnDisabled]}
+          disabled={!canCreate}
+          onPress={onCreate}
+          testID="create-group-btn">
+          {busy ? (
+            <ActivityIndicator color={colors.onAccent} />
+          ) : (
+            <Text style={[type.title, {color: colors.onAccent}]}>Create group</Text>
+          )}
+        </Pressable>
+        {busy && (
+          <Text style={[type.label, {color: colors.textDim}]}>
+            Creating group (MLS)…
+          </Text>
+        )}
+        <Text style={[type.caption, {color: colors.textFaint}]}>
+          Next: invite members to the group.
+        </Text>
       </KeyboardAwareScreen>
       <ErrorToast message={error} onDismiss={() => setError(null)} />
     </View>
@@ -113,14 +114,8 @@ export function NewGroupScreen() {
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.canvas},
   content: {padding: spacing.lg, gap: spacing.lg},
-  card: {
-    backgroundColor: colors.panel,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.card,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
+  field: {gap: spacing.sm},
+  fieldLabel: {...type.label, color: colors.text}, // #154: external labels are white
   input: {
     ...type.body,
     color: colors.text,
@@ -137,10 +132,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
     borderRadius: radii.card,
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.sm,
-    minHeight: 44,
+    minHeight: 48,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch', // full-width CTA above the keyboard (#154)
   },
   btnDisabled: {opacity: 0.5},
 });

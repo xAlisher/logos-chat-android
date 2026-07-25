@@ -10,7 +10,7 @@ export const colors = {
   accent: '#FF5000', // own bubble fill, buttons, FAB, branding (Logos orange)
   accentHover: '#FF7A33', // pressed/hover states (Paper ripple tint)
   accentPressed: '#CC4000', // active press
-  onAccent: '#000000', // text on accent (~6.8:1 on #FF5000)
+  onAccent: '#FFFFFF', // text on accent — white + semibold everywhere (#154), never black
   bubblePeer: '#1F1F1F', // received bubble fill (text #FAFAFA)
   unread: '#EF4444', // unread badge
   pulse: '#F59E0B', // amber startup pulse (node initializing/starting)

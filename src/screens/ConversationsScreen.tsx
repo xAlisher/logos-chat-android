@@ -10,7 +10,7 @@ import {colors, type, spacing, layout} from '../theme';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
-import {SpeedDialFab} from '../components/SpeedDialFab';
+import {SpeedDialFab, GroupGlyph} from '../components/SpeedDialFab';
 import {HexAvatar, avatarSeed} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SideMenu, type MenuView} from '../components/SideMenu';
@@ -78,13 +78,24 @@ function ConversationRow({
             {convoDisplayName(convo)}
           </Text>
           {convo.verified && <VerifiedBadge size={14} />}
+          {/* #155: groups show a gray group glyph + participant count here, where
+              the date used to be; 1:1 rows show nothing in this spot. */}
+          {convo.isGroup && (
+            <View style={styles.groupMeta}>
+              <GroupGlyph size={14} color={colors.textFaint} />
+              <Text style={styles.groupCount}>{convo.memberCount}</Text>
+            </View>
+          )}
         </View>
-        <Text style={styles.preview} numberOfLines={1}>
-          {convo.lastText || (convo.isGroup ? 'new group' : 'new conversation')}
-        </Text>
+        {/* #155: the timestamp moved here, in front of the last message. */}
+        <View style={styles.previewRow}>
+          <Text style={styles.time}>{formatTime(convo.lastMessageAt)}</Text>
+          <Text style={styles.preview} numberOfLines={1}>
+            {convo.lastText || (convo.isGroup ? 'new group' : 'new conversation')}
+          </Text>
+        </View>
       </View>
       <View style={styles.rowRight}>
-        <Text style={styles.time}>{formatTime(convo.lastMessageAt)}</Text>
         <UnreadBadge count={convo.unread} />
       </View>
     </Pressable>
@@ -320,9 +331,13 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   rowBody: {flex: 1, gap: 0},
-  preview: {...type.label, color: colors.textDim, lineHeight: 14},
+  previewRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  preview: {...type.label, color: colors.textDim, lineHeight: 14, flexShrink: 1},
   rowRight: {alignItems: 'flex-end', gap: spacing.xs},
   time: {...type.caption, color: colors.textFaint},
+  // #155: gray group glyph + participant count, pushed to the title row's right.
+  groupMeta: {flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 'auto'},
+  groupCount: {...type.caption, color: colors.textFaint},
   separator: {height: 1, backgroundColor: colors.border},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   emptyText: {...type.label, color: colors.textDim},
