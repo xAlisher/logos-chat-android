@@ -23,7 +23,6 @@ import {
 import {useRoute, useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import Svg, {Circle, Line} from 'react-native-svg';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
@@ -48,6 +47,8 @@ import {
 import {AddressModal} from '../components/AddressModal';
 import {LabelModal} from '../components/LabelModal';
 import {MeshInfoModal} from '../components/MeshInfoModal';
+import {InfoIcon} from '../components/InfoIcon';
+import {InfoModal, InfoSection} from '../components/InfoModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
@@ -69,31 +70,6 @@ const MESH_MAX_CHARS = 140;
 // Mesh transport accent — theme has no green token (brand is orange), so the
 // literal lives here per the mesh-transport design (docs/mesh-transport.md).
 const MESH_GREEN = '#22C55E';
-
-/** lucide `info` — the (i) affordance that opens the mesh-mirroring explainer (#168). */
-function InfoIcon({
-  size = 18,
-  color = colors.textDim,
-}: {
-  size?: number;
-  color?: string;
-}) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Circle cx={12} cy={12} r={10} stroke={color} strokeWidth={1.8} />
-      <Line
-        x1={12}
-        y1={11}
-        x2={12}
-        y2={16}
-        stroke={color}
-        strokeWidth={1.8}
-        strokeLinecap="round"
-      />
-      <Circle cx={12} cy={8} r={1} fill={color} />
-    </Svg>
-  );
-}
 
 /** The attribution shown above an incoming bubble (#10). Display-only (#109). */
 interface Attribution {
@@ -281,7 +257,7 @@ export function ChatScreen() {
   const remove = useChatStore(s => s.remove);
   const startConversation = useChatStore(s => s.startConversation);
   const probeGroup = useChatStore(s => s.probeGroup);
-  const reviveAndSend = useChatStore(s => s.reviveAndSend);
+  const recreateGroup = useChatStore(s => s.recreateGroup);
   const liveness = useChatStore(s => s.liveness[convoPk]);
   const systemLines = useChatStore(s => s.systemLines[convoPk]);
   const nodeStatus = useNodeStore(s => s.status);
@@ -304,6 +280,9 @@ export function ChatScreen() {
   const [reviving, setReviving] = useState(false);
   // #168: the "About mesh mirroring" explainer (banner (i) + ⋮ menu).
   const [meshInfoOpen, setMeshInfoOpen] = useState(false);
+  // #191/#192: explainer modals for the restart-group action and the invited wait.
+  const [restartInfoOpen, setRestartInfoOpen] = useState(false);
+  const [invitedInfoOpen, setInvitedInfoOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -704,20 +683,28 @@ export function ChatScreen() {
     setText('');
     try {
       setBusy(true);
-      if (canRevive) {
-        // Revive, then hold this message until the invitee's join commits — MLS
-        // gives a joiner no history, so anything published before they join is
-        // undeliverable to them (observed: the trigger message never arrived).
-        setReviving(true);
-        await reviveAndSend(convoPk, t);
-        setReviving(false);
-      } else {
-        await send(convoPk, t);
-      }
+      // #191: no more silent revive-on-send. A dead group is restarted only via
+      // the explicit "Restart group" action (which shows what it does), so the
+      // composer isn't even reachable while dead — a plain send is all this is.
+      await send(convoPk, t);
     } catch (e: any) {
       useNodeStore.setState({error: `send failed: ${e?.message ?? e}`});
     } finally {
       setBusy(false);
+    }
+  };
+
+  // #191: explicit, honest restart of a dead group (creator only). Creates a new
+  // MLS group and re-invites the roster (the (i) explains the Logos limitation +
+  // that a new group appears in the desktop module); local history is kept.
+  const doRestart = async () => {
+    try {
+      setReviving(true);
+      await recreateGroup(convoPk);
+    } catch (e: any) {
+      useNodeStore.setState({error: `restart failed: ${e?.message ?? e}`});
+    } finally {
+      setReviving(false);
     }
   };
 
@@ -835,7 +822,13 @@ export function ChatScreen() {
         renderItem={({item}) => {
           if (item.kind === 'sys') {
             return (
-              <SystemLine testID={`system-${item.sys.id}`}>
+              <SystemLine
+                testID={`system-${item.sys.id}`}
+                onInfo={
+                  item.sys.info === 'invited-wait'
+                    ? () => setInvitedInfoOpen(true)
+                    : undefined
+                }>
                 {item.sys.text}
               </SystemLine>
             );
@@ -884,17 +877,36 @@ export function ChatScreen() {
       )}
       {/* #188: per-member "invited/joined/left" + mirror lines now interleave
           into the timeline above (by time), not as a footer under every message. */}
-      {dead && !canRevive ? (
-        // Member side: no auto re-create. Offer a working way forward instead of
-        // a dead composer. Plain New Group screen — we cannot honestly prefill a
-        // roster (#95 partial), so starting clean is the honest option.
+      {dead ? (
+        // #191: a dead group offers an EXPLICIT action + an (i) explainer, never
+        // a silent revive-on-send. Creator → "Restart group" (recreate in place,
+        // keep history); member → "Create new group" (can't honestly prefill a
+        // roster, #95). The (i) explains the Logos limitation + that a new group
+        // appears in the desktop module.
         <View style={styles.deadFooter}>
-          <ActionButton
-            label="Create new group"
-            variant="primary"
-            testID="create-new-group"
-            onPress={() => navigation.navigate('NewGroup')}
-          />
+          <View style={styles.deadFooterRow}>
+            <View style={styles.deadFooterBtn}>
+              <ActionButton
+                label={canRevive ? 'Restart group' : 'Create new group'}
+                variant="primary"
+                testID={canRevive ? 'restart-group' : 'create-new-group'}
+                onPress={
+                  canRevive
+                    ? () => {
+                        if (!reviving) doRestart();
+                      }
+                    : () => navigation.navigate('NewGroup')
+                }
+              />
+            </View>
+            <Pressable
+              onPress={() => setRestartInfoOpen(true)}
+              hitSlop={10}
+              style={styles.deadInfoBtn}
+              testID="restart-info">
+              <InfoIcon size={22} color={colors.textDim} />
+            </Pressable>
+          </View>
         </View>
       ) : (
       <View style={styles.composer}>
@@ -974,6 +986,51 @@ export function ChatScreen() {
         visible={meshInfoOpen}
         onClose={() => setMeshInfoOpen(false)}
       />
+      {/* #191: explains the restart-group action + the Logos limitation behind it. */}
+      <InfoModal
+        visible={restartInfoOpen}
+        onClose={() => setRestartInfoOpen(false)}
+        title="Restarting a group"
+        testID="restart-info-modal">
+        <Text style={styles.infoIntro}>
+          This is an alpha build. Logos Messaging can't yet reopen a group's
+          encryption after the app restarts, so a group from an earlier session
+          has to be re-created rather than resumed.
+        </Text>
+        <InfoSection title="Why">
+          Logos groups use MLS, and the current library can't restore a group's
+          MLS state from storage after the node restarts (it has no load path
+          yet). Until that lands, the group can only be re-created. Tracking:
+          logos-chat-android #103 and #187 (a longer-term stored-snapshot fix).
+        </InfoSection>
+        <InfoSection title="What “Restart group” does">
+          It creates a brand-new group under the hood, re-invites the current
+          members, and keeps your local chat history here so the conversation
+          continues in this same thread.
+        </InfoSection>
+        <InfoSection title="What the others will see">
+          In the desktop Basecamp chat module a new group will appear, and each
+          member gets a fresh invite to join it. That's expected — not a bug.
+          Members need to accept/join before new messages reach them.
+        </InfoSection>
+      </InfoModal>
+      {/* #192: explains you must wait for the invitee to join before sending. */}
+      <InfoModal
+        visible={invitedInfoOpen}
+        onClose={() => setInvitedInfoOpen(false)}
+        title="Adding a member"
+        testID="invited-info-modal">
+        <Text style={styles.infoIntro}>
+          Wait for Logos Messaging to finish adding this member — you'll see a
+          “joined” line for them — before you send.
+        </Text>
+        <InfoSection title="Why it matters">
+          A new member can only receive messages sent after they join. There's no
+          history replay, so anything you send in the gap between “invited” and
+          “joined” will never reach them. Give it a moment; the app also briefly
+          holds your first message until the join settles.
+        </InfoSection>
+      </InfoModal>
       <ErrorToast message={nodeError} onDismiss={clearError} />
     </KeyboardAvoidingView>
   );
@@ -1021,6 +1078,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     padding: spacing.md,
   },
+  deadFooterRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  deadFooterBtn: {flex: 1},
+  deadInfoBtn: {
+    padding: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoIntro: {...type.body, color: colors.text, lineHeight: 20},
   attrRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: 2},
   attrLine: {...type.caption, flexShrink: 1},
   timeRow: {flexDirection: 'row', alignItems: 'center'},

@@ -30,6 +30,9 @@ export interface SystemNote {
   /** #188: creation time, so system lines interleave into the timeline by time
    *  instead of being pinned below every message. */
   at: number;
+  /** #192: optional explainer key — when set, the line shows an (i) that opens
+   *  the matching info modal. Currently only 'invited-wait'. */
+  info?: string;
 }
 
 interface ChatState {
@@ -77,8 +80,8 @@ interface ChatState {
   leaveGroup: (convoPk: number) => Promise<void>;
   /** Per-thread system notes (invited/joined, group revived) — UI-only, not persisted. */
   systemLines: Record<number, SystemNote[]>;
-  /** Append a system note to a thread. */
-  pushSystemLine: (convoPk: number, text: string) => void;
+  /** Append a system note to a thread. `info` tags it with an explainer key (#192). */
+  pushSystemLine: (convoPk: number, text: string, info?: string) => void;
   /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
   liveness: Record<number, string>;
   /** #112: probe whether the lib can still operate this group. */
@@ -205,8 +208,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await LogosChat.addGroupMember(convoPk, address);
     }
     // Report per-member progress in the thread: invited now, joined when their
-    // add actually commits (members_changed) — the two are ~a minute apart.
-    get().pushSystemLine(convoPk, `${describePeer(address)} invited`);
+    // add actually commits (members_changed) — the two are ~a minute apart. The
+    // 'invited-wait' tag adds an (i) explaining you must wait for the join before
+    // sending, or those messages never reach the new member (#192).
+    get().pushSystemLine(convoPk, `${describePeer(address)} invited`, 'invited-wait');
     (pendingJoins[convoPk] ??= []).push(address.toLowerCase());
     await get().loadMembers(convoPk);
     await get().refreshConversations();
@@ -414,7 +419,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().refreshConversations();
   },
 
-  pushSystemLine: (convoPk: number, text: string) => {
+  pushSystemLine: (convoPk: number, text: string, info?: string) => {
     set(s => ({
       systemLines: {
         ...s.systemLines,
@@ -424,6 +429,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             text,
             at: Date.now(),
+            info,
           },
         ],
       },
