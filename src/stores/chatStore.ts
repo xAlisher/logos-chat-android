@@ -31,8 +31,13 @@ export interface SystemNote {
    *  instead of being pinned below every message. */
   at: number;
   /** #192: optional explainer key — when set, the line shows an (i) that opens
-   *  the matching info modal. Currently only 'invited-wait'. */
+   *  the matching info modal ('invited-wait'), or (#195) an action affordance
+   *  ('join-failed' → a "Re-invite" tap). */
   info?: string;
+  /** #195: the address this note's action targets (e.g. the invitee to
+   *  re-invite for a 'join-failed' line). Threaded so the UI can act without a
+   *  side lookup. */
+  infoAddress?: string;
 }
 
 /** #160: what the conversation list row shows as its preview + timestamp. */
@@ -73,6 +78,16 @@ interface ChatState {
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
   loadMessages: (convoPk: number) => Promise<void>;
+  /**
+   * #37: fetch the next OLDER page and PREPEND it to `messages[convoPk]`
+   * (de-duped by msgPk). No-op once `reachedEnd[convoPk]` is set (a short page
+   * came back) or while a load is already in flight for that convo.
+   */
+  loadMoreMessages: (convoPk: number) => Promise<void>;
+  /** #37: per-convo — the oldest page has been reached (a short page returned). */
+  reachedEnd: Record<number, boolean>;
+  /** #37: per-convo — an older-page load is in flight (guards duplicate loads). */
+  loadingMore: Record<number, boolean>;
   /** Create (or reuse) a 1:1 conversation with a peer address. Resolves convoPk. */
   startConversation: (
     peerAddress: string,
@@ -111,8 +126,14 @@ interface ChatState {
   leaveGroup: (convoPk: number) => Promise<void>;
   /** Per-thread system notes (invited/joined, group revived) — UI-only, not persisted. */
   systemLines: Record<number, SystemNote[]>;
-  /** Append a system note to a thread. `info` tags it with an explainer key (#192). */
-  pushSystemLine: (convoPk: number, text: string, info?: string) => void;
+  /** Append a system note to a thread. `info` tags it with an explainer key (#192);
+   *  `infoAddress` threads the address an action line targets (#195). */
+  pushSystemLine: (
+    convoPk: number,
+    text: string,
+    info?: string,
+    infoAddress?: string,
+  ) => void;
   /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
   liveness: Record<number, string>;
   /** #112: probe whether the lib can still operate this group. */
@@ -143,7 +164,10 @@ export {
   knownContacts,
   filterContacts,
   isAddressVerified,
+  oldestMsgPk,
+  mergeOlderPage,
 } from './conversationView';
+import {oldestMsgPk, mergeOlderPage} from './conversationView';
 export type {KnownContact} from './conversationView';
 
 const PAGE = 200;
@@ -171,12 +195,45 @@ function describePeer(address: string): string {
  */
 const pendingJoins: Record<number, string[]> = {};
 
+/**
+ * #195: how long we wait for an invitee's `members_changed` "joined" before we
+ * stop pretending it's on its way. An invitee whose node has no subscribed peers
+ * never receives the MLS welcome (there is no store replay), so it silently never
+ * joins — after this window we surface an honest "hasn't joined" line offering a
+ * re-invite, rather than leaving "invited" sitting there forever.
+ */
+const JOIN_TIMEOUT_MS = 90_000;
+
+/**
+ * #195: per-conversation timers, one per outstanding invite, FIFO like
+ * `pendingJoins`. A `members_changed` join clears the matching timer; if a timer
+ * fires first, the invite is treated as failed.
+ */
+interface PendingInvite {
+  address: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+const pendingInvites: Record<number, PendingInvite[]> = {};
+
+/** #195: drop + clear the first outstanding invite timer for `address`, if any. */
+function clearPendingInvite(convoPk: number, address: string) {
+  const q = pendingInvites[convoPk];
+  if (q == null) return;
+  const i = q.findIndex(p => p.address === address);
+  if (i >= 0) {
+    clearTimeout(q[i].timer);
+    q.splice(i, 1);
+  }
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: {},
   messages: {},
   members: {},
   systemLines: {},
   liveness: {},
+  reachedEnd: {},
+  loadingMore: {},
   activeConvoPk: null,
 
   refreshConversations: async () => {
@@ -194,7 +251,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const rows: MessageRow[] = JSON.parse(
       await LogosChat.listMessages(convoPk, 0, PAGE),
     );
-    set(s => ({messages: {...s.messages, [convoPk]: rows}}));
+    // #37: this is the newest-page (re)load — it replaces the window, so reset
+    // the paging cursor state. A short first page means there's nothing older.
+    set(s => ({
+      messages: {...s.messages, [convoPk]: rows},
+      reachedEnd: {...s.reachedEnd, [convoPk]: rows.length < PAGE},
+    }));
+  },
+
+  loadMoreMessages: async (convoPk: number) => {
+    const s = get();
+    if (s.loadingMore[convoPk] === true || s.reachedEnd[convoPk] === true) {
+      return;
+    }
+    const existing = s.messages[convoPk] ?? [];
+    const before = oldestMsgPk(existing);
+    if (before <= 0) {
+      // Nothing durable loaded yet — no cursor to page before.
+      return;
+    }
+    set(st => ({loadingMore: {...st.loadingMore, [convoPk]: true}}));
+    try {
+      const older: MessageRow[] = JSON.parse(
+        await LogosChat.listMessages(convoPk, before, PAGE),
+      );
+      set(st => ({
+        messages: {
+          ...st.messages,
+          [convoPk]: mergeOlderPage(st.messages[convoPk] ?? existing, older),
+        },
+        // A short page is the end of history for this thread.
+        reachedEnd: {...st.reachedEnd, [convoPk]: older.length < PAGE},
+      }));
+    } finally {
+      set(st => ({loadingMore: {...st.loadingMore, [convoPk]: false}}));
+    }
   },
 
   startConversation: async (peerAddress, opts) => {
@@ -244,7 +335,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // 'invited-wait' tag adds an (i) explaining you must wait for the join before
     // sending, or those messages never reach the new member (#192).
     get().pushSystemLine(convoPk, `${describePeer(address)} invited`, 'invited-wait');
-    (pendingJoins[convoPk] ??= []).push(address.toLowerCase());
+    const lower = address.toLowerCase();
+    (pendingJoins[convoPk] ??= []).push(lower);
+    // #195: an invitee whose node has no subscribed peers never gets the MLS
+    // welcome (no store replay) and silently never joins. Arm a timeout: if no
+    // "joined" arrives, escalate the line to an honest "hasn't joined" that
+    // offers a re-invite. Cleared by notifyJoin when the join actually commits.
+    const timer = setTimeout(() => {
+      // This invite timed out — remove it from both FIFO queues so a later,
+      // unrelated join doesn't get mis-attributed to it.
+      const q = pendingInvites[convoPk];
+      if (q != null) {
+        const i = q.findIndex(p => p.timer === timer);
+        if (i >= 0) q.splice(i, 1);
+      }
+      const jq = pendingJoins[convoPk];
+      if (jq != null) {
+        const j = jq.indexOf(lower);
+        if (j >= 0) jq.splice(j, 1);
+      }
+      get().pushSystemLine(
+        convoPk,
+        `${describePeer(address)} hasn't joined — they may be offline`,
+        'join-failed',
+        lower,
+      );
+    }, JOIN_TIMEOUT_MS);
+    (pendingInvites[convoPk] ??= []).push({address: lower, timer});
     await get().loadMembers(convoPk);
     await get().refreshConversations();
   },
@@ -465,7 +582,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().refreshConversations();
   },
 
-  pushSystemLine: (convoPk: number, text: string, info?: string) => {
+  pushSystemLine: (
+    convoPk: number,
+    text: string,
+    info?: string,
+    infoAddress?: string,
+  ) => {
     set(s => ({
       systemLines: {
         ...s.systemLines,
@@ -476,6 +598,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             text,
             at: Date.now(),
             info,
+            infoAddress,
           },
         ],
       },
@@ -530,6 +653,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   remove: async (convoPk: number) => {
     await LogosChat.deleteConversation(convoPk);
+    // #195: don't let a pending "hasn't joined" timeout fire on a deleted thread.
+    for (const p of pendingInvites[convoPk] ?? []) {
+      clearTimeout(p.timer);
+    }
+    delete pendingInvites[convoPk];
+    delete pendingJoins[convoPk];
     set(s => {
       const conversations = {...s.conversations};
       delete conversations[convoPk];
@@ -744,6 +873,8 @@ addLogosChatListener(e => {
       const queue = pendingJoins[e.convoPk];
       const joined = queue?.shift();
       if (joined != null) {
+        // #195: the join landed in time — cancel its "hasn't joined" timeout.
+        clearPendingInvite(e.convoPk, joined);
         s.pushSystemLine(e.convoPk, `${describePeer(joined)} joined`);
       }
       // #116: anyone the lib roster diff found missing → "<x> left".

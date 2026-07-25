@@ -257,6 +257,9 @@ export function ChatScreen() {
   const switchGroupToLogos = useChatStore(s => s.switchGroupToLogos);
   const meshStatus = useMeshStore(s => s.status);
   const loadMessages = useChatStore(s => s.loadMessages);
+  const loadMoreMessages = useChatStore(s => s.loadMoreMessages);
+  const loadingMore = useChatStore(s => s.loadingMore[convoPk]) ?? false;
+  const addMember = useChatStore(s => s.addMember);
   const send = useChatStore(s => s.send);
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
@@ -718,6 +721,24 @@ export function ChatScreen() {
     });
   }
 
+  // #37: older history loads at the visual TOP of an inverted list — which is
+  // where onEndReached fires. The store guards against duplicate/at-end loads.
+  const onLoadOlder = useCallback(() => {
+    loadMoreMessages(convoPk).catch(() => {});
+  }, [loadMoreMessages, convoPk]);
+
+  // #195: re-invite an invitee whose join never landed — re-runs addMember,
+  // which pushes a fresh "invited" line and re-arms the join timeout. Honest:
+  // this only re-sends the invite, it does not guarantee they'll receive it.
+  const onReinvite = useCallback(
+    (address: string) => {
+      addMember(convoPk, address).catch(e =>
+        useNodeStore.setState({error: `re-invite failed: ${e?.message ?? e}`}),
+      );
+    },
+    [addMember, convoPk],
+  );
+
   const doSend = async () => {
     if (!canSend) {
       return;
@@ -867,12 +888,20 @@ export function ChatScreen() {
         }
         renderItem={({item}) => {
           if (item.kind === 'sys') {
+            const info = item.sys.info;
             return (
               <SystemLine
                 testID={`system-${item.sys.id}`}
                 onInfo={
-                  item.sys.info === 'invited-wait'
+                  info === 'invited-wait'
                     ? () => setInvitedInfoOpen(true)
+                    : undefined
+                }
+                // #195: a stuck invite offers a one-tap re-invite for its address.
+                actionLabel={info === 'join-failed' ? 'Re-invite' : undefined}
+                onAction={
+                  info === 'join-failed' && item.sys.infoAddress != null
+                    ? () => onReinvite(item.sys.infoAddress!)
                     : undefined
                 }>
                 {item.sys.text}
@@ -911,6 +940,18 @@ export function ChatScreen() {
           empty && styles.listContentEmpty,
         ]}
         ListEmptyComponent={<View style={styles.emptySpacer} />}
+        // #37: inverted list → the visual TOP is the list "end", so scrolling up
+        // into older history triggers onEndReached. A short page stops it
+        // (reachedEnd), and the store dedupes concurrent loads.
+        onEndReached={onLoadOlder}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          loadingMore ? (
+            <View style={styles.loadMoreSpinner} testID="load-older-spinner">
+              <ActivityIndicator color={colors.textDim} />
+            </View>
+          ) : null
+        }
       />
       {/* #112 system lines — flex rules, never wrapping dash characters. */}
       {dead && (
@@ -1088,6 +1129,8 @@ const styles = StyleSheet.create({
   listContent: {padding: spacing.lg, gap: spacing.sm},
   listContentEmpty: {flexGrow: 1},
   emptySpacer: {flex: 1},
+  // #37: the load-older spinner sits at the visual top of the inverted list.
+  loadMoreSpinner: {paddingVertical: spacing.md, alignItems: 'center'},
   bubbleWrap: {maxWidth: layout.bubbleMaxWidthPct, gap: 2},
   wrapPeer: {alignSelf: 'flex-start', alignItems: 'flex-start'},
   wrapOwn: {alignSelf: 'flex-end', alignItems: 'flex-end'},
