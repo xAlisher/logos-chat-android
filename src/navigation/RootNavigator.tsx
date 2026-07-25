@@ -86,6 +86,16 @@ export function RootNavigator() {
           headerTitleStyle: {...type.title, color: colors.text},
           headerShadowVisible: false,
           contentStyle: {backgroundColor: colors.canvas},
+          // #158: enable edge-swipe-back on every pushed route (Chat, GroupInfo,
+          // Contacts, About, …). react-native-screens is active (native-stack
+          // uses it), so the gesture is handled natively; the header back arrow
+          // and the system back button keep working alongside it.
+          // fullScreenGestureEnabled widens the swipe zone from the screen edge
+          // to the whole view for an iOS-style full-width swipe where the native
+          // stack supports it. The initial route (Conversations) has nothing to
+          // pop, so its SwipeRow (swipe-to-delete) never competes with this.
+          gestureEnabled: true,
+          fullScreenGestureEnabled: true,
         }}>
         <Stack.Screen
           name="Conversations"
