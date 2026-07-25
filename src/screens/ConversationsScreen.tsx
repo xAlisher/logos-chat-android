@@ -87,12 +87,13 @@ function ConversationRow({
             </View>
           )}
         </View>
-        {/* #155: the timestamp moved here, in front of the last message. */}
+        {/* #155/#159: last message on the left, timestamp bottom-right on the
+            same line. */}
         <View style={styles.previewRow}>
-          <Text style={styles.time}>{formatTime(convo.lastMessageAt)}</Text>
           <Text style={styles.preview} numberOfLines={1}>
             {convo.lastText || (convo.isGroup ? 'new group' : 'new conversation')}
           </Text>
+          <Text style={styles.time}>{formatTime(convo.lastMessageAt)}</Text>
         </View>
       </View>
       <View style={styles.rowRight}>
@@ -335,9 +336,9 @@ const styles = StyleSheet.create({
   },
   rowBody: {flex: 1, gap: 0},
   previewRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
-  preview: {...type.label, color: colors.textDim, lineHeight: 14, flexShrink: 1},
+  preview: {...type.label, color: colors.textDim, lineHeight: 14, flex: 1},
   rowRight: {alignItems: 'flex-end', gap: spacing.xs},
-  time: {...type.caption, color: colors.textFaint},
+  time: {...type.caption, color: colors.textFaint}, // #159: right-aligned by preview flex:1
   // #155: gray group glyph + participant count, pushed to the title row's right.
   groupMeta: {flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 'auto'},
   groupCount: {...type.caption, color: colors.textFaint},
