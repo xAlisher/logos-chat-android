@@ -245,6 +245,42 @@ produces no echo, so it cannot prove the echo filter works.
 - **Empty-thread composer** must not depend on an empty inverted `FlatList`
   measuring — use an explicit empty-state spacer (#84).
 
+## 10a. RN / UI patterns & pitfalls (2026-07-25 batch)
+
+Durable UI lessons from the identicon / verified / side-menu / long-press / typography work.
+
+1. **react-native-svg composites above sibling Views — draw overlays INTO the Svg.**
+   An overlay `<View>` (even with `elevation` + `zIndex`) did **not** paint above a
+   `<Svg>`'s native surface on Android — the badge was invisible. Fix: render the
+   overlay as vector elements *inside the same `<Svg>`*. `HexAvatar` was refactored
+   to export `identiconCells()`/`AVATAR_N` so the QR badge draws the exact same
+   identicon inside the QR's Svg (white-stroked dark tile + cells). → #153 QR badge.
+2. **`pointerEvents="none"` on `<Text>` is unreliable on Android.** A full-width,
+   absolutely-positioned centered header title `<Text pointerEvents="none">` still
+   ate taps on the avatar beneath it. Fix: wrap the title in a
+   `<View pointerEvents="none">` **and** order children so the tappable siblings
+   render *last* (later siblings win hit-testing). → #125 header.
+3. **Instant identity from cache.** `myAddress` is a stable identity: persist it to
+   native KV (`setSetting`) when first read, hydrate it into `nodeStore` **before**
+   `autoStart()` on launch, and **never clear it on node `stopped`**. The QR then
+   renders immediately on a warm start instead of gating on `running`. → #119.
+4. **`verified` is user-asserted, NEVER defaulted.** The local verified checkbox is
+   always unchecked by default — *including via QR scan*, because a QR can be
+   scanned off a web page, so scanning is not proof of a real identity. Local-only,
+   never broadcast. This is the UI half of the mesh-trust gate. → #153 / #141.
+5. **One token flips all on-accent text.** `colors.onAccent` is the single source
+   for "text on the orange accent". Flipping it `#000→#FFF` turned every button, the
+   FAB, and own chat bubbles white in one change — no per-site edits. → #154.
+6. **Tap-anchored context menus.** `OverflowMenu` `anchor="point"` + `anchorY`
+   (the long-press `e.nativeEvent.pageY`) centers the menu on the tap and clamps it
+   within `[statusBar+margin, bottom-margin]` using an `onLayout`-measured card
+   height, so it never runs off-screen (flips up near the bottom). → #157.
+7. **Adding a ChatDb column is a pure-DB change — no bridge rebuild.** Bump
+   `DB_VERSION`, add the column in `onCreate`, add a numbered `onUpgrade` case
+   (`ALTER TABLE … ADD COLUMN … DEFAULT`), thread it through `listConversationsJson`
+   → `ConversationRow`. A Gradle rebuild suffices; `build-bridge.sh` is only for FFI
+   export changes (§2). → #153 `verified` (v4).
+
 ## 10. Issue map
 
 | Area | Issues |
@@ -254,3 +290,11 @@ produces no echo, so it cannot prove the echo filter works.
 | UI menus & modals | #104, #105, #106, #107, #109 |
 | Flow & polish | #111 (gray pulse), #114 (post-create → Add Members) |
 | Roster | #95 (joiner roster fill), #110 (removal-by-vote — future) |
+| Identicons & rows | #117/#118 (HexAvatar everywhere), #122 (white-primary lines), #155 (group-row participant count) |
+| Header & side menu | #125 → #126–#130 (All/Chats/Groups/Contacts/About), #152 (QR→menu), #156 (active icon tint) |
+| Verified contacts | #153 (local flag + blue badge everywhere), #141 (verified-vs-TOFU trust gate — offline epic) |
+| Context menus | #131 (long-press haptic+dim menu), #157 (anchor near tap) |
+| Modals & forms | #124 (address modal QR + X), #154 (typography/forms: fields-on-page, white-semibold buttons, no black-on-orange) |
+| My-address | #119 (instant QR from cache), #120 (tappable speed-dial labels) |
+| **Offline epic (mesh/BLE)** | **#133** → foundation #134–#141, BLE #142–#144, LoRa #145, UI #146–#151. Research synthesis in #132. **Not started — needs ≥2 devices/radio (wetware).** |
+| Exploration | #132 (offline transports research — Reticulum/qaul/bitchat/Meshtastic/MeshCore patterns) |
