@@ -179,6 +179,40 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         transport = "mesh")
   }
 
+  /**
+   * #167 (Phase 1b): get-or-create the local conversation mirroring a MeshCore
+   * ECDH direct message. Keyed by `lib_convo_id` = "mesh:dm:<pubkeyHex>" so the
+   * inbound path (which only knows the sender's 6-byte prefix) and the outbound
+   * path (which knows the full pubkey) can be reconciled by prefix. Stored as a
+   * 1:1 mesh conversation (transport='mesh', is_group=0); peer_address holds the
+   * mesh pubkey hex.
+   */
+  fun upsertMeshDm(pubkeyHex: String, name: String?): Long {
+    val key = "mesh:dm:$pubkeyHex"
+    convoPkByLibId(key)?.let { return it }
+    return insertConversation(
+        peerAddress = pubkeyHex,
+        libConvoId = key,
+        nickname = name,
+        createdAt = System.currentTimeMillis(),
+        isGroup = false,
+        transport = "mesh")
+  }
+
+  /**
+   * #167 (Phase 1b): resolve a mesh DM conversation from a sender's 6-byte pubkey
+   * PREFIX (12 hex chars) — the inbound DM frame only carries the prefix. Matches
+   * the existing "mesh:dm:<fullpubkey>" row whose pubkey starts with the prefix.
+   * Returns the convo_pk, or null if we've never DM'd this peer.
+   */
+  fun meshDmByPrefix(prefixHex: String): Long? =
+      readableDatabase
+          .rawQuery(
+              "SELECT convo_pk FROM conversations WHERE transport='mesh' AND is_group=0 " +
+                  "AND lib_convo_id LIKE ? LIMIT 1",
+              arrayOf("mesh:dm:$prefixHex%"))
+          .use { if (it.moveToFirst()) it.getLong(0) else null }
+
   /** #167: record a mesh message in the durable store; bumps unread for inbound
    *  into a non-active thread. Returns the new msg_pk. */
   fun recordMeshMessage(

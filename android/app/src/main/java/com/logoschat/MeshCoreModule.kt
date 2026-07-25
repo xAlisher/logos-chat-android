@@ -90,6 +90,12 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     private const val CMD_SEND_SELF_ADVERT: Byte = 7
     private const val CMD_SET_ADVERT_NAME: Byte = 8
 
+    // -- Phase-1b DM + CONTACTS command bytes (MyMesh.cpp #defines, verified) --
+    // MyMesh.cpp:7  CMD_SEND_TXT_MSG   2 — send a 1:1 direct message.
+    private const val CMD_SEND_TXT_MSG: Byte = 2
+    // MyMesh.cpp:9  CMD_GET_CONTACTS   4 — request the contact roster (streamed).
+    private const val CMD_GET_CONTACTS: Byte = 4
+
     // -- Phase-1 CHANNEL command bytes (MyMesh.cpp #defines, verified) ---------
     // MyMesh.cpp:8  CMD_SEND_CHANNEL_TXT_MSG  3
     private const val CMD_SEND_CHANNEL_TXT_MSG: Byte = 3
@@ -111,6 +117,13 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     // MyMesh.cpp:71 RESP_CODE_OK 0  — reply to CMD_SET_CHANNEL and CMD_SEND_CHANNEL_TXT_MSG
     // (firmware calls writeOKFrame() for both; see MyMesh.cpp:1132 / :1708).
     private const val RESP_CODE_OK: Int = 0
+    // MyMesh.cpp:73/74/75 CMD_GET_CONTACTS streams: CONTACTS_START, then CONTACT×N, then END.
+    // The firmware pushes each CONTACT frame autonomously from its loop
+    // (checkSerialInterface, MyMesh.cpp:2185-2210) after replying CONTACTS_START — the
+    // app sends CMD_GET_CONTACTS once and accumulates the unsolicited stream.
+    private const val RESP_CODE_CONTACTS_START: Int = 2
+    private const val RESP_CODE_CONTACT: Int = 3
+    private const val RESP_CODE_END_OF_CONTACTS: Int = 4
     // MyMesh.cpp:72 RESP_CODE_ERR 1  — [0x01][err_code]; ends an in-flight command early.
     private const val RESP_CODE_ERR: Int = 1
     // MyMesh.cpp:77 RESP_CODE_SENT 6  — accepted as an alt success for channel-text (doc variant).
@@ -142,6 +155,13 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     // Channel field widths (MyMesh.cpp:1688-1693 / :1700-1705).
     private const val TXT_TYPE_PLAIN: Byte = 0 // MyMesh.cpp TXT_TYPE_PLAIN
     private const val CHANNEL_NAME_LEN = 32
+
+    // Contact frame field widths (MyMesh.cpp:166-187 writeContactRespFrame).
+    // src/MeshCore.h: PUB_KEY_SIZE 32, MAX_PATH_SIZE 64; ContactInfo.h: char name[32].
+    private const val MAX_PATH_SIZE = 64
+    private const val CONTACT_NAME_LEN = 32
+    // Dest prefix carried by CMD_SEND_TXT_MSG + the sender prefix in CONTACT_MSG_RECV.
+    private const val PUBKEY_PREFIX_LEN = 6
     private const val CHANNEL_SECRET_LEN = 16 // 128-bit; 32-byte secret is unsupported (MyMesh.cpp:1698)
     // Safety cap on the getChannels slot walk. MAX_GROUP_CHANNELS is build-specific
     // (1..40 across variants), so we walk until the firmware returns ERR_CODE_NOT_FOUND
@@ -206,6 +226,25 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
 
   /** True while a sync drain loop is active (confined to [handler]'s thread). */
   private var syncing = false
+
+  /**
+   * Active getContacts stream, or null. Unlike the getChannels slot-walk (one
+   * command per slot), the firmware pushes CONTACT frames autonomously after the
+   * single CMD_GET_CONTACTS → CONTACTS_START handshake (MyMesh.cpp:2185-2210), so
+   * we accumulate them out-of-band from the command queue until END_OF_CONTACTS
+   * (or an inter-frame idle timeout). Confined to [handler]'s thread.
+   */
+  private class ContactsCollector(val results: org.json.JSONArray, val settle: SettleOnce)
+
+  private var contactsCollector: ContactsCollector? = null
+  private val contactsTimeoutRunnable = Runnable { finishContacts() }
+
+  /**
+   * Prefix → advert-name map for inbound-DM attribution: 12-hex (6-byte) pubkey
+   * prefix → contact name, rebuilt on each successful getContacts. CONTACT_MSG_RECV
+   * frames carry only the 6-byte sender prefix, so we resolve the display name here.
+   */
+  private var contactNamesByPrefix: Map<String, String> = emptyMap()
 
   /** A promise that can be settled from exactly one place, exactly once. */
   private class SettleOnce(private val promise: Promise) {
@@ -421,6 +460,109 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
               onResponse = { settle.resolve(null) },
               onFailure = { code, message -> settle.reject(code, message) },
           ))
+    }
+  }
+
+  /**
+   * Fetch the radio's contact roster and resolve with a JSON array:
+   *   `[{"pubkeyHex":<64 hex>,"name":<string>}]`.
+   *
+   * Frame: `[4]` (CMD_GET_CONTACTS; the optional `since:4LE` filter is omitted, so
+   * the firmware iterates ALL contacts — MyMesh.cpp:1181-1196). The firmware replies
+   * RESP_CODE_CONTACTS_START, then streams a RESP_CODE_CONTACT frame per contact from
+   * its loop, then RESP_CODE_END_OF_CONTACTS (MyMesh.cpp:2197-2210). We arm a
+   * collector on CONTACTS_START and accumulate CONTACT frames until END (see
+   * onFrameReceived / finishContacts), which also rebuilds the DM-attribution cache.
+   */
+  @ReactMethod
+  fun getContacts(promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      if (contactsCollector != null) {
+        promise.reject("busy", "contacts sync already in progress")
+        return@post
+      }
+      val settle = SettleOnce(promise)
+      contactsCollector = ContactsCollector(org.json.JSONArray(), settle)
+      enqueue(
+          Command(
+              frame = byteArrayOf(CMD_GET_CONTACTS),
+              expectedResps = setOf(RESP_CODE_CONTACTS_START),
+              // CONTACTS_START frees the queue; the CONTACT stream now arrives
+              // unsolicited, so arm an inter-frame idle timeout for the collector.
+              onResponse = {
+                handler.removeCallbacks(contactsTimeoutRunnable)
+                handler.postDelayed(contactsTimeoutRunnable, COMMAND_TIMEOUT_MS)
+              },
+              onFailure = { code, message ->
+                contactsCollector = null
+                settle.reject(code, message)
+              },
+          ))
+    }
+  }
+
+  /**
+   * Send a plain-text direct message to a contact. Frame (MyMesh.cpp:1071-1116):
+   *   [2][txt_type=0][attempt=0][ts:4LE seconds][6-byte dest pubkey prefix][UTF-8 text].
+   * The first 6 bytes of `pubkeyHex` are the dest prefix (firmware matches via
+   * lookupContactByPubKey(prefix, 6)). Resolves on RESP_CODE_SENT (firmware's actual
+   * reply, MyMesh.cpp:1106) OR RESP_CODE_OK — we accept either, like sendChannelText.
+   */
+  @ReactMethod
+  fun sendDm(pubkeyHex: String, text: String, promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      val pubkey = hexToBytes(pubkeyHex)
+      if (pubkey == null || pubkey.size < PUBKEY_PREFIX_LEN) {
+        promise.reject("bad_pubkey", "pubkeyHex must be at least 12 hex chars (6 bytes)")
+        return@post
+      }
+      val textBytes = text.toByteArray(Charsets.UTF_8)
+      // [2][txt_type][attempt][ts:4][prefix:6][text]. Firmware requires len >= 14,
+      // i.e. at least one text byte (13-byte header + text).
+      val frame = ByteArray(3 + 4 + PUBKEY_PREFIX_LEN + textBytes.size)
+      frame[0] = CMD_SEND_TXT_MSG
+      frame[1] = TXT_TYPE_PLAIN
+      frame[2] = 0 // attempt
+      val ts = (System.currentTimeMillis() / 1000L).toInt()
+      frame[3] = (ts and 0xFF).toByte()
+      frame[4] = ((ts ushr 8) and 0xFF).toByte()
+      frame[5] = ((ts ushr 16) and 0xFF).toByte()
+      frame[6] = ((ts ushr 24) and 0xFF).toByte()
+      System.arraycopy(pubkey, 0, frame, 7, PUBKEY_PREFIX_LEN)
+      System.arraycopy(textBytes, 0, frame, 7 + PUBKEY_PREFIX_LEN, textBytes.size)
+      val settle = SettleOnce(promise)
+      enqueue(
+          Command(
+              frame = frame,
+              expectedResps = setOf(RESP_CODE_OK, RESP_CODE_SENT),
+              onResponse = { settle.resolve(null) },
+              onFailure = { code, message -> settle.reject(code, message) },
+          ))
+    }
+  }
+
+  /**
+   * Derive a channel secret from a channel name — pure compute, NO BLE. Returns
+   * `SHA256(name)`'s first 16 bytes as 32 lowercase hex, matching the app's join
+   * convention for a `#hashtag` channel (payloads.md: channel key = SHA256("#name")[:16]).
+   * Resolves immediately.
+   */
+  @ReactMethod
+  fun deriveChannelSecret(name: String, promise: Promise) {
+    try {
+      val digest = java.security.MessageDigest.getInstance("SHA-256")
+      val hash = digest.digest(name.toByteArray(Charsets.UTF_8))
+      promise.resolve(hash.copyOfRange(0, CHANNEL_SECRET_LEN).toHex())
+    } catch (t: Throwable) {
+      promise.reject("derive_failed", "could not derive channel secret: ${t.message}")
     }
   }
 
@@ -734,6 +876,23 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     // Always surface the inbound frame to JS (async pushes have no in-flight match).
     emitFrame(resp, frame)
 
+    // getContacts stream: CONTACT frames are pushed unsolicited by the firmware
+    // iterator (no in-flight command), so consume them here before the queue match.
+    // CONTACTS_START still flows through to complete the CMD_GET_CONTACTS command.
+    val collector = contactsCollector
+    if (collector != null) {
+      if (code == RESP_CODE_CONTACT) {
+        parseContact(frame)?.let { collector.results.put(it) }
+        handler.removeCallbacks(contactsTimeoutRunnable)
+        handler.postDelayed(contactsTimeoutRunnable, COMMAND_TIMEOUT_MS)
+        return
+      }
+      if (code == RESP_CODE_END_OF_CONTACTS) {
+        finishContacts()
+        return
+      }
+    }
+
     val cmd = inFlight
     if (cmd != null && cmd.expectedResps != null) {
       if (cmd.expectedResps.contains(code)) {
@@ -831,6 +990,48 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * Conclude the active getContacts stream: clear the collector + its idle timeout,
+   * rebuild the DM-attribution prefix→name cache, and resolve the promise with the
+   * accumulated JSON. Safe to call more than once (no-op if no collector is active).
+   */
+  private fun finishContacts() {
+    val collector = contactsCollector ?: return
+    handler.removeCallbacks(contactsTimeoutRunnable)
+    contactsCollector = null
+    val names = HashMap<String, String>()
+    for (n in 0 until collector.results.length()) {
+      val o = collector.results.optJSONObject(n) ?: continue
+      val pk = o.optString("pubkeyHex")
+      if (pk.length >= PUBKEY_PREFIX_LEN * 2) {
+        names[pk.substring(0, PUBKEY_PREFIX_LEN * 2)] = o.optString("name")
+      }
+    }
+    contactNamesByPrefix = names
+    collector.settle.resolve(collector.results.toString())
+  }
+
+  /**
+   * Parse a RESP_CODE_CONTACT frame (MyMesh.cpp:166-187 writeContactRespFrame):
+   *   [0]=0x03 [1..32]=pub_key(32) [33]=type [34]=flags [35]=out_path_len
+   *   [36..99]=out_path(64) [100..131]=name(32, null-padded via strzcpy)
+   *   [132..135]=last_advert_ts(4) [136..139]=gps_lat [140..143]=gps_lon [144..147]=lastmod.
+   * We surface only {pubkeyHex, name}. Returns null on a short/malformed frame.
+   */
+  private fun parseContact(frame: ByteArray): org.json.JSONObject? {
+    val nameOffset = 1 + PUBKEY_LEN + 3 + MAX_PATH_SIZE // 1 + 32 + (type+flags+out_path_len) + 64 = 100
+    if (frame.size < nameOffset + CONTACT_NAME_LEN) return null
+    val pubkeyHex = frame.copyOfRange(1, 1 + PUBKEY_LEN).toHex()
+    val nameField = frame.copyOfRange(nameOffset, nameOffset + CONTACT_NAME_LEN)
+    val nul = nameField.indexOf(0.toByte())
+    val nameEnd = if (nul < 0) nameField.size else nul
+    val name = String(nameField, 0, nameEnd, Charsets.UTF_8)
+    return org.json.JSONObject().apply {
+      put("pubkeyHex", pubkeyHex)
+      put("name", name)
+    }
+  }
+
+  /**
    * Begin (or, if one is already running, coalesce into) a sync drain. [settle] is
    * resolved when the drain reaches RESP_CODE_NO_MORE_MESSAGES (or stops on a
    * timeout/error); pass null for the push-triggered auto-drain.
@@ -864,8 +1065,10 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
               } else {
                 if (code == RESP_CODE_CHANNEL_MSG_RECV || code == RESP_CODE_CHANNEL_MSG_RECV_V3) {
                   emitChannelMessage(frame!!)
+                } else if (code == RESP_CODE_CONTACT_MSG_RECV || code == RESP_CODE_CONTACT_MSG_RECV_V3) {
+                  emitDmMessage(frame!!)
                 }
-                // Contact messages / channel datagrams are drained but not surfaced here.
+                // Channel datagrams are drained but not surfaced here.
                 syncStep(settle)
               }
             },
@@ -981,6 +1184,48 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     emitToJs(params)
   }
 
+  /**
+   * Parse a contact-message (DM) frame and emit a `dmMessage` event.
+   *
+   * Layouts (MyMesh.cpp:429-456 queueMessage; sender carried as a 6-byte pubkey prefix):
+   *   v<3 (0x07): [0]=0x07 [1..6]=sender_prefix(6) [7]=path_len [8]=txt_type
+   *               [9..12]=ts(4 LE) [13..]=text
+   *   v3  (0x10): [0]=0x10 [1]=snr [2..3]=reserved [4..9]=sender_prefix(6) [10]=path_len
+   *               [11]=txt_type [12..15]=ts(4 LE) [16..]=text
+   * Unlike channel text, the DM plaintext has NO "name: " prefix — the sender is the
+   * 6-byte pubkey prefix, whose display name we resolve from the loaded contacts.
+   */
+  private fun emitDmMessage(frame: ByteArray) {
+    val v3 = (frame[0].toInt() and 0xFF) == RESP_CODE_CONTACT_MSG_RECV_V3
+    // Skip: resp code (+ snr + 2 reserved for v3), landing at the 6-byte sender prefix.
+    val base = if (v3) 4 else 1
+    // After the prefix come path_len (+1) and txt_type (+1), then the 4-byte timestamp.
+    val tsOff = base + PUBKEY_PREFIX_LEN + 2
+    if (frame.size < tsOff + 4) return
+    val prefixHex = frame.copyOfRange(base, base + PUBKEY_PREFIX_LEN).toHex()
+    val ts =
+        ((frame[tsOff].toInt() and 0xFF).toLong()) or
+            ((frame[tsOff + 1].toInt() and 0xFF).toLong() shl 8) or
+            ((frame[tsOff + 2].toInt() and 0xFF).toLong() shl 16) or
+            ((frame[tsOff + 3].toInt() and 0xFF).toLong() shl 24)
+    val textStart = tsOff + 4
+    val text =
+        if (frame.size > textStart)
+            String(frame, textStart, frame.size - textStart, Charsets.UTF_8)
+        else ""
+    val fromName = contactNamesByPrefix[prefixHex] ?: ""
+    val params =
+        Arguments.createMap().apply {
+          putString("eventType", "dmMessage")
+          putString("fromPubkeyPrefixHex", prefixHex)
+          putString("fromName", fromName)
+          putString("text", text)
+          // ts is seconds → ms. Kept as Double (JS number) to survive the RN bridge.
+          putDouble("at", ts * 1000.0)
+        }
+    emitToJs(params)
+  }
+
   private fun emitToJs(params: WritableMap) {
     val ctx = reactApplicationContext
     if (!ctx.hasActiveReactInstance()) {
@@ -1005,8 +1250,13 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     Log.i(TAG, "teardown: $reason")
     handler.removeCallbacks(timeoutRunnable)
     handler.removeCallbacks(scanTimeout)
+    handler.removeCallbacks(contactsTimeoutRunnable)
     stopScan()
     syncing = false
+    // Reject any in-flight contacts stream and drop the DM-attribution cache.
+    contactsCollector?.settle?.reject("disconnected", "radio disconnected")
+    contactsCollector = null
+    contactNamesByPrefix = emptyMap()
     // Reject any still-pending commands so JS promises don't hang.
     inFlight?.onFailure?.invoke("disconnected", "radio disconnected")
     inFlight = null

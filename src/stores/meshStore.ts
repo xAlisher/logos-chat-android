@@ -6,9 +6,10 @@ import {create} from 'zustand';
 import MeshCore, {
   addMeshListener,
   parseChannels,
+  parseContacts,
   parseSelfInfo,
 } from '../native/MeshCore';
-import type {MeshChannel, MeshStatus} from '../native/MeshCore';
+import type {MeshChannel, MeshContact, MeshStatus} from '../native/MeshCore';
 
 interface MeshState {
   status: MeshStatus;
@@ -18,6 +19,8 @@ interface MeshState {
   selfName: string | null;
   /** Occupied channel slots on the radio; hydrated on connect + after mutations. */
   channels: MeshChannel[];
+  /** The radio's contact roster; hydrated on connect. */
+  contacts: MeshContact[];
   error: string | null;
   /** Scan → connect → APP_START; hydrates selfPubkey/selfName + channels on success. */
   connect: () => Promise<void>;
@@ -26,6 +29,8 @@ interface MeshState {
   setName: (name: string) => Promise<void>;
   /** Refresh the channel list from the radio. */
   loadChannels: () => Promise<void>;
+  /** Refresh the contact roster from the radio. */
+  loadContacts: () => Promise<void>;
   /**
    * Create a channel in the first free slot with the given name + 16-byte secret
    * (`secretHex` = 32 hex chars), then reload the channel list.
@@ -39,6 +44,7 @@ export const useMeshStore = create<MeshState>((set, get) => ({
   selfPubkey: null,
   selfName: null,
   channels: [],
+  contacts: [],
   error: null,
 
   connect: async () => {
@@ -53,8 +59,10 @@ export const useMeshStore = create<MeshState>((set, get) => ({
       if (info) {
         set({selfPubkey: info.pubkeyHex, selfName: info.name});
       }
-      // Now connected — hydrate the channel list (best-effort; own try/catch).
+      // Now connected — hydrate channel list + contact roster (best-effort; each
+      // has its own try/catch so one failing doesn't sink the other).
       await get().loadChannels();
+      await get().loadContacts();
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -64,7 +72,7 @@ export const useMeshStore = create<MeshState>((set, get) => ({
     try {
       await MeshCore.disconnect();
       // Status flips to 'disconnected' via the event; drop the stale self-info.
-      set({selfPubkey: null, selfName: null, channels: []});
+      set({selfPubkey: null, selfName: null, channels: [], contacts: []});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -83,6 +91,15 @@ export const useMeshStore = create<MeshState>((set, get) => ({
     try {
       const json = await MeshCore.getChannels();
       set({channels: parseChannels(json)});
+    } catch (e: any) {
+      set({error: String(e?.message ?? e)});
+    }
+  },
+
+  loadContacts: async () => {
+    try {
+      const json = await MeshCore.getContacts();
+      set({contacts: parseContacts(json)});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -109,12 +126,19 @@ addMeshListener(e => {
   console.log('[MeshCoreEvent]', JSON.stringify(e));
   if (e.eventType === 'status' && e.status) {
     useMeshStore.setState({status: e.status});
-    // A drop clears self-info + channels; the link no longer speaks for that identity.
+    // A drop clears self-info + channels + contacts; the link no longer speaks for
+    // that identity.
     if (e.status === 'disconnected') {
-      useMeshStore.setState({selfPubkey: null, selfName: null, channels: []});
+      useMeshStore.setState({
+        selfPubkey: null,
+        selfName: null,
+        channels: [],
+        contacts: [],
+      });
     }
   }
-  // 'channelMessage' events (inbound mesh channel text) are consumed by the app's
-  // chatStore, NOT here — meshStore only owns radio link + channel-list state.
-  // 'frame' events (async pushes / raw protocol frames) remain for debugging.
+  // 'channelMessage' + 'dmMessage' events (inbound mesh channel text / 1:1 DMs) are
+  // consumed by the app's chatStore, NOT here — meshStore only owns radio link +
+  // channel/contact-list state. 'frame' events (async pushes / raw protocol frames)
+  // remain for debugging.
 });

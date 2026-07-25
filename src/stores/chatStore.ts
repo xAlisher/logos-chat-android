@@ -73,6 +73,8 @@ interface ChatState {
   remove: (convoPk: number) => Promise<void>;
   /** #167: get-or-create a MeshCore channel conversation (by idx). Resolves convoPk. */
   openMeshChannel: (idx: number, name: string) => Promise<number>;
+  /** #167 (Phase 1b): get-or-create a MeshCore ECDH DM conversation (by pubkey). Resolves convoPk. */
+  startMeshDm: (pubkeyHex: string, name: string | null) => Promise<number>;
 }
 
 // Pure view helpers live in conversationView.ts (RN-free, unit-tested);
@@ -196,13 +198,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     try {
       if (transport === 'mesh') {
-        // #167: a mesh channel conversation carries lib_convo_id "mesh:chan:<idx>".
+        // #167: a mesh conversation is either a channel ("mesh:chan:<idx>") or an
+        // ECDH DM ("mesh:dm:<pubkeyHex>"). Route to the matching MeshCore verb.
         const convo = get().conversations[convoPk];
-        const m = convo?.libConvoId?.match(/^mesh:chan:(\d+)$/);
-        if (m == null) {
+        const libId = convo?.libConvoId ?? '';
+        const chan = libId.match(/^mesh:chan:(\d+)$/);
+        const dm = libId.match(/^mesh:dm:([0-9a-fA-F]+)$/);
+        if (chan != null) {
+          await MeshCore.sendChannelText(parseInt(chan[1], 10), text);
+        } else if (dm != null) {
+          await MeshCore.sendDm(dm[1], text);
+        } else {
           throw new Error('unsupported mesh conversation');
         }
-        await MeshCore.sendChannelText(parseInt(m[1], 10), text);
         // Persist to the shared timeline (the optimistic bubble is replaced below).
         await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
       } else {
@@ -344,6 +352,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().loadMessages(convoPk);
     return convoPk;
   },
+
+  startMeshDm: async (pubkeyHex: string, name: string | null) => {
+    // Reconcile with a placeholder row the inbound path may have created from the
+    // peer's 6-byte prefix, so a peer-initiated DM and a contact-initiated one
+    // converge on a single thread (sendDm only uses the first 6 bytes anyway).
+    const existing = await LogosChat.meshDmByPrefix(pubkeyHex.slice(0, 12));
+    const convoPk =
+      existing >= 0 ? existing : await LogosChat.upsertMeshDm(pubkeyHex, name);
+    await get().refreshConversations();
+    await get().loadMessages(convoPk);
+    return convoPk;
+  },
 }));
 
 // #167: inbound MeshCore channel messages → persist into the shared timeline and
@@ -367,6 +387,37 @@ addMeshListener(e => {
         at,
         e.fromName && e.fromName.length > 0 ? e.fromName : null,
       );
+      await useChatStore.getState().refreshConversations();
+      if (useChatStore.getState().activeConvoPk === convoPk) {
+        await useChatStore.getState().loadMessages(convoPk);
+      }
+    } catch {
+      // best-effort: a persistence hiccup shouldn't crash the event pump
+    }
+  })();
+});
+
+// #167 (Phase 1b): inbound MeshCore ECDH DMs → persist into the shared timeline.
+// The frame carries only the sender's 6-byte pubkey PREFIX, so we reconcile against
+// any existing DM row via meshDmByPrefix; unknown senders get a placeholder row
+// keyed by the prefix (a later contact-initiated DM converges on it, see startMeshDm).
+addMeshListener(e => {
+  if (e.eventType !== 'dmMessage') {
+    return;
+  }
+  const prefix = e.fromPubkeyPrefixHex;
+  const text = e.text;
+  const at = e.at;
+  if (prefix == null || text == null || at == null) {
+    return;
+  }
+  (async () => {
+    try {
+      const found = await LogosChat.meshDmByPrefix(prefix);
+      const name = e.fromName && e.fromName.length > 0 ? e.fromName : null;
+      const convoPk =
+        found >= 0 ? found : await LogosChat.upsertMeshDm(prefix, name);
+      await LogosChat.recordMeshMessage(convoPk, 'in', text, at, name);
       await useChatStore.getState().refreshConversations();
       if (useChatStore.getState().activeConvoPk === convoPk) {
         await useChatStore.getState().loadMessages(convoPk);

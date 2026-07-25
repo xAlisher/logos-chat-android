@@ -466,6 +466,30 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #167 (Phase 1b): get-or-create the local conversation mirroring a MeshCore DM. */
+  @ReactMethod
+  fun upsertMeshDm(pubkeyHex: String, name: String?, promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().upsertMeshDm(pubkeyHex, name).toDouble())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /**
+   * #167 (Phase 1b): resolve a mesh DM conversation from the sender's 6-byte pubkey
+   * prefix (inbound DM frames carry only the prefix). Resolves the convo_pk, or -1
+   * if we've never DM'd this peer (the JS caller then upserts with the fuller info).
+   */
+  @ReactMethod
+  fun meshDmByPrefix(prefixHex: String, promise: Promise) {
+    try {
+      promise.resolve((ChatRepo.requireDb().meshDmByPrefix(prefixHex) ?: -1L).toDouble())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /** #167: persist a mesh message (channel/DM) in the shared timeline. Returns msgPk. */
   @ReactMethod
   fun recordMeshMessage(

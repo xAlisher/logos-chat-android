@@ -20,7 +20,14 @@ import {HexAvatar} from './HexAvatar';
 import {QrIcon} from './QrIcon';
 import {shortAddress} from '../native/LogosChat';
 
-export type MenuView = 'all' | 'chats' | 'groups';
+// #167 (docs/mesh-transport.md): transport-grouped views. Logos filters
+// (chats/groups) vs MeshCore filters (channels = mesh groups, dms = mesh 1:1).
+export type MenuView =
+  | 'all'
+  | 'chats'
+  | 'groups'
+  | 'mesh-channels'
+  | 'mesh-dms';
 
 // --- small local glyphs (lucide-style, matching the app's SVG icons) ---------
 function Icon({children}: {children: React.ReactNode}) {
@@ -76,6 +83,23 @@ const MeshIcon = ({color = colors.text}: {color?: string}) => (
     <Circle cx="12" cy="10" r="1.6" fill={color} />
     <Path d="M8.5 13.5a5 5 0 0 1 0-7M15.5 6.5a5 5 0 0 1 0 7" {...stroke(color)} />
     <Path d="M6 15.5a8 8 0 0 1 0-11M18 4.5a8 8 0 0 1 0 11" {...stroke(color)} />
+  </Icon>
+);
+// #167: MeshCore channels are #hashtag-addressed — a hashtag reads as "channel".
+const ChannelsIcon = ({color = colors.text}: {color?: string}) => (
+  <Icon>
+    <Line x1="9" y1="4" x2="7" y2="20" {...stroke(color)} />
+    <Line x1="17" y1="4" x2="15" y2="20" {...stroke(color)} />
+    <Line x1="4" y1="9" x2="20" y2="9" {...stroke(color)} />
+    <Line x1="4" y1="15" x2="20" y2="15" {...stroke(color)} />
+  </Icon>
+);
+// #167: a mesh DM = the antenna glyph inside a chat bubble.
+const MeshDmIcon = ({color = colors.text}: {color?: string}) => (
+  <Icon>
+    <Path d="M4 5h16v11H9l-4 3.5V16H4z" {...stroke(color, {strokeLinejoin: 'round'})} />
+    <Circle cx="12" cy="9" r="1.2" fill={color} />
+    <Path d="M9.5 11a3.5 3.5 0 0 1 0-4M14.5 7a3.5 3.5 0 0 1 0 4" {...stroke(color)} />
   </Icon>
 );
 
@@ -204,6 +228,7 @@ export function SideMenu({
           </Pressable>
         </View>
 
+        {/* #167: All spans every transport; it sits above the transport groups. */}
         <View style={styles.group}>
           <Item
             icon={c => <AllIcon color={c} />}
@@ -212,6 +237,13 @@ export function SideMenu({
             onPress={() => pick(() => onSelectView('all'))}
             testID="menu-all"
           />
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* Logos group — MLS chats/groups + the contacts page. */}
+        <Text style={styles.sectionLabel}>Logos</Text>
+        <View style={styles.group}>
           <Item
             icon={c => <ChatsIcon color={c} />}
             label="Chats"
@@ -226,16 +258,32 @@ export function SideMenu({
             onPress={() => pick(() => onSelectView('groups'))}
             testID="menu-groups"
           />
-        </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.group}>
           <Item
             icon={c => <ContactsIcon color={c} />}
             label="Contacts"
             onPress={() => pick(onContacts)}
             testID="menu-contacts"
+          />
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* MeshCore group — mesh channels/DMs + the MeshCore radio page. */}
+        <Text style={styles.sectionLabel}>MeshCore</Text>
+        <View style={styles.group}>
+          <Item
+            icon={c => <ChannelsIcon color={c} />}
+            label="Channels"
+            active={activeView === 'mesh-channels'}
+            onPress={() => pick(() => onSelectView('mesh-channels'))}
+            testID="menu-mesh-channels"
+          />
+          <Item
+            icon={c => <MeshDmIcon color={c} />}
+            label="DMs"
+            active={activeView === 'mesh-dms'}
+            onPress={() => pick(() => onSelectView('mesh-dms'))}
+            testID="menu-mesh-dms"
           />
           <Item
             icon={c => <MeshIcon color={c} />}
@@ -243,6 +291,11 @@ export function SideMenu({
             onPress={() => pick(onMeshCore)}
             testID="menu-meshcore"
           />
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.group}>
           <Item
             icon={c => <AboutIcon color={c} />}
             label="About"
@@ -293,6 +346,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   group: {gap: 2},
+  // #167: muted transport-group header (Logos / MeshCore).
+  sectionLabel: {
+    ...type.label,
+    color: colors.textFaint,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.xs,
+  },
   item: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -28,8 +28,16 @@ export interface MeshChannel {
   secretHex: string;
 }
 
+/** A MeshCore contact (Phase 1b): a known peer's account pubkey + advert name. */
+export interface MeshContact {
+  /** The contact's 32-byte Ed25519 account pubkey, lowercase hex (64 chars). */
+  pubkeyHex: string;
+  /** The contact's advert label. */
+  name: string;
+}
+
 export interface MeshCoreEvent {
-  // 'status' | 'frame' | 'channelMessage'
+  // 'status' | 'frame' | 'channelMessage' | 'dmMessage'
   eventType: string;
   /** Present when eventType === 'status'. */
   status?: MeshStatus;
@@ -47,6 +55,11 @@ export interface MeshCoreEvent {
   text?: string;
   /** Message timestamp in epoch milliseconds (firmware seconds × 1000). */
   at?: number;
+
+  // -- eventType === 'dmMessage' (inbound 1:1 direct message) ------------------
+  // Also carries `fromName` (resolved from contacts, may be ''), `text`, and `at`.
+  /** The sender's 6-byte account-pubkey prefix, lowercase hex (12 chars). */
+  fromPubkeyPrefixHex?: string;
 }
 
 interface MeshCoreNative {
@@ -85,6 +98,26 @@ interface MeshCoreNative {
    * MeshCoreEvent per inbound channel message. Resolves once the queue is empty.
    */
   syncMessages(): Promise<null>;
+
+  // -- Phase 1b: DMs + contacts ----------------------------------------------
+  /**
+   * Fetch the radio's contact roster and resolve with a JSON array of
+   * {@link MeshContact} (parse with {@link parseContacts}). The firmware streams
+   * the roster (CONTACTS_START → CONTACT×N → END); the native module accumulates it.
+   */
+  getContacts(): Promise<string>;
+  /**
+   * Send a plain-text direct message to the contact whose account pubkey is
+   * `pubkeyHex` (its first 6 bytes are used as the dest prefix). Resolves when the
+   * radio accepts it (firmware RESP_CODE_SENT / RESP_CODE_OK). Respect the mesh cap.
+   */
+  sendDm(pubkeyHex: string, text: string): Promise<null>;
+  /**
+   * Derive a channel secret from a channel name — `SHA256(name)`'s first 16 bytes
+   * as 32 lowercase hex. Pure compute (no BLE); resolves immediately. Used to join a
+   * `#hashtag` channel = SHA256("#name")[:16].
+   */
+  deriveChannelSecret(name: string): Promise<string>;
 }
 
 const native: MeshCoreNative = NativeModules.MeshCore;
@@ -121,6 +154,24 @@ export function parseChannels(json: string): MeshChannel[] {
             typeof o?.secretHex === 'string',
         )
         .map((o: any) => ({idx: o.idx, name: o.name, secretHex: o.secretHex}));
+    }
+  } catch {
+    // fall through
+  }
+  return [];
+}
+
+/** Parse the JSON getContacts resolves with. Returns [] if malformed. */
+export function parseContacts(json: string): MeshContact[] {
+  try {
+    const arr = JSON.parse(json);
+    if (Array.isArray(arr)) {
+      return arr
+        .filter(
+          (o: any) =>
+            typeof o?.pubkeyHex === 'string' && typeof o?.name === 'string',
+        )
+        .map((o: any) => ({pubkeyHex: o.pubkeyHex, name: o.name}));
     }
   } catch {
     // fall through

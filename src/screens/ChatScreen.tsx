@@ -52,6 +52,13 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+// #167: MeshCore packet text cap. Payload is single-shot (~133–160 chars,
+// no fragmentation exposed); 140 keeps a safe margin under the datagram cap.
+const MESH_MAX_CHARS = 140;
+// Mesh transport accent — theme has no green token (brand is orange), so the
+// literal lives here per the mesh-transport design (docs/mesh-transport.md).
+const MESH_GREEN = '#22C55E';
+
 /** The attribution shown above an incoming bubble (#10). Display-only (#109). */
 interface Attribution {
   label: string | null;
@@ -140,6 +147,9 @@ function Bubble({
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
+  // #167: a message that rode the MeshCore radio (not MLS) is badged — subtle
+  // green edge + a "via mesh" caption, so it reads as "over the mesh, not MLS".
+  const viaMesh = msg.sentVia === 'mesh';
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
       {/* Display only (#109): the contact actions live on the bubble long-press.
@@ -175,19 +185,23 @@ function Bubble({
           styles.bubble,
           own ? styles.bubbleOwn : styles.bubblePeer,
           msg.status === 'pending' && styles.bubblePending,
+          viaMesh && (own ? styles.bubbleMeshOwn : styles.bubbleMeshPeer),
           failed && styles.bubbleFailed,
         ]}>
         <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
           {msg.text}
         </Text>
       </Pressable>
-      <Text style={[styles.time, failed && {color: colors.unread}]}>
-        {msg.status === 'pending'
-          ? 'sending…'
-          : failed
-          ? 'failed — tap to retry'
-          : formatTime(msg.at)}
-      </Text>
+      <View style={styles.timeRow}>
+        {viaMesh && <Text style={styles.viaMesh}>via mesh · </Text>}
+        <Text style={[styles.time, failed && {color: colors.unread}]}>
+          {msg.status === 'pending'
+            ? 'sending…'
+            : failed
+            ? 'failed — tap to retry'
+            : formatTime(msg.at)}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -640,16 +654,26 @@ export function ChatScreen() {
           placeholder="Message…"
           placeholderTextColor={colors.textFaint}
           multiline
+          // #167: MeshCore text is single-shot (~133–160 chars/packet, no
+          // fragmentation), so a mesh composer is hard-capped. Non-mesh unchanged.
+          maxLength={isMesh ? MESH_MAX_CHARS : undefined}
           testID="composer-input"
         />
-        <Pressable
-          style={[styles.send, {backgroundColor: sendColor}]}
-          onPress={onSubmit}
-          testID="composer-send">
-          <Text style={[type.title, {color: colors.onAccent}]}>
-            {busy ? '…' : '>>'}
-          </Text>
-        </Pressable>
+        <View style={styles.sendCol}>
+          {isMesh && (
+            <Text style={styles.charCount} testID="composer-charcount">
+              {text.length}/{MESH_MAX_CHARS}
+            </Text>
+          )}
+          <Pressable
+            style={[styles.send, {backgroundColor: sendColor}]}
+            onPress={onSubmit}
+            testID="composer-send">
+            <Text style={[type.title, {color: colors.onAccent}]}>
+              {busy ? '…' : '>>'}
+            </Text>
+          </Pressable>
+        </View>
       </View>
       )}
       <OverflowMenu
@@ -714,6 +738,17 @@ const styles = StyleSheet.create({
   bubbleOwn: {backgroundColor: colors.accent},
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
+  // #167: subtle green edge marking a message that rode the mesh (not MLS). A
+  // thin border on the "outside" edge of each side + a faint green tint.
+  bubbleMeshPeer: {
+    borderLeftColor: MESH_GREEN,
+    borderLeftWidth: 2,
+    backgroundColor: 'rgba(34,197,94,0.08)',
+  },
+  bubbleMeshOwn: {
+    borderRightColor: MESH_GREEN,
+    borderRightWidth: 2,
+  },
   systemLine: {
     ...type.caption,
     color: colors.textFaint,
@@ -729,7 +764,10 @@ const styles = StyleSheet.create({
   },
   attrRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: 2},
   attrLine: {...type.caption, flexShrink: 1},
+  timeRow: {flexDirection: 'row', alignItems: 'center'},
   time: {...type.caption, color: colors.textFaint},
+  // #167: tiny "via mesh" caption on the time line, in the mesh green.
+  viaMesh: {...type.caption, color: MESH_GREEN},
   headerBtn: {
     minWidth: layout.minTouchTarget,
     minHeight: layout.minTouchTarget,
@@ -763,6 +801,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     maxHeight: 120,
   },
+  sendCol: {alignItems: 'center', gap: spacing.xs},
+  // #167: live char counter shown only for a mesh composer.
+  charCount: {...type.caption, color: colors.textFaint},
   send: {
     backgroundColor: colors.accent,
     borderRadius: radii.pill,

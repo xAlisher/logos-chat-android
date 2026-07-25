@@ -104,6 +104,10 @@ interface LogosChatNative {
   setVerified(convoPk: number, verified: boolean): Promise<null>;
   /** #167: get-or-create the local conversation mirroring a MeshCore channel idx. */
   upsertMeshChannel(idx: number, name: string): Promise<number>;
+  /** #167 (Phase 1b): get-or-create the local conversation mirroring a MeshCore DM. */
+  upsertMeshDm(pubkeyHex: string, name: string | null): Promise<number>;
+  /** #167 (Phase 1b): resolve a mesh DM convo_pk from a sender's 6-byte pubkey prefix; -1 if unknown. */
+  meshDmByPrefix(prefixHex: string): Promise<number>;
   /** #167: persist a mesh message (channel/DM) in the shared timeline. Returns msgPk. */
   recordMeshMessage(
     convoPk: number,

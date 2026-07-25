@@ -103,6 +103,8 @@ const VIEW_TITLE: Record<MenuView, string> = {
   all: 'Chat',
   chats: 'Chats',
   groups: 'Groups',
+  'mesh-channels': 'Channels',
+  'mesh-dms': 'Mesh DMs',
 };
 
 export function ConversationsScreen() {
@@ -121,11 +123,17 @@ export function ConversationsScreen() {
   const [rowMenu, setRowMenu] = useState<Conversation | null>(null);
   const [rowMenuY, setRowMenuY] = useState(0);
   const all = sortedConversations(conversations);
+  // #167 (docs/mesh-transport.md): transport-grouped filter. Logos vs MeshCore ×
+  // group/1:1. `all` spans every transport.
   const list =
     view === 'chats'
-      ? all.filter(c => !c.isGroup)
+      ? all.filter(c => c.transport === 'logos' && !c.isGroup)
       : view === 'groups'
-      ? all.filter(c => c.isGroup)
+      ? all.filter(c => c.transport === 'logos' && c.isGroup)
+      : view === 'mesh-channels'
+      ? all.filter(c => c.transport === 'mesh' && c.isGroup)
+      : view === 'mesh-dms'
+      ? all.filter(c => c.transport === 'mesh' && !c.isGroup)
       : all;
 
   const onDeleteConvo = useCallback(
@@ -228,6 +236,10 @@ export function ConversationsScreen() {
               ? 'no direct chats yet — add a contact with the + button'
               : view === 'groups'
               ? 'no groups yet — create one with the + button'
+              : view === 'mesh-channels'
+              ? 'no mesh channels yet — join one from the MeshCore page'
+              : view === 'mesh-dms'
+              ? 'no mesh DMs yet — start one from the MeshCore page'
               : 'no conversations — tap the + button to add a peer by address'}
           </Text>
         </View>
