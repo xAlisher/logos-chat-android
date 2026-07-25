@@ -57,12 +57,12 @@ function ConversationRow({
       <HexAvatar
         seed={avatarSeed(convo)}
         kind={convo.isGroup ? 'group' : 'contact'}
-        size={44}
+        size={32}
       />
       <View style={styles.rowBody}>
         <View style={styles.titleRow}>
           <Text
-            style={[type.title, {color: colors.text, flexShrink: 1}]}
+            style={[type.title, {color: colors.text, flexShrink: 1, lineHeight: 18}]}
             numberOfLines={1}>
             {convoDisplayName(convo)}
           </Text>
@@ -183,8 +183,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     gap: spacing.md,
   },
-  rowBody: {flex: 1, gap: 2},
-  preview: {...type.label, color: colors.textDim},
+  rowBody: {flex: 1, gap: 0},
+  preview: {...type.label, color: colors.textDim, lineHeight: 14},
   rowRight: {alignItems: 'flex-end', gap: spacing.xs},
   time: {...type.caption, color: colors.textFaint},
   separator: {height: 1, backgroundColor: colors.border},
