@@ -1061,10 +1061,13 @@ const styles = StyleSheet.create({
   // #167: live char counter shown only for a mesh composer.
   charCount: {...type.caption, color: colors.textFaint},
   send: {
+    // #184: a perfect circle in every chat/group — fixed square + 50% radius, so
+    // the icon/spinner inside never stretches it into a pill.
     backgroundColor: colors.accent,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.lg,
-    minHeight: 44,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
     justifyContent: 'center',
   },
 });

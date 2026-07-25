@@ -3,13 +3,14 @@
 // (All / Chats / Groups) and the standalone pages (Contacts / About). Filters
 // call onSelectView; pages call their navigate handler. Self-contained animation
 // + backdrop, matching the app's other custom overlays (no drawer nav dep).
-import React, {useEffect, useRef} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
   Animated,
   Easing,
   Modal,
   Pressable,
   Text,
+  TextInput,
   View,
   StyleSheet,
   useWindowDimensions,
@@ -19,6 +20,7 @@ import {colors, type, spacing} from '../theme';
 import {HexAvatar} from './HexAvatar';
 import {QrIcon} from './QrIcon';
 import {shortAddress} from '../native/LogosChat';
+import {useSettingsStore} from '../stores/settingsStore';
 
 // #167 (docs/mesh-transport.md): transport-grouped views. Logos filters
 // (chats/groups) vs MeshCore filters (channels = mesh groups, dms = mesh 1:1).
@@ -156,6 +158,21 @@ export function SideMenu({
   const panelW = Math.min(320, width * 0.82);
   const anim = useRef(new Animated.Value(0)).current;
 
+  // #181: my identity shows an editable LABEL (the node's display name) instead of a
+  // static "You" + gray hex. Tap to add/change it; it's the same local label typed
+  // when configuring the node (settingsStore.displayName), never broadcast.
+  const displayName = useSettingsStore(s => s.displayName);
+  const setDisplayName = useSettingsStore(s => s.setDisplayName);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const commitName = () => {
+    setEditingName(false);
+    const next = nameDraft.trim();
+    if (next !== displayName) {
+      setDisplayName(next).catch(() => {});
+    }
+  };
+
   useEffect(() => {
     Animated.timing(anim, {
       toValue: visible ? 1 : 0,
@@ -214,7 +231,32 @@ export function SideMenu({
         <View style={styles.header}>
           <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={48} />
           <View style={styles.headerText}>
-            <Text style={styles.headerName}>You</Text>
+            {editingName ? (
+              <TextInput
+                style={styles.headerNameInput}
+                value={nameDraft}
+                onChangeText={setNameDraft}
+                onBlur={commitName}
+                onSubmitEditing={commitName}
+                placeholder="Your name…"
+                placeholderTextColor={colors.textFaint}
+                autoFocus
+                returnKeyType="done"
+                testID="menu-name-edit"
+              />
+            ) : (
+              <Pressable
+                onPress={() => {
+                  setNameDraft(displayName);
+                  setEditingName(true);
+                }}
+                hitSlop={6}
+                testID="menu-name">
+                <Text style={styles.headerName} numberOfLines={1}>
+                  {displayName.length > 0 ? displayName : 'Add your name'}
+                </Text>
+              </Pressable>
+            )}
             <Text style={styles.headerHex} numberOfLines={1}>
               {myAddress != null ? shortAddress(myAddress) : '…'}
             </Text>
@@ -338,6 +380,12 @@ const styles = StyleSheet.create({
   },
   headerText: {flex: 1, gap: 2},
   headerName: {...type.title, color: colors.text},
+  headerNameInput: {
+    ...type.title,
+    color: colors.text,
+    padding: 0,
+    margin: 0,
+  },
   headerHex: {...type.label, color: colors.textDim},
   headerQr: {
     minWidth: 40,

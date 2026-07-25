@@ -106,7 +106,10 @@ const styles = StyleSheet.create({
   },
   headingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   heading: {...type.title, color: colors.text},
-  scroll: {flexGrow: 0},
+  // #182: let the ScrollView SHRINK inside the maxHeight-capped card so it becomes
+  // a real scroll region (header + "Got it" stay fixed outside it). flexGrow:0 with
+  // no shrink clipped the body + button instead of scrolling.
+  scroll: {flexShrink: 1},
   scrollContent: {gap: spacing.lg},
   intro: {...type.body, color: colors.text, lineHeight: 20},
   section: {gap: spacing.xs},

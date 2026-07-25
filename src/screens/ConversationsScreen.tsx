@@ -101,7 +101,7 @@ function ConversationRow({
 }
 
 const VIEW_TITLE: Record<MenuView, string> = {
-  all: 'Chat',
+  all: 'All',
   chats: 'Chats',
   groups: 'Groups',
   'mesh-channels': 'Channels',
@@ -225,7 +225,7 @@ export function ConversationsScreen() {
           testID="open-menu"
           hitSlop={12}
           onPress={() => setMenuOpen(true)}>
-          <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={34} />
+          <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={32} />
         </Pressable>
         {/* Transport indicator (#146): live tri-state of Logos (+ MeshCore once
             configured); tap to open the transports modal. */}
