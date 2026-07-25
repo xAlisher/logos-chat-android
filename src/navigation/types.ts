@@ -21,4 +21,8 @@ export type RootStackParamList = {
    * Group Info.
    */
   AddMembers: {convoPk: number; postCreate?: boolean};
+  /** People list (from the side menu, #129). */
+  Contacts: undefined;
+  /** App info (from the side menu, #130). */
+  About: undefined;
 };

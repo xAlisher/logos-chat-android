@@ -1,19 +1,19 @@
 // Conversations list. Rows come from the DURABLE store (SQLite) so history is
 // visible across restarts. Leading element = a HexAvatar generated from the
 // identity (orange for a contact, azure for a group — #117); unread badge.
-import React, {useCallback} from 'react';
+import React, {useCallback, useState} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, layout} from '../theme';
-import {Brand} from '../components/Brand';
 import {QrIcon} from '../components/QrIcon';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
 import {SpeedDialFab} from '../components/SpeedDialFab';
 import {HexAvatar, avatarSeed} from '../components/HexAvatar';
+import {SideMenu, type MenuView} from '../components/SideMenu';
 import {useNodeStore} from '../stores/nodeStore';
 import {
   useChatStore,
@@ -79,15 +79,31 @@ function ConversationRow({
   );
 }
 
+const VIEW_TITLE: Record<MenuView, string> = {
+  all: 'Chat',
+  chats: 'Chats',
+  groups: 'Groups',
+};
+
 export function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const error = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
+  const myAddress = useNodeStore(s => s.myAddress);
   const conversations = useChatStore(s => s.conversations);
   const refreshConversations = useChatStore(s => s.refreshConversations);
   const remove = useChatStore(s => s.remove);
-  const list = sortedConversations(conversations);
+  // Side-menu (#125): filter the list (All/Chats/Groups) or open a page.
+  const [view, setView] = useState<MenuView>('all');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const all = sortedConversations(conversations);
+  const list =
+    view === 'chats'
+      ? all.filter(c => !c.isGroup)
+      : view === 'groups'
+      ? all.filter(c => c.isGroup)
+      : all;
 
   const onDeleteConvo = useCallback(
     (convoPk: number) => {
@@ -106,9 +122,19 @@ export function ConversationsScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
-      {/* Header: [Brand — status-tinted icon + "Chat"] · [QR → my address]. */}
+      {/* Header (#125): [my avatar → side menu] · [centered view title] · [QR].
+          The title is an absolute, non-interactive layer BEHIND the avatar/QR so
+          it can span the full width (true centering) without eating their taps. */}
       <View style={styles.header}>
-        <Brand />
+        <View style={styles.headerTitleWrap} pointerEvents="none">
+          <Text style={styles.headerTitle}>{VIEW_TITLE[view]}</Text>
+        </View>
+        <Pressable
+          testID="open-menu"
+          hitSlop={12}
+          onPress={() => setMenuOpen(true)}>
+          <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={34} />
+        </Pressable>
         <Pressable
           style={styles.iconBtn}
           testID="open-my-address"
@@ -120,7 +146,11 @@ export function ConversationsScreen() {
       {list.length === 0 ? (
         <View style={styles.empty}>
           <Text style={styles.emptyText}>
-            no conversations — tap the + button to add a peer by address
+            {view === 'chats'
+              ? 'no direct chats yet — add a contact with the + button'
+              : view === 'groups'
+              ? 'no groups yet — create one with the + button'
+              : 'no conversations — tap the + button to add a peer by address'}
           </Text>
         </View>
       ) : (
@@ -150,6 +180,15 @@ export function ConversationsScreen() {
         onContact={() => navigation.navigate('Scan')}
         onGroup={() => navigation.navigate('NewGroup')}
       />
+      <SideMenu
+        visible={menuOpen}
+        myAddress={myAddress}
+        activeView={view}
+        onClose={() => setMenuOpen(false)}
+        onSelectView={setView}
+        onContacts={() => navigation.navigate('Contacts')}
+        onAbout={() => navigation.navigate('About')}
+      />
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
   );
@@ -167,6 +206,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
   },
+  // Centered over the full header width, behind the tappable avatar/QR (#125).
+  headerTitleWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {...type.brand, color: colors.text},
   iconBtn: {
     minHeight: layout.minTouchTarget,
     minWidth: layout.minTouchTarget,

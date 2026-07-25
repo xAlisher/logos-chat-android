@@ -1,0 +1,272 @@
+// SideMenu (#125) — a slide-in drawer opened by tapping my avatar in the main
+// header. Top: my identicon + short address. Below: the conversation filters
+// (All / Chats / Groups) and the standalone pages (Contacts / About). Filters
+// call onSelectView; pages call their navigate handler. Self-contained animation
+// + backdrop, matching the app's other custom overlays (no drawer nav dep).
+import React, {useEffect, useRef} from 'react';
+import {
+  Animated,
+  Easing,
+  Modal,
+  Pressable,
+  Text,
+  View,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
+import Svg, {Path, Circle, Line, Rect} from 'react-native-svg';
+import {colors, type, spacing} from '../theme';
+import {HexAvatar} from './HexAvatar';
+import {shortAddress} from '../native/LogosChat';
+
+export type MenuView = 'all' | 'chats' | 'groups';
+
+// --- small local glyphs (lucide-style, matching the app's SVG icons) ---------
+function Icon({children}: {children: React.ReactNode}) {
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+      {children}
+    </Svg>
+  );
+}
+const stroke = (extra: object = {}) => ({
+  stroke: colors.text,
+  strokeWidth: 1.8,
+  strokeLinecap: 'round' as const,
+  ...extra,
+});
+const AllIcon = () => (
+  <Icon>
+    <Line x1="4" y1="7" x2="20" y2="7" {...stroke()} />
+    <Line x1="4" y1="12" x2="20" y2="12" {...stroke()} />
+    <Line x1="4" y1="17" x2="20" y2="17" {...stroke()} />
+  </Icon>
+);
+const ChatsIcon = () => (
+  <Icon>
+    <Path d="M4 5h16v11H9l-4 3.5V16H4z" {...stroke({strokeLinejoin: 'round'})} />
+  </Icon>
+);
+const GroupsIcon = () => (
+  <Icon>
+    <Circle cx="9" cy="9" r="3" {...stroke()} />
+    <Path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" {...stroke()} />
+    <Path d="M16 6.2a3 3 0 0 1 0 5.6" {...stroke()} />
+    <Path d="M17 14.2c2.4.5 3.5 2.2 3.5 4.8" {...stroke()} />
+  </Icon>
+);
+const ContactsIcon = () => (
+  <Icon>
+    <Circle cx="12" cy="8" r="3.5" {...stroke()} />
+    <Path d="M5 20c0-3.6 3.1-6 7-6s7 2.4 7 6" {...stroke()} />
+  </Icon>
+);
+const AboutIcon = () => (
+  <Icon>
+    <Circle cx="12" cy="12" r="9" {...stroke()} />
+    <Line x1="12" y1="11" x2="12" y2="16.5" {...stroke()} />
+    <Rect x="11.1" y="7.3" width="1.8" height="1.8" rx="0.9" fill={colors.text} />
+  </Icon>
+);
+
+function Item({
+  icon,
+  label,
+  active,
+  onPress,
+  testID,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+  onPress: () => void;
+  testID: string;
+}) {
+  return (
+    <Pressable
+      style={[styles.item, active && styles.itemActive]}
+      onPress={onPress}
+      testID={testID}>
+      <View style={styles.itemIcon}>{icon}</View>
+      <Text style={[styles.itemLabel, active && {color: colors.accent}]}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+export function SideMenu({
+  visible,
+  myAddress,
+  activeView,
+  onClose,
+  onSelectView,
+  onContacts,
+  onAbout,
+}: {
+  visible: boolean;
+  myAddress: string | null;
+  activeView: MenuView;
+  onClose: () => void;
+  onSelectView: (v: MenuView) => void;
+  onContacts: () => void;
+  onAbout: () => void;
+}) {
+  const {width} = useWindowDimensions();
+  const panelW = Math.min(320, width * 0.82);
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(anim, {
+      toValue: visible ? 1 : 0,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [visible, anim]);
+
+  // Keep the Modal mounted through the close animation.
+  const [mounted, setMounted] = React.useState(visible);
+  useEffect(() => {
+    if (visible) {
+      setMounted(true);
+    } else {
+      const t = setTimeout(() => setMounted(false), 220);
+      return () => clearTimeout(t);
+    }
+  }, [visible]);
+  if (!mounted) {
+    return null;
+  }
+
+  const pick = (fn: () => void) => {
+    onClose();
+    fn();
+  };
+
+  return (
+    <Modal
+      visible={mounted}
+      transparent
+      animationType="none"
+      onRequestClose={onClose}
+      statusBarTranslucent>
+      <Animated.View style={[styles.backdrop, {opacity: anim}]}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} testID="menu-backdrop" />
+      </Animated.View>
+      <Animated.View
+        style={[
+          styles.panel,
+          {
+            width: panelW,
+            transform: [
+              {
+                translateX: anim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-panelW, 0],
+                }),
+              },
+            ],
+          },
+        ]}>
+        {/* Identity header */}
+        <View style={styles.header}>
+          <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={48} />
+          <View style={styles.headerText}>
+            <Text style={styles.headerName}>You</Text>
+            <Text style={styles.headerHex} numberOfLines={1}>
+              {myAddress != null ? shortAddress(myAddress) : '…'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.group}>
+          <Item
+            icon={<AllIcon />}
+            label="All"
+            active={activeView === 'all'}
+            onPress={() => pick(() => onSelectView('all'))}
+            testID="menu-all"
+          />
+          <Item
+            icon={<ChatsIcon />}
+            label="Chats"
+            active={activeView === 'chats'}
+            onPress={() => pick(() => onSelectView('chats'))}
+            testID="menu-chats"
+          />
+          <Item
+            icon={<GroupsIcon />}
+            label="Groups"
+            active={activeView === 'groups'}
+            onPress={() => pick(() => onSelectView('groups'))}
+            testID="menu-groups"
+          />
+        </View>
+
+        <View style={styles.divider} />
+
+        <View style={styles.group}>
+          <Item
+            icon={<ContactsIcon />}
+            label="Contacts"
+            onPress={() => pick(onContacts)}
+            testID="menu-contacts"
+          />
+          <Item
+            icon={<AboutIcon />}
+            label="About"
+            onPress={() => pick(onAbout)}
+            testID="menu-about"
+          />
+        </View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  panel: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: colors.panel,
+    borderRightColor: colors.border,
+    borderRightWidth: 1,
+    paddingTop: spacing.xl * 2,
+    paddingHorizontal: spacing.md,
+    gap: spacing.md,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.md,
+  },
+  headerText: {flex: 1, gap: 2},
+  headerName: {...type.title, color: colors.text},
+  headerHex: {...type.label, color: colors.textDim},
+  group: {gap: 2},
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderRadius: 8,
+  },
+  itemActive: {backgroundColor: colors.pane},
+  itemIcon: {width: 22, alignItems: 'center'},
+  itemLabel: {...type.title, color: colors.text},
+  divider: {height: 1, backgroundColor: colors.border, marginVertical: spacing.xs},
+});
