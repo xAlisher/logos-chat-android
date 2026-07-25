@@ -1,8 +1,47 @@
 // Pure conversation-view helpers — no React Native, no native module, no store.
 // Split out of chatStore so they're unit-testable without the RN runtime and
 // reusable anywhere. chatStore re-exports these for its existing callers.
-import type {ConversationRow, GroupMember} from '../native/LogosChat';
+import type {ConversationRow, GroupMember, MessageRow} from '../native/LogosChat';
 import {shortAddress} from '../native/LogosChat';
+
+/**
+ * #37: the smallest DURABLE msgPk currently loaded, i.e. the paging cursor for
+ * `listMessages(convoPk, beforeMsgPk, limit)` when fetching an OLDER page.
+ * Optimistic outbound bubbles use a negative synthetic msgPk (`-Date.now()`),
+ * so we only consider positive (persisted) pks. Returns 0 when nothing durable
+ * is loaded (the caller then has no cursor to page before).
+ */
+export function oldestMsgPk(messages: MessageRow[]): number {
+  let min = 0;
+  for (const m of messages) {
+    if (m.msgPk > 0 && (min === 0 || m.msgPk < min)) {
+      min = m.msgPk;
+    }
+  }
+  return min;
+}
+
+/**
+ * #37: merge an OLDER page into the currently-loaded messages, de-duping by
+ * msgPk. `existing` is the loaded window (newest-first); `older` is the next
+ * page back (also newest-first). Older rows that aren't already present are
+ * appended AFTER the existing ones, preserving the newest-first ordering the
+ * timeline sort relies on. Pure — no mutation of the inputs.
+ */
+export function mergeOlderPage(
+  existing: MessageRow[],
+  older: MessageRow[],
+): MessageRow[] {
+  const seen = new Set(existing.map(m => m.msgPk));
+  const merged = existing.slice();
+  for (const m of older) {
+    if (!seen.has(m.msgPk)) {
+      seen.add(m.msgPk);
+      merged.push(m);
+    }
+  }
+  return merged;
+}
 
 /** A known peer address the user can add to a group (#13). */
 export interface KnownContact {

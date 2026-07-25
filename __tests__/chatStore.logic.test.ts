@@ -4,8 +4,14 @@ import {
   knownContacts,
   filterContacts,
   isAddressVerified,
+  oldestMsgPk,
+  mergeOlderPage,
 } from '../src/stores/conversationView';
-import type {ConversationRow, GroupMember} from '../src/native/LogosChat';
+import type {
+  ConversationRow,
+  GroupMember,
+  MessageRow,
+} from '../src/native/LogosChat';
 
 function row(over: Partial<ConversationRow>): ConversationRow {
   return {
@@ -221,6 +227,73 @@ describe('knownContacts', () => {
     expect(out).toEqual([
       {address: A1, label: 'Alice', verified: false, meshPubkey: 'aa', meshName: 'radio'},
     ]);
+  });
+});
+
+function msg(over: Partial<MessageRow>): MessageRow {
+  return {
+    msgPk: 1,
+    direction: 'in',
+    text: '',
+    at: 0,
+    status: 'received',
+    senderAccount: null,
+    sentVia: 'logos',
+    ...over,
+  };
+}
+
+describe('oldestMsgPk (#37)', () => {
+  it('returns the smallest positive (durable) msgPk', () => {
+    expect(
+      oldestMsgPk([msg({msgPk: 30}), msg({msgPk: 12}), msg({msgPk: 21})]),
+    ).toBe(12);
+  });
+
+  it('ignores optimistic negative pks (pending outbound bubbles)', () => {
+    expect(
+      oldestMsgPk([msg({msgPk: -170000}), msg({msgPk: 5}), msg({msgPk: 9})]),
+    ).toBe(5);
+  });
+
+  it('returns 0 when there is no durable message to page before', () => {
+    expect(oldestMsgPk([])).toBe(0);
+    expect(oldestMsgPk([msg({msgPk: -1}), msg({msgPk: -2})])).toBe(0);
+  });
+});
+
+describe('mergeOlderPage (#37)', () => {
+  it('appends the older page after the existing window, newest-first preserved', () => {
+    const existing = [msg({msgPk: 10, at: 100}), msg({msgPk: 9, at: 90})];
+    const older = [msg({msgPk: 8, at: 80}), msg({msgPk: 7, at: 70})];
+    expect(mergeOlderPage(existing, older).map(m => m.msgPk)).toEqual([
+      10, 9, 8, 7,
+    ]);
+  });
+
+  it('de-dupes by msgPk (an overlapping row is not added twice)', () => {
+    const existing = [msg({msgPk: 10}), msg({msgPk: 9})];
+    const older = [msg({msgPk: 9}), msg({msgPk: 8})];
+    expect(mergeOlderPage(existing, older).map(m => m.msgPk)).toEqual([
+      10, 9, 8,
+    ]);
+  });
+
+  it('does not mutate its inputs', () => {
+    const existing = [msg({msgPk: 2})];
+    const older = [msg({msgPk: 1})];
+    mergeOlderPage(existing, older);
+    expect(existing.map(m => m.msgPk)).toEqual([2]);
+    expect(older.map(m => m.msgPk)).toEqual([1]);
+  });
+
+  it('preserves the older-page interleave source for #188 system-line merge', () => {
+    // The screen re-sorts msgs+system-lines by `at`; merge must keep every
+    // durable row (with its `at`) so no message is dropped from that sort.
+    const existing = [msg({msgPk: 10, at: 100})];
+    const older = [msg({msgPk: 5, at: 50}), msg({msgPk: 6, at: 60})];
+    const merged = mergeOlderPage(existing, older);
+    expect(merged.map(m => m.at).sort((a, b) => a - b)).toEqual([50, 60, 100]);
   });
 });
 
