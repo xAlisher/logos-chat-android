@@ -180,7 +180,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   addMember: async (convoPk, address) => {
-    await LogosChat.addGroupMember(convoPk, address);
+    try {
+      await LogosChat.addGroupMember(convoPk, address);
+    } catch (e: any) {
+      // #103/#168: a GroupV2 from an earlier node session can't rehydrate its
+      // MLS state ("cannot be rebuilt from storage" / "was not found" / "no load
+      // path"). A mesh-MIRRORED group hits this too — its Logos side still needs
+      // a live MLS group to reach Logos-only members. The creator can re-create
+      // it in place (same convo_pk + history + mesh mirror; existing roster
+      // re-invited), and then the add lands on the fresh group. Retry the add
+      // natively (not via get().addMember) so this never recurses.
+      const raw = String(e?.message ?? e);
+      const rehydrateDead = /cannot be rebuilt|was not found|no load path/i.test(raw);
+      const mine = get().conversations[convoPk]?.createdByMe ?? false;
+      if (!rehydrateDead || !mine) {
+        throw e;
+      }
+      await get().recreateGroup(convoPk);
+      await LogosChat.addGroupMember(convoPk, address);
+    }
     // Report per-member progress in the thread: invited now, joined when their
     // add actually commits (members_changed) — the two are ~a minute apart.
     get().pushSystemLine(convoPk, `${describePeer(address)} invited`);

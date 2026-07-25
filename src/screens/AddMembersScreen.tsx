@@ -147,8 +147,8 @@ export function AddMembersScreen() {
         // restart, so a group from an earlier session reports "not found".
         // Say that in plain language instead of leaking the lib error.
         failures.push(
-          /was not found/i.test(raw)
-            ? 'this group was created in an earlier session and can no longer be modified — create a new group'
+          /was not found|cannot be rebuilt|no load path/i.test(raw)
+            ? 'this group was created in an earlier session — its creator must re-create it before members can be added'
             : `${shortAddress(address)}: ${raw}`,
         );
       }
