@@ -10,18 +10,22 @@ import {colors, type, spacing, radii} from '../theme';
 import {HexAvatar} from './HexAvatar';
 import {QrCard} from './QrCard';
 import {XIcon} from './XIcon';
+import {VerifiedBadge} from './VerifiedBadge';
 import {shortAddress} from '../native/LogosChat';
 
 export function AddressModal({
   visible,
   address,
   label,
+  verified = false,
   onClose,
 }: {
   visible: boolean;
   address: string | null;
   /** The contact's label — shown as the modal title (falls back to short hex). */
   label?: string | null;
+  /** #153: show the verified badge next to the title. */
+  verified?: boolean;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -72,6 +76,7 @@ export function AddressModal({
             <Text style={styles.title} numberOfLines={1} testID="address-title">
               {title}
             </Text>
+            {verified && <VerifiedBadge size={16} />}
             <Pressable
               onPress={onClose}
               hitSlop={10}

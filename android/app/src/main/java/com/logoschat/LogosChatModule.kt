@@ -444,6 +444,17 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #153: local, user-asserted "verified" flag for a contact. */
+  @ReactMethod
+  fun setVerified(convoPk: Double, verified: Boolean, promise: Promise) {
+    try {
+      ChatRepo.requireDb().setVerified(convoPk.toLong(), verified)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /**
    * Is a group still operable by the lib? (#112)
    *

@@ -10,9 +10,10 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {HexAvatar} from '../components/HexAvatar';
+import {VerifiedBadge} from '../components/VerifiedBadge';
 import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon} from '../components/OverflowMenu';
 import {LabelModal} from '../components/LabelModal';
-import {useChatStore, convoDisplayName} from '../stores/chatStore';
+import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {shortAddress} from '../native/LogosChat';
@@ -29,10 +30,15 @@ export function GroupInfoScreen() {
   const members = useChatStore(s => s.members[convoPk]) ?? [];
   const loadMembers = useChatStore(s => s.loadMembers);
   const setNickname = useChatStore(s => s.setNickname);
+  const setVerified = useChatStore(s => s.setVerified);
   const startConversation = useChatStore(s => s.startConversation);
   // The member a row-menu / label editor is acting on.
   const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
-  const [labelMember, setLabelMember] = useState<{address: string; label: string | null} | null>(null);
+  const [labelMember, setLabelMember] = useState<{
+    address: string;
+    label: string | null;
+    verified: boolean;
+  } | null>(null);
 
   // A joiner never learns the group's real name (#102) — let it be named locally.
   const displayName = convo != null ? convoDisplayName(convo) : `group #${convoPk}`;
@@ -93,6 +99,7 @@ export function GroupInfoScreen() {
   const renderMember = ({item}: {item: GroupMember}) => {
     const label = item.isSelf ? 'You' : labelFor(item.address);
     const hex = shortAddress(item.address);
+    const verified = !item.isSelf && isAddressVerified(conversations, item.address);
     return (
       <Pressable
         style={styles.memberRow}
@@ -103,11 +110,14 @@ export function GroupInfoScreen() {
         <View style={styles.memberText}>
           {label != null ? (
             <>
-              <Text
-                style={[type.title, {color: colors.text, lineHeight: 18}]}
-                numberOfLines={1}>
-                {label}
-              </Text>
+              <View style={styles.nameRow}>
+                <Text
+                  style={[type.title, {color: colors.text, lineHeight: 18, flexShrink: 1}]}
+                  numberOfLines={1}>
+                  {label}
+                </Text>
+                {verified && <VerifiedBadge size={14} />}
+              </View>
               <Text
                 style={[type.label, {color: colors.textDim, lineHeight: 14}]}
                 numberOfLines={1}>
@@ -115,11 +125,14 @@ export function GroupInfoScreen() {
               </Text>
             </>
           ) : (
-            <Text
-              style={[type.title, {color: colors.text, lineHeight: 18}]}
-              numberOfLines={1}>
-              {hex}
-            </Text>
+            <View style={styles.nameRow}>
+              <Text
+                style={[type.title, {color: colors.text, lineHeight: 18, flexShrink: 1}]}
+                numberOfLines={1}>
+                {hex}
+              </Text>
+              {verified && <VerifiedBadge size={14} />}
+            </View>
           )}
         </View>
       </Pressable>
@@ -135,7 +148,11 @@ export function GroupInfoScreen() {
             key: 'label',
             label: menuMember.label ? 'Edit label' : 'Add label',
             icon: <TagIcon color={colors.textDim} />,
-            onPress: () => setLabelMember(menuMember),
+            onPress: () =>
+              setLabelMember({
+                ...menuMember,
+                verified: isAddressVerified(conversations, menuMember.address),
+              }),
           },
           {
             key: 'copy-address',
@@ -170,15 +187,16 @@ export function GroupInfoScreen() {
     }
   };
 
-  // Save a label for a member: reuse the 1:1 with them, else create the contact.
-  const saveMemberLabel = (address: string, label: string) => {
+  // Save a label + verified flag for a member: reuse the 1:1 with them, else
+  // create the contact, then persist verification (#153).
+  const saveMemberLabel = (address: string, label: string, verified: boolean) => {
     const existing = Object.values(conversations).find(
       c => !c.isGroup && c.peerAddress?.toLowerCase() === address.toLowerCase(),
     );
     const done = () => setLabelMember(null);
     (existing != null
-      ? setNickname(existing.convoPk, label)
-      : startConversation(address, {nickname: label || undefined}).then(() => {})
+      ? setNickname(existing.convoPk, label).then(() => setVerified(existing.convoPk, verified))
+      : startConversation(address, {nickname: label || undefined, verified}).then(() => {})
     )
       .then(done)
       .catch(e => useNodeStore.setState({error: `label failed: ${e?.message ?? e}`}));
@@ -264,8 +282,11 @@ export function GroupInfoScreen() {
         visible={labelMember != null}
         label={labelMember?.label ?? null}
         address={labelMember?.address ?? null}
+        verified={labelMember?.verified ?? false}
         onClose={() => setLabelMember(null)}
-        onSave={v => labelMember != null && saveMemberLabel(labelMember.address, v)}
+        onSave={(v, ver) =>
+          labelMember != null && saveMemberLabel(labelMember.address, v, ver)
+        }
       />
     </View>
   );
@@ -289,6 +310,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   memberText: {flex: 1, gap: 0},
+  nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   nameInput: {
     ...type.title,
     color: colors.text,

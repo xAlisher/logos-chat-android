@@ -28,7 +28,7 @@ interface ChatState {
   /** Create (or reuse) a 1:1 conversation with a peer address. Resolves convoPk. */
   startConversation: (
     peerAddress: string,
-    opts?: {nickname?: string},
+    opts?: {nickname?: string; verified?: boolean},
   ) => Promise<number>;
   /** Create an MLS group (name + optional description). Resolves convoPk. */
   createGroup: (name: string, description?: string) => Promise<number>;
@@ -44,6 +44,8 @@ interface ChatState {
   markRead: (convoPk: number) => void;
   /** Set (or change) a conversation's nickname. */
   setNickname: (convoPk: number, name: string) => Promise<void>;
+  /** #153: set the local verified flag for a contact/conversation. */
+  setVerified: (convoPk: number, verified: boolean) => Promise<void>;
   /** Wipe a group's local content but keep receiving new messages (#107). */
   wipe: (convoPk: number) => Promise<void>;
   /** Ask the group to remove us, then drop it locally (#108). */
@@ -72,7 +74,12 @@ interface ChatState {
 
 // Pure view helpers live in conversationView.ts (RN-free, unit-tested);
 // re-exported here so existing screen imports keep resolving from chatStore.
-export {sortedConversations, convoDisplayName, knownContacts} from './conversationView';
+export {
+  sortedConversations,
+  convoDisplayName,
+  knownContacts,
+  isAddressVerified,
+} from './conversationView';
 export type {KnownContact} from './conversationView';
 
 const PAGE = 200;
@@ -131,6 +138,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       peerAddress,
       opts?.nickname ?? null,
     );
+    // #153: verification is an explicit, separate flag (never defaulted).
+    if (opts?.verified === true) {
+      await LogosChat.setVerified(convoPk, true).catch(() => {});
+    }
     await get().refreshConversations();
     await get().loadMessages(convoPk);
     return convoPk;
@@ -222,6 +233,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setNickname: async (convoPk: number, name: string) => {
     await LogosChat.setNickname(convoPk, name);
+    await get().refreshConversations();
+  },
+
+  setVerified: async (convoPk: number, verified: boolean) => {
+    await LogosChat.setVerified(convoPk, verified);
     await get().refreshConversations();
   },
 

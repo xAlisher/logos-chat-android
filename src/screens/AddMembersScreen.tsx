@@ -30,6 +30,7 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {HexAvatar} from '../components/HexAvatar';
+import {VerifiedBadge} from '../components/VerifiedBadge';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useChatStore, convoDisplayName, knownContacts} from '../stores/chatStore';
@@ -44,6 +45,7 @@ interface Row {
   address: string;
   label: string | null;
   staged: boolean;
+  verified: boolean;
 }
 
 export function AddMembersScreen() {
@@ -84,8 +86,13 @@ export function AddMembersScreen() {
 
   const rows: Row[] = useMemo(
     () => [
-      ...staged.map(a => ({address: a, label: null, staged: true})),
-      ...contacts.map(c => ({address: c.address, label: c.label, staged: false})),
+      ...staged.map(a => ({address: a, label: null, staged: true, verified: false})),
+      ...contacts.map(c => ({
+        address: c.address,
+        label: c.label,
+        staged: false,
+        verified: c.verified,
+      })),
     ],
     [staged, contacts],
   );
@@ -184,11 +191,14 @@ export function AddMembersScreen() {
         <View style={styles.rowText}>
           {item.label ? (
             <>
-              <Text
-                style={[type.title, {color: colors.text, lineHeight: 18}]}
-                numberOfLines={1}>
-                {item.label}
-              </Text>
+              <View style={styles.nameRow}>
+                <Text
+                  style={[type.title, {color: colors.text, lineHeight: 18, flexShrink: 1}]}
+                  numberOfLines={1}>
+                  {item.label}
+                </Text>
+                {item.verified && <VerifiedBadge size={14} />}
+              </View>
               <Text
                 style={[type.label, {color: colors.textDim, lineHeight: 14}]}
                 numberOfLines={1}>
@@ -196,11 +206,14 @@ export function AddMembersScreen() {
               </Text>
             </>
           ) : (
-            <Text
-              style={[type.title, {color: colors.text, lineHeight: 18}]}
-              numberOfLines={1}>
-              {shortAddress(item.address)}
-            </Text>
+            <View style={styles.nameRow}>
+              <Text
+                style={[type.title, {color: colors.text, lineHeight: 18, flexShrink: 1}]}
+                numberOfLines={1}>
+                {shortAddress(item.address)}
+              </Text>
+              {item.verified && <VerifiedBadge size={14} />}
+            </View>
           )}
         </View>
         <View style={[styles.checkbox, isChecked && styles.checkboxOn]}>
@@ -346,6 +359,7 @@ const styles = StyleSheet.create({
     minHeight: 48,
   },
   rowText: {flex: 1, gap: 0},
+  nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   checkbox: {
     width: 24,
     height: 24,

@@ -26,6 +26,7 @@ import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
 import {HexAvatar, avatarSeed} from '../components/HexAvatar';
+import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
 import {QrIcon} from '../components/QrIcon';
@@ -43,7 +44,7 @@ import {AddressModal} from '../components/AddressModal';
 import {LabelModal} from '../components/LabelModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
-import {useChatStore, convoDisplayName} from '../stores/chatStore';
+import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {Conversation, Message} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
@@ -57,6 +58,8 @@ interface Attribution {
   hex: string;
   /** Full sender address — carried into the bubble's long-press menu. */
   address: string;
+  /** #153: is this sender a locally-verified contact? */
+  verified: boolean;
 }
 
 function formatTime(at: number): string {
@@ -113,7 +116,15 @@ function resolveAttribution(
   } else {
     label = convo?.nickname != null && convo.nickname.length > 0 ? convo.nickname : null;
   }
-  return {label, hex: shortAddress(senderAddr), address: senderAddr};
+  return {
+    label,
+    hex: shortAddress(senderAddr),
+    address: senderAddr,
+    verified: isAddressVerified(
+      useChatStore.getState().conversations,
+      senderAddr,
+    ),
+  };
 }
 
 function Bubble({
@@ -150,6 +161,7 @@ function Bubble({
               {attribution.hex}
             </Text>
           )}
+          {attribution.verified && <VerifiedBadge size={12} />}
         </View>
       )}
       {/* Short tap = retry (failed only); long press = the action menu. The
@@ -191,6 +203,7 @@ export function ChatScreen() {
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
   const setNickname = useChatStore(s => s.setNickname);
+  const setVerified = useChatStore(s => s.setVerified);
   const wipe = useChatStore(s => s.wipe);
   const leaveGroup = useChatStore(s => s.leaveGroup);
   const remove = useChatStore(s => s.remove);
@@ -211,6 +224,7 @@ export function ChatScreen() {
   const [labelTarget, setLabelTarget] = useState<{
     address: string | null;
     label: string | null;
+    verified: boolean;
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
   // #112: set after a successful re-create so the thread can report what happened.
@@ -305,6 +319,7 @@ export function ChatScreen() {
       setLabelTarget({
         address: convo?.peerAddress ?? null,
         label: convo?.nickname ?? null,
+        verified: convo?.verified ?? false,
       }),
     [convo],
   );
@@ -315,22 +330,25 @@ export function ChatScreen() {
    * can be named straight from their bubble.
    */
   const saveLabelFor = useCallback(
-    async (address: string | null, newLabel: string) => {
+    async (address: string | null, newLabel: string, verified: boolean) => {
       if (address == null) {
         return;
       }
       const existing = findDirectConvo(address);
       try {
+        let pk: number;
         if (existing != null) {
-          await setNickname(existing.convoPk, newLabel);
+          pk = existing.convoPk;
+          await setNickname(pk, newLabel);
         } else {
-          await startConversation(address, {nickname: newLabel || undefined});
+          pk = await startConversation(address, {nickname: newLabel || undefined});
         }
+        await setVerified(pk, verified);
       } catch (e: any) {
         useNodeStore.setState({error: `label failed: ${e?.message ?? e}`});
       }
     },
-    [setNickname, startConversation],
+    [setNickname, startConversation, setVerified],
   );
 
   /** "Send message" on a group member's bubble (#109): resolve-or-create the 1:1. */
@@ -448,17 +466,23 @@ export function ChatScreen() {
             <View style={styles.headerTitleCol}>
               {labelled ? (
                 <>
-                  <Text style={styles.headerTitleText} numberOfLines={1}>
-                    {convo.nickname}
-                  </Text>
+                  <View style={styles.headerNameRow}>
+                    <Text style={styles.headerTitleText} numberOfLines={1}>
+                      {convo.nickname}
+                    </Text>
+                    {convo.verified && <VerifiedBadge size={14} />}
+                  </View>
                   <Text style={styles.headerTitleSub} numberOfLines={1}>
                     {shortHex}
                   </Text>
                 </>
               ) : (
-                <Text style={styles.headerTitleText} numberOfLines={1}>
-                  {shortHex}
-                </Text>
+                <View style={styles.headerNameRow}>
+                  <Text style={styles.headerTitleText} numberOfLines={1}>
+                    {shortHex}
+                  </Text>
+                  {convo.verified && <VerifiedBadge size={14} />}
+                </View>
               )}
             </View>
           </View>
@@ -631,21 +655,34 @@ export function ChatScreen() {
       <BubbleActionMenu
         target={bubbleTarget}
         onClose={() => setBubbleTarget(null)}
-        onAddLabel={t => setLabelTarget({address: t.address, label: t.label})}
+        onAddLabel={t =>
+          setLabelTarget({
+            address: t.address,
+            label: t.label,
+            verified: isAddressVerified(
+              useChatStore.getState().conversations,
+              t.address,
+            ),
+          })
+        }
         onSendMessage={openDirectWith}
       />
       <AddressModal
         visible={addressOpen}
         address={convo?.peerAddress ?? null}
         label={convo?.nickname ?? null}
+        verified={convo?.verified ?? false}
         onClose={() => setAddressOpen(false)}
       />
       <LabelModal
         visible={labelTarget != null}
         label={labelTarget?.label ?? null}
         address={labelTarget?.address ?? null}
+        verified={labelTarget?.verified ?? false}
         onClose={() => setLabelTarget(null)}
-        onSave={newLabel => saveLabelFor(labelTarget?.address ?? null, newLabel)}
+        onSave={(newLabel, verified) =>
+          saveLabelFor(labelTarget?.address ?? null, newLabel, verified)
+        }
       />
       <ErrorToast message={nodeError} onDismiss={clearError} />
     </KeyboardAvoidingView>
@@ -694,6 +731,7 @@ const styles = StyleSheet.create({
   },
   headerTitleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   headerTitleCol: {justifyContent: 'center'},
+  headerNameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   headerTitleText: {...type.title, color: colors.text},
   headerTitleSub: {...type.caption, color: colors.textDim},
   composer: {

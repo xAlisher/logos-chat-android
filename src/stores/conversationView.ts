@@ -9,6 +9,27 @@ export interface KnownContact {
   address: string;
   /** The user's local label for this address, if any. */
   label: string | null;
+  /** #153: local user-asserted verification for this address. */
+  verified: boolean;
+}
+
+/** #153: is `address` locally marked verified? True iff we hold a 1:1 with that
+ *  peer whose `verified` flag is set. Used to badge group members / senders whose
+ *  own row we don't have directly in scope. RN-free + unit-testable. */
+export function isAddressVerified(
+  conversations: Record<number, ConversationRow>,
+  address: string | null,
+): boolean {
+  if (address == null) {
+    return false;
+  }
+  const target = address.toLowerCase();
+  for (const c of Object.values(conversations)) {
+    if (!c.isGroup && c.peerAddress?.toLowerCase() === target && c.verified) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -25,23 +46,32 @@ export function knownContacts(
 ): KnownContact[] {
   const exclude = new Set(excludeAddresses.map(a => a.toLowerCase()));
   const byAddr = new Map<string, KnownContact>();
-  const consider = (address: string | null, label: string | null) => {
+  const consider = (
+    address: string | null,
+    label: string | null,
+    verified: boolean,
+  ) => {
     if (address == null) return;
     const a = address.trim().toLowerCase();
     if (a.length === 0 || exclude.has(a)) return;
     const existing = byAddr.get(a);
     if (existing == null) {
-      byAddr.set(a, {address: a, label: label && label.length > 0 ? label : null});
-    } else if (existing.label == null && label && label.length > 0) {
-      existing.label = label;
+      byAddr.set(a, {
+        address: a,
+        label: label && label.length > 0 ? label : null,
+        verified,
+      });
+    } else {
+      if (existing.label == null && label && label.length > 0) existing.label = label;
+      if (verified) existing.verified = true;
     }
   };
   for (const c of Object.values(conversations)) {
-    if (!c.isGroup) consider(c.peerAddress, c.nickname);
+    if (!c.isGroup) consider(c.peerAddress, c.nickname, c.verified);
   }
   for (const roster of Object.values(members)) {
     for (const m of roster) {
-      if (!m.isSelf) consider(m.address, null);
+      if (!m.isSelf) consider(m.address, null, false);
     }
   }
   return Array.from(byAddr.values()).sort((x, y) => {

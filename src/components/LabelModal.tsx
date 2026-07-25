@@ -21,6 +21,7 @@ export function LabelModal({
   visible,
   label,
   address,
+  verified = false,
   onClose,
   onSave,
 }: {
@@ -28,20 +29,24 @@ export function LabelModal({
   label: string | null;
   /** The contact being labelled — shows their identicon so it's clear who (#118). */
   address?: string | null;
+  /** #153: current verified state of this contact. */
+  verified?: boolean;
   onClose: () => void;
-  onSave: (newLabel: string) => void;
+  onSave: (newLabel: string, verified: boolean) => void;
 }) {
   const [draft, setDraft] = useState(label ?? '');
+  const [isVerified, setIsVerified] = useState(verified);
 
-  // Re-sync the input to the current label each time the modal opens.
+  // Re-sync inputs to the current values each time the modal opens.
   useEffect(() => {
     if (visible) {
       setDraft(label ?? '');
+      setIsVerified(verified);
     }
-  }, [visible, label]);
+  }, [visible, label, verified]);
 
   const onSavePress = () => {
-    onSave(draft.trim());
+    onSave(draft.trim(), isVerified);
     onClose();
   };
 
@@ -74,6 +79,17 @@ export function LabelModal({
             autoFocus
             testID="contact-label-input"
           />
+
+          {/* #153: explicit verified toggle — never auto-set. */}
+          <Pressable
+            style={styles.verifyRow}
+            onPress={() => setIsVerified(v => !v)}
+            testID="label-verify-checkbox">
+            <View style={[styles.checkbox, isVerified && styles.checkboxOn]}>
+              {isVerified && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+            <Text style={[type.label, {color: colors.text}]}>Verified</Text>
+          </Pressable>
 
           <View style={styles.actions}>
             <Pressable
@@ -112,6 +128,18 @@ const styles = StyleSheet.create({
   },
   headingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   heading: {...type.title, color: colors.text},
+  verifyRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: {backgroundColor: colors.verified, borderColor: colors.verified},
+  checkmark: {color: '#FFFFFF', fontSize: 15, lineHeight: 17},
   helper: {...type.caption, color: colors.textDim, marginTop: -spacing.sm},
   input: {
     ...type.body,

@@ -9,6 +9,7 @@ import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing} from '../theme';
 import {HexAvatar} from '../components/HexAvatar';
+import {VerifiedBadge} from '../components/VerifiedBadge';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {knownContacts} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
@@ -62,11 +63,14 @@ export function ContactsScreen() {
         <View style={styles.rowText}>
           {item.label ? (
             <>
-              <Text
-                style={[type.title, {color: colors.text, lineHeight: 18}]}
-                numberOfLines={1}>
-                {item.label}
-              </Text>
+              <View style={styles.nameRow}>
+                <Text
+                  style={[type.title, {color: colors.text, lineHeight: 18, flexShrink: 1}]}
+                  numberOfLines={1}>
+                  {item.label}
+                </Text>
+                {item.verified && <VerifiedBadge size={14} />}
+              </View>
               <Text
                 style={[type.label, {color: colors.textDim, lineHeight: 14}]}
                 numberOfLines={1}>
@@ -74,11 +78,14 @@ export function ContactsScreen() {
               </Text>
             </>
           ) : (
-            <Text
-              style={[type.title, {color: colors.text, lineHeight: 18}]}
-              numberOfLines={1}>
-              {shortAddress(item.address)}
-            </Text>
+            <View style={styles.nameRow}>
+              <Text
+                style={[type.title, {color: colors.text, lineHeight: 18, flexShrink: 1}]}
+                numberOfLines={1}>
+                {shortAddress(item.address)}
+              </Text>
+              {item.verified && <VerifiedBadge size={14} />}
+            </View>
           )}
         </View>
       </Pressable>
@@ -118,6 +125,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   rowText: {flex: 1, gap: 0},
+  nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   sep: {height: 1, backgroundColor: colors.border, marginLeft: spacing.lg},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl},
   emptyText: {...type.label, color: colors.textDim, textAlign: 'center'},

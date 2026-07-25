@@ -48,6 +48,8 @@ export interface ConversationRow {
   memberCount: number;
   /** #112: did THIS device create the group? Only the creator may re-create it. */
   createdByMe: boolean;
+  /** #153: local, user-asserted "verified" flag (I confirmed this address). */
+  verified: boolean;
 }
 
 export interface MessageRow {
@@ -88,6 +90,8 @@ interface LogosChatNative {
   /** Group roster (app-side) as JSON GroupMember[]. */
   listGroupMembers(convoPk: number): Promise<string>;
   setNickname(convoPk: number, nickname: string): Promise<null>;
+  /** #153: set the local verified flag for a contact. */
+  setVerified(convoPk: number, verified: boolean): Promise<null>;
   listConversations(): Promise<string>; // JSON ConversationRow[]
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
   markRead(convoPk: number): Promise<null>;

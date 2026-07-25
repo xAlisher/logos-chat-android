@@ -21,6 +21,7 @@ export const colors = {
   nodeConnecting: '#9CA3AF', // initializing/starting — gray (pulsing)
   nodeOffline: '#EF4444', // stopped/error — red
   contact: '#FF5000', // 1:1 contact glyph + attribution label — orange
+  verified: '#1D9BF0', // verified-contact badge (#153) — blue seal, white check
   errorFill: '#5c1a1a', // error toast fill
   errorBorder: '#C62828', // error toast border (text #EF4444)
   qrBg: '#FFFFFF', // QR modules — ALWAYS white bg / black fg for scannability

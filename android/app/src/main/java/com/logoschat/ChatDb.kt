@@ -38,7 +38,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // v2 (M2'): MLS groups — is_group + group_name on conversations, a
     // per-message sender_account (groups have many senders), a group_members
     // roster table.
-    const val DB_VERSION = 3
+    const val DB_VERSION = 4
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -52,6 +52,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              is_group INT DEFAULT 0,
              group_name TEXT,
              created_by_me INT DEFAULT 0,
+             verified INT DEFAULT 0,
              created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
     db.execSQL(
         """CREATE TABLE messages(
@@ -94,6 +95,11 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           // roster is partial (#95) so it would silently drop members. Groups that
           // already exist get 0 — they are unrecoverable anyway.
           db.execSQL("ALTER TABLE conversations ADD COLUMN created_by_me INT DEFAULT 0")
+        }
+        4 -> {
+          // #153: a local, user-asserted "verified" flag for a contact (I confirmed
+          // this address belongs to this person). Local-only, never broadcast.
+          db.execSQL("ALTER TABLE conversations ADD COLUMN verified INT DEFAULT 0")
         }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
@@ -262,6 +268,13 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         "UPDATE conversations SET peer_address=? WHERE convo_pk=?", arrayOf(peerAddress, convoPk))
   }
 
+  /** #153: set the local "verified" flag for a contact/conversation. */
+  fun setVerified(convoPk: Long, verified: Boolean) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET verified=? WHERE convo_pk=?",
+        arrayOf(if (verified) 1 else 0, convoPk))
+  }
+
   fun setNickname(convoPk: Long, nickname: String) {
     writableDatabase.execSQL(
         "UPDATE conversations SET nickname=? WHERE convo_pk=?", arrayOf(nickname, convoPk))
@@ -380,7 +393,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),
-                      c.created_by_me
+                      c.created_by_me, c.verified
                FROM conversations c
                ORDER BY c.last_message_at DESC""",
             null)
@@ -402,6 +415,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   if (cur.isNull(10)) put("groupName", JSONObject.NULL) else put("groupName", cur.getString(10))
                   put("memberCount", cur.getInt(11))
                   put("createdByMe", cur.getInt(12) == 1)
+                  put("verified", cur.getInt(13) == 1)
                 })
           }
         }

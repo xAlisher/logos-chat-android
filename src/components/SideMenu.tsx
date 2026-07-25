@@ -17,6 +17,7 @@ import {
 import Svg, {Path, Circle, Line, Rect} from 'react-native-svg';
 import {colors, type, spacing} from '../theme';
 import {HexAvatar} from './HexAvatar';
+import {QrIcon} from './QrIcon';
 import {shortAddress} from '../native/LogosChat';
 
 export type MenuView = 'all' | 'chats' | 'groups';
@@ -103,6 +104,7 @@ export function SideMenu({
   onSelectView,
   onContacts,
   onAbout,
+  onMyAddress,
 }: {
   visible: boolean;
   myAddress: string | null;
@@ -111,6 +113,7 @@ export function SideMenu({
   onSelectView: (v: MenuView) => void;
   onContacts: () => void;
   onAbout: () => void;
+  onMyAddress: () => void;
 }) {
   const {width} = useWindowDimensions();
   const panelW = Math.min(320, width * 0.82);
@@ -169,7 +172,8 @@ export function SideMenu({
             ],
           },
         ]}>
-        {/* Identity header */}
+        {/* Identity header — my avatar + address on the left, my-address QR on
+            the right (moved out of the main header, #152). */}
         <View style={styles.header}>
           <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={48} />
           <View style={styles.headerText}>
@@ -178,6 +182,13 @@ export function SideMenu({
               {myAddress != null ? shortAddress(myAddress) : '…'}
             </Text>
           </View>
+          <Pressable
+            onPress={() => pick(onMyAddress)}
+            hitSlop={10}
+            style={styles.headerQr}
+            testID="menu-my-address">
+            <QrIcon size={24} />
+          </Pressable>
         </View>
 
         <View style={styles.group}>
@@ -256,6 +267,12 @@ const styles = StyleSheet.create({
   headerText: {flex: 1, gap: 2},
   headerName: {...type.title, color: colors.text},
   headerHex: {...type.label, color: colors.textDim},
+  headerQr: {
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   group: {gap: 2},
   item: {
     flexDirection: 'row',

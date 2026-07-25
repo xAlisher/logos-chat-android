@@ -7,12 +7,12 @@ import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, layout} from '../theme';
-import {QrIcon} from '../components/QrIcon';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
 import {SpeedDialFab} from '../components/SpeedDialFab';
 import {HexAvatar, avatarSeed} from '../components/HexAvatar';
+import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SideMenu, type MenuView} from '../components/SideMenu';
 import {useNodeStore} from '../stores/nodeStore';
 import {
@@ -66,6 +66,7 @@ function ConversationRow({
             numberOfLines={1}>
             {convoDisplayName(convo)}
           </Text>
+          {convo.verified && <VerifiedBadge size={14} />}
         </View>
         <Text style={styles.preview} numberOfLines={1}>
           {convo.lastText || (convo.isGroup ? 'new group' : 'new conversation')}
@@ -122,9 +123,10 @@ export function ConversationsScreen() {
 
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
-      {/* Header (#125): [my avatar → side menu] · [centered view title] · [QR].
-          The title is an absolute, non-interactive layer BEHIND the avatar/QR so
-          it can span the full width (true centering) without eating their taps. */}
+      {/* Header (#125): [my avatar → side menu] · [centered view title]. The QR /
+          My-address moved into the side menu (#152) so the right slot is free for
+          the transport indicator (offline mode, #146). The title is an absolute,
+          non-interactive layer so it centers without eating the avatar's taps. */}
       <View style={styles.header}>
         <View style={styles.headerTitleWrap} pointerEvents="none">
           <Text style={styles.headerTitle}>{VIEW_TITLE[view]}</Text>
@@ -135,13 +137,8 @@ export function ConversationsScreen() {
           onPress={() => setMenuOpen(true)}>
           <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={34} />
         </Pressable>
-        <Pressable
-          style={styles.iconBtn}
-          testID="open-my-address"
-          hitSlop={8}
-          onPress={() => navigation.navigate('MyAddress')}>
-          <QrIcon size={24} />
-        </Pressable>
+        {/* Reserved right slot (kept for header balance; transport chip lands here). */}
+        <View style={styles.headerRightSlot} />
       </View>
       {list.length === 0 ? (
         <View style={styles.empty}>
@@ -188,6 +185,7 @@ export function ConversationsScreen() {
         onSelectView={setView}
         onContacts={() => navigation.navigate('Contacts')}
         onAbout={() => navigation.navigate('About')}
+        onMyAddress={() => navigation.navigate('MyAddress')}
       />
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
@@ -217,12 +215,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitle: {...type.brand, color: colors.text},
-  iconBtn: {
-    minHeight: layout.minTouchTarget,
-    minWidth: layout.minTouchTarget,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // Balances the 34px avatar on the left so the centered title stays optically
+  // centered; the offline transport chip (#146) will live here.
+  headerRightSlot: {width: 34, height: 34},
   listContent: {paddingBottom: 88},
   titleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   row: {

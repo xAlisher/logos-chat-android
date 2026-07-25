@@ -2,6 +2,7 @@ import {
   sortedConversations,
   convoDisplayName,
   knownContacts,
+  isAddressVerified,
 } from '../src/stores/conversationView';
 import type {ConversationRow, GroupMember} from '../src/native/LogosChat';
 
@@ -21,6 +22,7 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     groupName: null,
     memberCount: 0,
     createdByMe: false,
+    verified: false,
     ...over,
   };
 }
@@ -40,6 +42,30 @@ describe('sortedConversations', () => {
 
   it('handles the empty map', () => {
     expect(sortedConversations({})).toEqual([]);
+  });
+});
+
+describe('isAddressVerified (#153)', () => {
+  it('is true when a 1:1 with that address is verified (case-insensitive)', () => {
+    const convs = {1: row({peerAddress: ADDR, verified: true})};
+    expect(isAddressVerified(convs, ADDR.toUpperCase())).toBe(true);
+  });
+
+  it('is false when the matching 1:1 is not verified', () => {
+    const convs = {1: row({peerAddress: ADDR, verified: false})};
+    expect(isAddressVerified(convs, ADDR)).toBe(false);
+  });
+
+  it('ignores groups and unknown/null addresses', () => {
+    const convs = {1: row({peerAddress: ADDR, isGroup: true, verified: true})};
+    expect(isAddressVerified(convs, ADDR)).toBe(false);
+    expect(isAddressVerified(convs, null)).toBe(false);
+  });
+
+  it('propagates verified into knownContacts', () => {
+    const convs = {1: row({peerAddress: ADDR, nickname: 'A', verified: true})};
+    const [c] = knownContacts(convs, {});
+    expect(c.verified).toBe(true);
   });
 });
 
@@ -111,8 +137,8 @@ describe('knownContacts', () => {
       {},
     );
     expect(out).toEqual([
-      {address: A1, label: 'Alice'},
-      {address: A2, label: null},
+      {address: A1, label: 'Alice', verified: false},
+      {address: A2, label: null, verified: false},
     ]);
   });
 
@@ -122,7 +148,7 @@ describe('knownContacts', () => {
       {5: [{address: A3, isSelf: false} as GroupMember, {address: A1, isSelf: true} as GroupMember]},
     );
     // A3 from the roster; A1 is self → excluded.
-    expect(out).toEqual([{address: A3, label: null}]);
+    expect(out).toEqual([{address: A3, label: null, verified: false}]);
   });
 
   it('excludes addresses already in the group (case-insensitive) and dedupes', () => {
@@ -134,7 +160,7 @@ describe('knownContacts', () => {
       {9: [{address: A1, isSelf: false} as GroupMember]},
       [A1.toUpperCase()],
     );
-    expect(out).toEqual([{address: A2, label: 'Bob'}]);
+    expect(out).toEqual([{address: A2, label: 'Bob', verified: false}]);
   });
 
   it('sorts labelled contacts (alpha) before bare addresses', () => {

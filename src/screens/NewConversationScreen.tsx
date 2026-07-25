@@ -30,6 +30,9 @@ export function NewConversationScreen() {
   const status = useNodeStore(s => s.status);
   const startConversation = useChatStore(s => s.startConversation);
   const [name, setName] = useState('');
+  // #153: verification is ALWAYS an explicit, unchecked-by-default choice — a QR
+  // can be scanned off a web page, so scanning is not proof of a real identity.
+  const [verified, setVerified] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = status === 'running';
@@ -44,6 +47,7 @@ export function NewConversationScreen() {
     try {
       const convoPk = await startConversation(address, {
         nickname: name.trim() || undefined,
+        verified,
       });
       const convo = useChatStore.getState().conversations[convoPk];
       navigation.replace('Chat', {
@@ -96,6 +100,23 @@ export function NewConversationScreen() {
             autoFocus
             testID="contact-name-input"
           />
+          {/* #153: explicit, unchecked-by-default. Verifying means "I confirmed
+              this address really belongs to them" (e.g. scanned in person). */}
+          <Pressable
+            style={styles.verifyRow}
+            onPress={() => setVerified(v => !v)}
+            disabled={busy}
+            testID="verify-checkbox">
+            <View style={[styles.checkbox, verified && styles.checkboxOn]}>
+              {verified && <Text style={styles.checkmark}>✓</Text>}
+            </View>
+            <View style={styles.verifyText}>
+              <Text style={[type.label, {color: colors.text}]}>Verified</Text>
+              <Text style={[type.caption, {color: colors.textDim}]}>
+                I've confirmed this address belongs to them
+              </Text>
+            </View>
+          </Pressable>
           <Pressable
             style={[styles.startBtn, !canStart && styles.btnDisabled]}
             disabled={!canStart}
@@ -153,6 +174,19 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   nameInput: {minHeight: 44},
+  verifyRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xs},
+  verifyText: {flex: 1, gap: 2},
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: {backgroundColor: colors.verified, borderColor: colors.verified},
+  checkmark: {color: '#FFFFFF', fontSize: 15, lineHeight: 17},
   startBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
