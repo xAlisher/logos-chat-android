@@ -237,7 +237,10 @@ export function ChatScreen() {
       loadMessages(convoPk);
       // #112: a group from an earlier node session cannot be operated (#103).
       // Probe once on focus so the thread can say so instead of failing on send.
-      if (route.params.isGroup === true || useChatStore.getState().conversations[convoPk]?.isGroup) {
+      // #167: a MeshCore channel is is_group=true but NOT a Logos MLS group — the
+      // Logos liveness probe would wrongly flag it dead, so skip it for mesh.
+      const c = useChatStore.getState().conversations[convoPk];
+      if (c?.transport !== 'mesh' && (route.params.isGroup === true || c?.isGroup)) {
         probeGroup(convoPk).catch(() => {});
       }
       return () => setActive(null);
@@ -245,6 +248,8 @@ export function ChatScreen() {
   );
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
+  // #167: a MeshCore channel (transport='mesh') sends over the radio, not the node.
+  const isMesh = convo?.transport === 'mesh';
 
   const onTrash = useCallback(() => {
     Alert.alert('Delete conversation', 'Delete this conversation and all its messages?', [
@@ -499,11 +504,11 @@ export function ChatScreen() {
 
   const running = nodeStatus === 'running';
   const connecting = nodeStatus === 'initializing' || nodeStatus === 'starting';
-  const canSend = running && text.trim().length > 0 && !busy;
+  const canSend = (isMesh || running) && text.trim().length > 0 && !busy;
 
   // Submit button color mirrors node status (#17): orange running, gray while
-  // connecting, red offline. The button is never a dead no-op.
-  const sendColor = running
+  // connecting, red offline. A mesh channel rides the radio, so it's always live.
+  const sendColor = isMesh || running
     ? colors.accent
     : connecting
     ? colors.nodeConnecting
@@ -512,7 +517,8 @@ export function ChatScreen() {
   // #112: a group the lib can no longer operate. Only the CREATOR may revive it;
   // everyone else is offered a fresh group instead (two re-creators would fork it,
   // and a joiner's roster is partial (#95) so it would silently drop members).
-  const dead = isGroup && liveness === 'dead';
+  // #167: mesh channels are never "dead" (no Logos MLS lifecycle) — always show the composer.
+  const dead = isGroup && !isMesh && liveness === 'dead';
   const canRevive = dead && (convo?.createdByMe ?? false);
 
   const doSend = async () => {
@@ -541,7 +547,9 @@ export function ChatScreen() {
   };
 
   const onSubmit = () => {
-    if (running) {
+    // #167: a mesh channel goes over the radio, not the Logos node — never gate it
+    // on node status.
+    if (isMesh || running) {
       doSend();
     } else if (connecting) {
       // Keep the draft; just tell the user to wait.
