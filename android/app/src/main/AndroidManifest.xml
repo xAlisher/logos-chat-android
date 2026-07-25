@@ -46,6 +46,19 @@
         </intent-filter>
       </activity>
 
+      <!-- #38: shares the app-DB JSON backup written to cacheDir/exports via a
+           content:// URI so the share sheet's target can read it without a
+           storage permission. Paths declared in res/xml/file_paths.xml. -->
+      <provider
+        android:name="androidx.core.content.FileProvider"
+        android:authorities="${applicationId}.fileprovider"
+        android:exported="false"
+        android:grantUriPermissions="true">
+        <meta-data
+          android:name="android.support.FILE_PROVIDER_PATHS"
+          android:resource="@xml/file_paths" />
+      </provider>
+
       <!-- Owns the node + DB so messages keep arriving (and persisting) while the
            app is backgrounded or swiped away; START_STICKY brings it back. -->
       <service

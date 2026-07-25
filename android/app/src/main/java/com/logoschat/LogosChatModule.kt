@@ -780,6 +780,58 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     promise.resolve(MainActivity.consumeLaunchConvoPk().toDouble())
   }
 
+  /**
+   * #38: export the app-side store as a JSON backup and hand it to the Android
+   * share sheet. Writes `logos-chat-backup-<ts>.json` to cacheDir/exports, then
+   * launches ACTION_SEND (via a FileProvider content:// URI) so the user picks
+   * where it goes (Files, Drive, email…). Resolves the file path.
+   *
+   * Scope: this backs up conversations, messages, the group roster, the mesh
+   * identity map + contact roster, and kv settings — the app-owned history. It
+   * does NOT include the lib's MLS crypto identity/ratchet state (that lives in
+   * the lib's encrypted DB and is ephemeral by design, not portable).
+   */
+  @ReactMethod
+  fun exportChatData(promise: Promise) {
+    NodeRuntime.executor.execute {
+      try {
+        val ctx = reactApplicationContext
+        val json = ChatRepo.requireDb().exportJson()
+        val dir = java.io.File(ctx.cacheDir, "exports")
+        dir.mkdirs()
+        val ts =
+            java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                .format(java.util.Date())
+        val file = java.io.File(dir, "logos-chat-backup-$ts.json")
+        file.writeText(json, Charsets.UTF_8)
+        val uri =
+            androidx.core.content.FileProvider.getUriForFile(
+                ctx, "${ctx.packageName}.fileprovider", file)
+        val send =
+            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+              type = "application/json"
+              putExtra(android.content.Intent.EXTRA_STREAM, uri)
+              putExtra(android.content.Intent.EXTRA_SUBJECT, file.name)
+              addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        com.facebook.react.bridge.UiThreadUtil.runOnUiThread {
+          val chooser = android.content.Intent.createChooser(send, "Export chat data")
+          val act = reactApplicationContext.currentActivity
+          if (act != null) {
+            act.startActivity(chooser)
+          } else {
+            chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(chooser)
+          }
+        }
+        promise.resolve(file.absolutePath)
+      } catch (t: Throwable) {
+        Log.w("logos-chat-bridge", "export failed: ${t.message}")
+        promise.reject("export", t)
+      }
+    }
+  }
+
   @ReactMethod
   fun getSetting(key: String, promise: Promise) {
     try {

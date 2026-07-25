@@ -872,6 +872,57 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     return arr.toString()
   }
 
+  /**
+   * #38: a full, faithful dump of the app-side store as a single JSON object — the
+   * portable backup a tester can save and (later) re-import to restore history +
+   * contacts on a fresh install. This is the APP store only (conversations,
+   * messages, group roster, mesh identity map + contact roster, kv settings); it
+   * does NOT contain the lib's MLS crypto identity/ratchet state, which lives in
+   * the lib's own encrypted DB and is ephemeral by design (not portable).
+   *
+   * Every column of every table is dumped verbatim (nulls preserved as JSON null)
+   * so a re-import can reconstruct rows exactly. `schemaVersion` records the DB
+   * version the dump was taken at so an importer can gate/migrate.
+   */
+  fun exportJson(): String {
+    val db = readableDatabase
+    val root =
+        JSONObject().apply {
+          put("format", "logos-chat-backup")
+          put("version", 1)
+          put("schemaVersion", DB_VERSION)
+          put("exportedAt", System.currentTimeMillis())
+          put("kv", dumpTable(db, "kv"))
+          put("conversations", dumpTable(db, "conversations"))
+          put("messages", dumpTable(db, "messages"))
+          put("group_members", dumpTable(db, "group_members"))
+          put("mesh_map", dumpTable(db, "mesh_map"))
+          put("mesh_contacts", dumpTable(db, "mesh_contacts"))
+        }
+    return root.toString()
+  }
+
+  /** Dump every row of [table] as a JSON array of {column: value} objects. */
+  private fun dumpTable(db: SQLiteDatabase, table: String): JSONArray {
+    val arr = JSONArray()
+    db.rawQuery("SELECT * FROM $table", null).use { cur ->
+      val cols = cur.columnNames
+      while (cur.moveToNext()) {
+        val obj = JSONObject()
+        for (i in cols.indices) {
+          when (cur.getType(i)) {
+            android.database.Cursor.FIELD_TYPE_NULL -> obj.put(cols[i], JSONObject.NULL)
+            android.database.Cursor.FIELD_TYPE_INTEGER -> obj.put(cols[i], cur.getLong(i))
+            android.database.Cursor.FIELD_TYPE_FLOAT -> obj.put(cols[i], cur.getDouble(i))
+            else -> obj.put(cols[i], cur.getString(i))
+          }
+        }
+        arr.put(obj)
+      }
+    }
+    return arr
+  }
+
   /** (conversations, messages) row counts — the boot log (JS-independent evidence). */
   fun counts(): Pair<Int, Int> {
     fun count(sql: String): Int =

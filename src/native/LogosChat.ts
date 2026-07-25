@@ -169,6 +169,13 @@ interface LogosChatNative {
   consumeLaunchConvo(): Promise<number>;
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<null>;
+  /**
+   * #38: export the app-side store (conversations, messages, group roster, mesh
+   * identity map + contact roster, kv settings) as a JSON backup and launch the
+   * Android share sheet. Resolves the on-device path of the written file. Does NOT
+   * include the lib's MLS crypto identity/ratchet state (ephemeral, not portable).
+   */
+  exportChatData(): Promise<string>;
 }
 
 /** A peer address is 64 lowercase hex chars (32-byte Ed25519 account pubkey). */

@@ -1,14 +1,22 @@
 // About (#130) — app info reachable from the side menu: the Chat mark, name,
 // version, a one-line description, and this device's own short address. Static;
 // reads only the (cached) address from the node store.
-import React from 'react';
-import {Text, View, ScrollView, StyleSheet, Linking, Pressable} from 'react-native';
+import React, {useState} from 'react';
+import {
+  Text,
+  View,
+  ScrollView,
+  StyleSheet,
+  Linking,
+  Pressable,
+  ToastAndroid,
+} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {colors, type, spacing, radii} from '../theme';
 import {Logo} from '../components/Logo';
 import {HexAvatar} from '../components/HexAvatar';
 import {useNodeStore} from '../stores/nodeStore';
-import {shortAddress} from '../native/LogosChat';
+import LogosChat, {shortAddress} from '../native/LogosChat';
 
 // Kept in sync with android/app/build.gradle (versionName / versionCode).
 const APP_VERSION = '0.4.1';
@@ -17,6 +25,22 @@ const REPO_URL = 'https://github.com/xAlisher/logos-chat-android';
 
 export function AboutScreen() {
   const myAddress = useNodeStore(s => s.myAddress);
+  const [exporting, setExporting] = useState(false);
+
+  // #38: dump the app-side store to a JSON backup and open the share sheet. The
+  // native side writes the file and launches ACTION_SEND; we only toast the result.
+  const onExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await LogosChat.exportChatData();
+      ToastAndroid.show('Chat data exported', ToastAndroid.SHORT);
+    } catch {
+      ToastAndroid.show('Export failed', ToastAndroid.SHORT);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <SafeAreaView edges={['bottom']} style={styles.root}>
@@ -56,6 +80,23 @@ export function AboutScreen() {
             {REPO_URL.replace('https://', '')}
           </Text>
         </Pressable>
+
+        {/* #38: back up the app-side store (history + contacts) to a JSON file via
+            the share sheet. Scope-honest: the MLS crypto identity is NOT included. */}
+        <Pressable
+          style={[styles.linkRow, exporting && styles.rowDisabled]}
+          onPress={onExport}
+          disabled={exporting}
+          testID="about-export">
+          <Text style={styles.linkText}>
+            {exporting ? 'Exporting…' : 'Export chat data'}
+          </Text>
+          <Text style={styles.helper}>
+            Save a JSON backup of your conversations, messages and contacts. Your
+            encryption identity is not included, so restoring keeps history but not
+            secure sessions.
+          </Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -89,4 +130,6 @@ const styles = StyleSheet.create({
   },
   linkText: {...type.title, color: colors.text},
   linkUrl: {...type.label, color: colors.accent},
+  helper: {...type.label, color: colors.textDim, lineHeight: 18, marginTop: 2},
+  rowDisabled: {opacity: 0.6},
 });
