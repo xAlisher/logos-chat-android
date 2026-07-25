@@ -253,9 +253,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const name = convoDisplayName(convo).slice(0, 31);
     await MeshCore.setChannel(idx, name, key);
     await LogosChat.setMeshMirror(convoPk, idx, key);
-    // Invite each mapped member: an ECDH DM carrying the channel slot + key + name.
-    // A peer running this app auto-joins; an official-app peer sees a text invite.
-    const invite = `${MESH_INVITE_PREFIX}${idx}:${key}:${name}`;
+    // Invite each mapped member: an ECDH DM carrying the channel slot + key +
+    // the GROUP's lib id + name. The lib id lets an invitee that already holds
+    // this Logos group BIND the channel to it (setMeshMirror), so inbound mesh
+    // lands in the group timeline instead of a standalone channel (#168 Bug 1).
+    // A peer running this app auto-joins + binds; an official-app peer just sees
+    // text. Name is last so it may contain ':'.
+    const libId = (convo.libConvoId ?? '').toLowerCase();
+    const invite = `${MESH_INVITE_PREFIX}${idx}:${key}:${libId}:${name}`;
     let invited = 0;
     for (const m of mapped) {
       try {
@@ -545,13 +550,43 @@ addMeshListener(e => {
       // control message, not chat — auto-join the channel so the mirror flows in,
       // and don't render it as a DM bubble.
       if (text.startsWith(MESH_INVITE_PREFIX)) {
-        const m = text
-          .slice(MESH_INVITE_PREFIX.length)
-          .match(/^(\d+):([0-9a-fA-F]{32}):(.*)$/);
+        const body = text.slice(MESH_INVITE_PREFIX.length);
+        // New format carries the group's lib id: idx:key(32hex):libId(hex):name.
+        // Fall back to the old idx:key:name (no binding possible).
+        let inviteIdx = -1;
+        let key: string | null = null;
+        let libId: string | null = null;
+        let rawName = '';
+        let m = body.match(/^(\d+):([0-9a-fA-F]{32}):([0-9a-fA-F]*):(.*)$/);
         if (m != null) {
-          const inviteIdx = parseInt(m[1], 10);
-          const inviteName = m[3].length > 0 ? m[3] : `Channel ${inviteIdx}`;
-          await MeshCore.setChannel(inviteIdx, inviteName, m[2].toLowerCase());
+          inviteIdx = parseInt(m[1], 10);
+          key = m[2].toLowerCase();
+          libId = m[3].length > 0 ? m[3].toLowerCase() : null;
+          rawName = m[4];
+        } else {
+          m = body.match(/^(\d+):([0-9a-fA-F]{32}):(.*)$/);
+          if (m != null) {
+            inviteIdx = parseInt(m[1], 10);
+            key = m[2].toLowerCase();
+            rawName = m[3];
+          }
+        }
+        if (key != null) {
+          const inviteName = rawName.length > 0 ? rawName : `Channel ${inviteIdx}`;
+          // #168 Bug 1: if we already hold the mirrored Logos group locally, bind
+          // this channel to it FIRST, so inbound mesh lands in the group timeline
+          // rather than a standalone channel. (Race: if the group welcome hasn't
+          // arrived yet, we fall through to a standalone channel — rare, since
+          // the Logos welcome normally precedes the mesh invite in the flow.)
+          if (libId != null) {
+            const g = Object.values(
+              useChatStore.getState().conversations,
+            ).find(c => c.isGroup && c.libConvoId?.toLowerCase() === libId);
+            if (g != null) {
+              await LogosChat.setMeshMirror(g.convoPk, inviteIdx, key);
+            }
+          }
+          await MeshCore.setChannel(inviteIdx, inviteName, key);
           await useChatStore.getState().refreshConversations();
           return;
         }

@@ -65,4 +65,13 @@ Test rig: **Samsung = B**, **Pixel = C**. **A** is simulated by a second mesh no
 ## Debug log
 
 - **2026-07-25** — Bug 2 root-caused from the on-device error banner (`add_group_member failed: … group_v2 cannot be rebuilt from storage: de-mls has no load path`). It's the known GroupV2-can't-rehydrate limitation (#103), surfacing on a mesh-mirrored group because `meshMode` masked the dead-group auto-recreate. Fix landed: `addMember` auto-recreates (creator) then retries; `canRevive` decoupled from `meshMode` (`chatStore.addMember`, `ChatScreen` `dead`/`canRevive`, `AddMembersScreen` message). Verifying on Samsung.
-- Bug 1 + the two reforward directions (S1.3 / S2.3) are next.
+- **2026-07-25** — Bug 1 fixed: the `lmi:` invite now carries the group's `lib_convo_id`
+  (`lmi:<idx>:<key>:<libId>:<name>`); the invitee looks up its matching local group by
+  `libConvoId` and calls `setMeshMirror(groupConvoPk, idx, key)` BEFORE `setChannel`, so inbound
+  mesh lands in the group timeline, not a standalone channel. Old-format invite still parsed
+  (no binding). Race note: if the Logos welcome hasn't arrived when the invite does, it falls
+  back to a standalone channel (rare). Installed on both phones; re-trigger "switch to mesh" to
+  verify (old standalone channels won't retro-merge).
+- Filed alongside: #187 (Storage-backed rebuildable group snapshot — research), #188 (system
+  lines are a bottom-pinned footer, not time-interleaved), #189 (local mirror start/stop lines).
+- Next: the two reforward directions (S1.3 / S2.3) — the actual A↔C relay.
