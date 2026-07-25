@@ -69,6 +69,15 @@ const AboutIcon = ({color = colors.text}: {color?: string}) => (
     <Rect x="11.1" y="7.3" width="1.8" height="1.8" rx="0.9" fill={color} />
   </Icon>
 );
+// radio/antenna glyph for the MeshCore transport (#166).
+const MeshIcon = ({color = colors.text}: {color?: string}) => (
+  <Icon>
+    <Line x1="12" y1="12" x2="12" y2="21" {...stroke(color)} />
+    <Circle cx="12" cy="10" r="1.6" fill={color} />
+    <Path d="M8.5 13.5a5 5 0 0 1 0-7M15.5 6.5a5 5 0 0 1 0 7" {...stroke(color)} />
+    <Path d="M6 15.5a8 8 0 0 1 0-11M18 4.5a8 8 0 0 1 0 11" {...stroke(color)} />
+  </Icon>
+);
 
 function Item({
   icon,
@@ -107,6 +116,7 @@ export function SideMenu({
   onContacts,
   onAbout,
   onMyAddress,
+  onMeshCore,
 }: {
   visible: boolean;
   myAddress: string | null;
@@ -116,6 +126,7 @@ export function SideMenu({
   onContacts: () => void;
   onAbout: () => void;
   onMyAddress: () => void;
+  onMeshCore: () => void;
 }) {
   const {width} = useWindowDimensions();
   const panelW = Math.min(320, width * 0.82);
@@ -225,6 +236,12 @@ export function SideMenu({
             label="Contacts"
             onPress={() => pick(onContacts)}
             testID="menu-contacts"
+          />
+          <Item
+            icon={c => <MeshIcon color={c} />}
+            label="MeshCore"
+            onPress={() => pick(onMeshCore)}
+            testID="menu-meshcore"
           />
           <Item
             icon={c => <AboutIcon color={c} />}

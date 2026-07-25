@@ -38,7 +38,10 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // v2 (M2'): MLS groups — is_group + group_name on conversations, a
     // per-message sender_account (groups have many senders), a group_members
     // roster table.
-    const val DB_VERSION = 4
+    // v5/v6 (#165, docs/mesh-transport.md): MeshCore transport data-model
+    // foundation — conversations.transport + messages.sent_via, both 'logos'
+    // by default (additive, no FFI).
+    const val DB_VERSION = 6
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -53,6 +56,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              group_name TEXT,
              created_by_me INT DEFAULT 0,
              verified INT DEFAULT 0,
+             transport TEXT DEFAULT 'logos',
              created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
     db.execSQL(
         """CREATE TABLE messages(
@@ -60,6 +64,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              convo_pk INT REFERENCES conversations,
              direction TEXT CHECK(direction IN ('in','out')),
              content TEXT, sent_at INT, sender_account TEXT,
+             sent_via TEXT DEFAULT 'logos',
              status TEXT CHECK(status IN ('pending','sent','failed','received')))""")
     // Group roster (app-side, best-effort): the creator records itself + each
     // member it adds. The lib does not expose a roster verb in this wrapper, so
@@ -100,6 +105,16 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           // #153: a local, user-asserted "verified" flag for a contact (I confirmed
           // this address belongs to this person). Local-only, never broadcast.
           db.execSQL("ALTER TABLE conversations ADD COLUMN verified INT DEFAULT 0")
+        }
+        5 -> {
+          // #165 (docs/mesh-transport.md): per-conversation transport tag
+          // ('logos'|'mesh'). Existing rows are Logos conversations.
+          db.execSQL("ALTER TABLE conversations ADD COLUMN transport TEXT DEFAULT 'logos'")
+        }
+        6 -> {
+          // #165 (docs/mesh-transport.md): per-message transport tag
+          // ('logos'|'mesh') — one shared timeline, mesh rows badged.
+          db.execSQL("ALTER TABLE messages ADD COLUMN sent_via TEXT DEFAULT 'logos'")
         }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
@@ -336,6 +351,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       sentAt: Long,
       status: String,
       senderAccount: String? = null,
+      sentVia: String = "logos", // #165: transport this message went over ('logos'|'mesh')
   ): Long =
       writableDatabase.insertOrThrow(
           "messages",
@@ -347,6 +363,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
             put("sent_at", sentAt)
             put("status", status)
             if (senderAccount != null) put("sender_account", senderAccount) else putNull("sender_account")
+            put("sent_via", sentVia)
           })
 
   fun setMessageStatus(msgPk: Long, status: String) {
@@ -393,7 +410,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),
-                      c.created_by_me, c.verified
+                      c.created_by_me, c.verified, c.transport
                FROM conversations c
                ORDER BY c.last_message_at DESC""",
             null)
@@ -416,6 +433,8 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("memberCount", cur.getInt(11))
                   put("createdByMe", cur.getInt(12) == 1)
                   put("verified", cur.getInt(13) == 1)
+                  // #165: transport tag; default to 'logos' if unexpectedly null.
+                  put("transport", if (cur.isNull(14)) "logos" else cur.getString(14))
                 })
           }
         }
@@ -431,7 +450,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         else arrayOf(convoPk.toString())
     readableDatabase
         .rawQuery(
-            "SELECT msg_pk, direction, content, sent_at, status, sender_account FROM messages WHERE $where ORDER BY msg_pk DESC LIMIT $limit",
+            "SELECT msg_pk, direction, content, sent_at, status, sender_account, sent_via FROM messages WHERE $where ORDER BY msg_pk DESC LIMIT $limit",
             args)
         .use { cur ->
           while (cur.moveToNext()) {
@@ -443,6 +462,8 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("at", cur.getLong(3))
                   put("status", cur.getString(4))
                   if (cur.isNull(5)) put("senderAccount", JSONObject.NULL) else put("senderAccount", cur.getString(5))
+                  // #165: transport tag; default missing/null to 'logos'.
+                  put("sentVia", if (cur.isNull(6)) "logos" else cur.getString(6))
                 })
           }
         }

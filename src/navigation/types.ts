@@ -25,4 +25,6 @@ export type RootStackParamList = {
   Contacts: undefined;
   /** App info (from the side menu, #130). */
   About: undefined;
+  /** MeshCore radio setup (Phase 0, #166). */
+  MeshCore: undefined;
 };

@@ -173,8 +173,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   send: async (convoPk: number, text: string) => {
+    // #165 (docs/mesh-transport.md): route by the conversation's transport.
+    // Undefined/'logos' → the Logos MLS node (unchanged). 'mesh' → a paired
+    // MeshCore radio, wired in #166 (dormant: no mesh conversations exist yet).
+    const transport = get().conversations[convoPk]?.transport ?? 'logos';
     // Optimistic pending bubble; the durable row lands native-side and the
-    // reload below replaces this.
+    // reload below replaces this. sentVia matches the convo's transport.
     const temp: MessageRow = {
       msgPk: -Date.now(),
       direction: 'out',
@@ -182,11 +186,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       at: Date.now(),
       status: 'pending',
       senderAccount: null,
+      sentVia: transport,
     };
     set(s => ({
       messages: {...s.messages, [convoPk]: [temp, ...(s.messages[convoPk] ?? [])]},
     }));
     try {
+      if (transport === 'mesh') {
+        throw new Error('MeshCore transport not wired yet (#166)');
+      }
       const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
       if (res.status === 'failed') {
         useNodeStore.setState({error: 'send failed — tap the message to retry'});

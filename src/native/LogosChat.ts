@@ -50,6 +50,11 @@ export interface ConversationRow {
   createdByMe: boolean;
   /** #153: local, user-asserted "verified" flag (I confirmed this address). */
   verified: boolean;
+  /**
+   * #165 (docs/mesh-transport.md): which transport carries this conversation.
+   * 'logos' = the Logos MLS node (default); 'mesh' = a paired MeshCore radio.
+   */
+  transport: 'logos' | 'mesh';
 }
 
 export interface MessageRow {
@@ -60,6 +65,11 @@ export interface MessageRow {
   status: 'pending' | 'sent' | 'failed' | 'received';
   /** Directory-verified sender (groups: who sent it), else null. */
   senderAccount: string | null;
+  /**
+   * #165 (docs/mesh-transport.md): which transport this message went over.
+   * 'logos' (default) or 'mesh' — one shared timeline, mesh rows badged.
+   */
+  sentVia: 'logos' | 'mesh';
 }
 
 /** A group roster entry (app-side, best-effort). */

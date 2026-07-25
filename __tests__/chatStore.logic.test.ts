@@ -23,6 +23,7 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     memberCount: 0,
     createdByMe: false,
     verified: false,
+    transport: 'logos',
     ...over,
   };
 }
@@ -42,6 +43,12 @@ describe('sortedConversations', () => {
 
   it('handles the empty map', () => {
     expect(sortedConversations({})).toEqual([]);
+  });
+});
+
+describe('transport (#165)', () => {
+  it("a conversation defaults to the 'logos' transport", () => {
+    expect(row({}).transport).toBe('logos');
   });
 });
 

@@ -266,6 +266,7 @@ export function ConversationsScreen() {
         onContacts={() => navigation.navigate('Contacts')}
         onAbout={() => navigation.navigate('About')}
         onMyAddress={() => navigation.navigate('MyAddress')}
+        onMeshCore={() => navigation.navigate('MeshCore')}
       />
       <OverflowMenu
         visible={rowMenu != null}
