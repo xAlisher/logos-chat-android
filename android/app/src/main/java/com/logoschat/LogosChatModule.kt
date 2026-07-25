@@ -661,7 +661,15 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         return@execute
       }
       val name = d.groupNameOf(pk) ?: "group"
-      val newId = NodeBridge.chatCreateGroup(c, name, "")
+      // #194: bake the OLD lib id into the new group's metadata description so
+      // MEMBERS can fold the recreated group back into their existing thread
+      // (same convo_pk, history kept) instead of cloning a fresh row on every
+      // restart. The description rides the same welcome-carried MLS extension as
+      // the name, so `chatGroupMetadata` surfaces it to joiners (#102). Falls
+      // back to a plain recreate if the old binding is somehow absent.
+      val oldId = d.libConvoIdOf(pk)
+      val desc = if (oldId != null) ChatRepo.CONTINUES_PREFIX + oldId else ""
+      val newId = NodeBridge.chatCreateGroup(c, name, desc)
       if (newId == null) {
         promise.reject("recreate_group", NodeBridge.chatLastError())
         return@execute

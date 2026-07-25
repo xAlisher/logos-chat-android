@@ -26,6 +26,14 @@ object ChatRepo {
   const val EVENT_MEMBERS_CHANGED = 3
   const val EVENT_INBOUND_ERROR = 4
 
+  /**
+   * #194: continuation marker a recreated group carries in its metadata
+   * description ("logos-continues:<oldLibConvoId>"). Written by the CREATOR in
+   * [LogosChatModule.recreateGroup]; read by MEMBERS in [onConversationStarted]
+   * so the new group folds into the existing thread instead of cloning.
+   */
+  const val CONTINUES_PREFIX = "logos-continues:"
+
   @Volatile private var db: ChatDb? = null
   /** convoPk of the thread open in the UI (0 = none) — its inbound doesn't count unread. */
   @Volatile var activeConvoPk: Long = 0L
@@ -129,6 +137,38 @@ object ChatRepo {
     }
   }
 
+  /**
+   * #194: if a freshly-arrived group is the CONTINUATION of a recreated group,
+   * return the local convo_pk it continues. The creator bakes
+   * "logos-continues:<oldLibConvoId>" into the new group's metadata description
+   * (see [CONTINUES_PREFIX]); a member that still holds the old group's convo
+   * should fold the new group into it (keeping convo_pk + history) rather than
+   * cloning a new row.
+   *
+   * Timing: the description rides the SAME welcome-carried MLS extension as the
+   * name, which [groupNameFromLib] already reads synchronously on this path
+   * (#102). So whenever the name is available the token is too — there is no
+   * extra race to guard beyond the one the name path already tolerates. Returns
+   * null when there is no token, or we hold no matching old convo (the caller
+   * then falls back to normal new-convo behavior).
+   */
+  private fun continuationTarget(newLibConvoId: String): Long? {
+    val ctx = NodeRuntime.ctx
+    if (ctx == 0L) return null
+    val desc =
+        try {
+          val json = NodeBridge.chatGroupMetadata(ctx, newLibConvoId) ?: return null
+          JSONObject(json).optString("desc")
+        } catch (t: Throwable) {
+          Log.w(TAG, "group metadata unavailable for continuation $newLibConvoId: ${t.message}")
+          return null
+        }
+    if (!desc.startsWith(CONTINUES_PREFIX)) return null
+    val oldId = desc.removePrefix(CONTINUES_PREFIX)
+    if (oldId.isBlank() || oldId == newLibConvoId) return null
+    return requireDb().convoPkByLibId(oldId)
+  }
+
   /** A conversation started — 1:1 or an MLS group Welcome. Ensure a row exists. */
   private fun onConversationStarted(libConvoId: String, klass: String?): Outcome? {
     if (libConvoId.isEmpty()) return null
@@ -148,6 +188,21 @@ object ChatRepo {
         reconcileRoster(existing, libConvoId)
       }
       return null
+    }
+    // #194: a recreated group carries "logos-continues:<oldLibId>" in its
+    // metadata. If we still hold that old group's convo, FOLD the new group into
+    // it — rebind the existing row's lib id (same convo_pk, history preserved),
+    // mirroring the creator side — instead of cloning a fresh row on every
+    // restart. Only for groups; a null target falls through to a normal insert.
+    if (group) {
+      val continuedPk = continuationTarget(libConvoId)
+      if (continuedPk != null) {
+        requireDb().setLibConvoId(continuedPk, libConvoId)
+        seedSelfMember(continuedPk)
+        reconcileRoster(continuedPk, libConvoId)
+        Log.i(TAG, "group continuation: folded new lib=$libConvoId into convo=$continuedPk")
+        return Outcome("group_ready", continuedPk, "in", "")
+      }
     }
     val now = System.currentTimeMillis()
     // #102: the group's real name IS delivered to joiners — it lives in an MLS
