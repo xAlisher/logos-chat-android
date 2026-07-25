@@ -601,16 +601,14 @@ export function ChatScreen() {
   // #112: a group the lib can no longer operate. Only the CREATOR may revive it;
   // everyone else is offered a fresh group instead (two re-creators would fork it,
   // and a joiner's roster is partial (#95) so it would silently drop members).
-  // #167: mesh channels are never "dead". #168: a mirrored group rides the radio,
-  // so it's never a dead composer either.
-  // #167: a pure MeshCore channel has no Logos side, so it is never "dead".
-  // A mesh-MIRRORED Logos group (transport still 'logos', meshMode=true) DOES
-  // have a Logos side that can fail to rehydrate (#103): its Logos-only members
-  // are unreachable until the group is re-created, so it must stay REVIVABLE
-  // even though its mesh composer keeps working (we don't kill the composer for
-  // a mirrored group — only decouple revivability from it).
+  // A pure MeshCore channel (transport==='mesh', isMesh) has no Logos/MLS side, so
+  // it can never be "dead". A mesh-MIRRORED Logos group (transport 'logos',
+  // meshMode) DOES have an MLS side that can fail to rehydrate (#103).
   const logosDead = isGroup && !isMesh && liveness === 'dead';
-  const dead = logosDead && !meshMode;
+  // The mesh mirror only masks the "ended" state while the radio is ACTUALLY
+  // connected (meshLive) — a dead group with the radio down has NO working
+  // transport, so it should honestly show "ended" + Restart, not a live composer.
+  const dead = logosDead && !meshLive;
   const canRevive = logosDead && (convo?.createdByMe ?? false);
 
   // #168 (Phase 2b): mesh-mirror banner state. Shown on a Logos group when a radio
