@@ -37,6 +37,9 @@ interface ChatState {
   addMember: (convoPk: number, address: string) => Promise<void>;
   /** Load a group's roster (app-side, best-effort). */
   loadMembers: (convoPk: number) => Promise<void>;
+  /** #168 (Phase 2): map/unmap a Logos address ↔ a MeshCore identity, then reload the group roster. */
+  mapMeshIdentity: (convoPk: number, address: string, meshPubkey: string, meshName: string | null) => Promise<void>;
+  unmapMeshIdentity: (convoPk: number, address: string) => Promise<void>;
   /** Send a message into a conversation (1:1 or group). */
   send: (convoPk: number, text: string) => Promise<void>;
   /** Re-send a failed outbound message. */
@@ -175,6 +178,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await LogosChat.listGroupMembers(convoPk),
     );
     set(s => ({members: {...s.members, [convoPk]: rows}}));
+  },
+
+  mapMeshIdentity: async (convoPk, address, meshPubkey, meshName) => {
+    await LogosChat.setMeshMap(address, meshPubkey, meshName);
+    await get().loadMembers(convoPk);
+  },
+
+  unmapMeshIdentity: async (convoPk, address) => {
+    await LogosChat.clearMeshMap(address);
+    await get().loadMembers(convoPk);
   },
 
   send: async (convoPk: number, text: string) => {

@@ -41,7 +41,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // v5/v6 (#165, docs/mesh-transport.md): MeshCore transport data-model
     // foundation — conversations.transport + messages.sent_via, both 'logos'
     // by default (additive, no FFI).
-    const val DB_VERSION = 6
+    // v7 (#168, Phase 2): mesh_map — a local contact↔mesh-identity mapping so a
+    // Logos group can be mirrored into a MeshCore channel among mapped members.
+    const val DB_VERSION = 7
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -74,6 +76,16 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              convo_pk INT REFERENCES conversations,
              address TEXT, is_self INT DEFAULT 0, added_at INT,
              PRIMARY KEY(convo_pk, address))""")
+    // #168 (Phase 2): local mapping from a Logos address (1:1 contact peer_address
+    // or a group member address) → a MeshCore identity. Like `verified`, this is a
+    // local user assertion ("this person on Logos IS this mesh pubkey"), never
+    // broadcast. Used to mirror a group into a mesh channel among mapped members.
+    db.execSQL(
+        """CREATE TABLE mesh_map(
+             logos_address TEXT PRIMARY KEY,
+             mesh_pubkey TEXT NOT NULL,
+             mesh_name TEXT,
+             mapped_at INT)""")
     db.execSQL("CREATE INDEX idx_messages_convo ON messages(convo_pk, msg_pk)")
     db.execSQL("CREATE INDEX idx_convo_addr ON conversations(peer_address)")
     db.execSQL("CREATE INDEX idx_convo_lib ON conversations(lib_convo_id)")
@@ -115,6 +127,15 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           // #165 (docs/mesh-transport.md): per-message transport tag
           // ('logos'|'mesh') — one shared timeline, mesh rows badged.
           db.execSQL("ALTER TABLE messages ADD COLUMN sent_via TEXT DEFAULT 'logos'")
+        }
+        7 -> {
+          // #168 (Phase 2): local contact↔mesh-identity mapping for group mirroring.
+          db.execSQL(
+              """CREATE TABLE mesh_map(
+                   logos_address TEXT PRIMARY KEY,
+                   mesh_pubkey TEXT NOT NULL,
+                   mesh_name TEXT,
+                   mapped_at INT)""")
         }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
@@ -302,9 +323,13 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
 
   fun listGroupMembersJson(convoPk: Long): String {
     val arr = JSONArray()
+    // #168: LEFT JOIN the local mesh mapping so each member carries whether (and to
+    // which mesh identity) it is mapped — the group UI computes "N/M mapped" from this.
     readableDatabase
         .rawQuery(
-            "SELECT address, is_self FROM group_members WHERE convo_pk=? ORDER BY is_self DESC, added_at ASC",
+            "SELECT m.address, m.is_self, x.mesh_pubkey, x.mesh_name " +
+                "FROM group_members m LEFT JOIN mesh_map x ON x.logos_address = m.address " +
+                "WHERE m.convo_pk=? ORDER BY m.is_self DESC, m.added_at ASC",
             arrayOf(convoPk.toString()))
         .use { cur ->
           while (cur.moveToNext()) {
@@ -312,11 +337,35 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                 JSONObject().apply {
                   put("address", cur.getString(0))
                   put("isSelf", cur.getInt(1) == 1)
+                  if (!cur.isNull(2)) put("meshPubkey", cur.getString(2))
+                  if (!cur.isNull(3)) put("meshName", cur.getString(3))
                 })
           }
         }
     return arr.toString()
   }
+
+  // -- mesh identity mapping (#168, Phase 2) ---------------------------------
+
+  /** Map a Logos address → a MeshCore identity (local assertion; upsert). */
+  fun setMeshMap(logosAddress: String, meshPubkey: String, meshName: String?) {
+    writableDatabase.execSQL(
+        "INSERT INTO mesh_map(logos_address,mesh_pubkey,mesh_name,mapped_at) VALUES(?,?,?,?) " +
+            "ON CONFLICT(logos_address) DO UPDATE SET " +
+            "mesh_pubkey=excluded.mesh_pubkey, mesh_name=excluded.mesh_name, mapped_at=excluded.mapped_at",
+        arrayOf(logosAddress, meshPubkey, meshName, System.currentTimeMillis()))
+  }
+
+  /** Remove a Logos address ↔ mesh mapping. */
+  fun clearMeshMap(logosAddress: String) {
+    writableDatabase.execSQL("DELETE FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
+  }
+
+  /** The mesh pubkey a Logos address is mapped to, or null. */
+  fun meshMapFor(logosAddress: String): String? =
+      readableDatabase
+          .rawQuery("SELECT mesh_pubkey FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
+          .use { if (it.moveToFirst()) it.getString(0) else null }
 
   fun groupMemberCount(convoPk: Long): Int =
       readableDatabase

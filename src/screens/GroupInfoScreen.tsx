@@ -1,7 +1,7 @@
 // Group info — name, roster (app-side, best-effort), and add-member-by-address.
 // "Add member" reuses the polished Scan screen in addMember mode (camera + paste),
 // which calls addMember and pops back here.
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Text, TextInput, View, Pressable, FlatList, ToastAndroid, StyleSheet, Vibration} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {useFocusEffect, useNavigation, useRoute} from '@react-navigation/native';
@@ -11,8 +11,9 @@ import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
-import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon} from '../components/OverflowMenu';
+import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon, MeshIcon} from '../components/OverflowMenu';
 import {LabelModal} from '../components/LabelModal';
+import {MeshMapModal} from '../components/MeshMapModal';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
@@ -21,16 +22,21 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
+const MESH_GREEN = '#22C55E'; // #168: mesh identity color (theme accent is orange)
+
 export function GroupInfoScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteProp<RootStackParamList, 'GroupInfo'>>();
   const {convoPk} = route.params;
   const conversations = useChatStore(s => s.conversations);
   const convo = conversations[convoPk];
-  const members = useChatStore(s => s.members[convoPk]) ?? [];
+  const membersRaw = useChatStore(s => s.members[convoPk]);
+  const members = useMemo(() => membersRaw ?? [], [membersRaw]);
   const loadMembers = useChatStore(s => s.loadMembers);
   const setNickname = useChatStore(s => s.setNickname);
   const setVerified = useChatStore(s => s.setVerified);
+  const mapMeshIdentity = useChatStore(s => s.mapMeshIdentity);
+  const unmapMeshIdentity = useChatStore(s => s.unmapMeshIdentity);
   const startConversation = useChatStore(s => s.startConversation);
   // The member a row-menu / label editor is acting on.
   const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
@@ -40,6 +46,28 @@ export function GroupInfoScreen() {
     label: string | null;
     verified: boolean;
   } | null>(null);
+  // #168: the member whose mesh mapping is being edited.
+  const [mapMember, setMapMember] = useState<{
+    address: string;
+    label: string | null;
+    meshPubkey: string | null;
+  } | null>(null);
+
+  // #168: the mesh identity a member is mapped to (from the roster JOIN), or null.
+  const meshMapOf = useCallback(
+    (address: string): {pubkey: string; name: string | null} | null => {
+      const m = members.find(x => x.address === address);
+      return m?.meshPubkey != null
+        ? {pubkey: m.meshPubkey, name: m.meshName ?? null}
+        : null;
+    },
+    [members],
+  );
+  // #168 (Phase 2 precursor to the switch banner): how many non-self members are
+  // mapped to a mesh identity, out of the total — the group can only be mirrored
+  // to the mapped ones.
+  const others = members.filter(m => !m.isSelf);
+  const mappedCount = others.filter(m => m.meshPubkey != null).length;
 
   // A joiner never learns the group's real name (#102) — let it be named locally.
   const displayName = convo != null ? convoDisplayName(convo) : `group #${convoPk}`;
@@ -145,6 +173,15 @@ export function GroupInfoScreen() {
             </View>
           )}
         </View>
+        {/* #168: mapped-to-mesh indicator — a green mesh glyph + the mesh name. */}
+        {item.meshPubkey != null && (
+          <View style={styles.meshTag}>
+            <MeshIcon size={16} color={MESH_GREEN} />
+            <Text style={[type.label, {color: MESH_GREEN}]} numberOfLines={1}>
+              {item.meshName || 'mesh'}
+            </Text>
+          </View>
+        )}
       </Pressable>
     );
   };
@@ -178,6 +215,17 @@ export function GroupInfoScreen() {
             label: 'Send message',
             icon: <MessageCircleIcon color={colors.textDim} />,
             onPress: () => openDirect(menuMember.address),
+          },
+          {
+            key: 'map-mesh',
+            label: meshMapOf(menuMember.address) ? 'Change mesh identity' : 'Map to mesh',
+            icon: <MeshIcon color={colors.textDim} />,
+            onPress: () =>
+              setMapMember({
+                address: menuMember.address,
+                label: menuMember.label,
+                meshPubkey: meshMapOf(menuMember.address)?.pubkey ?? null,
+              }),
           },
         ];
 
@@ -248,6 +296,20 @@ export function GroupInfoScreen() {
             <Text style={[type.label, {color: colors.textDim}]}>
               {members.length} member{members.length === 1 ? '' : 's'}
             </Text>
+            {/* #168: mesh-mapping progress — how many members can receive a mesh
+                mirror of this group. Tap a member → "Map to mesh". */}
+            {others.length > 0 && (
+              <View style={styles.meshSummary}>
+                <MeshIcon size={14} color={mappedCount > 0 ? MESH_GREEN : colors.textFaint} />
+                <Text
+                  style={[
+                    type.label,
+                    {color: mappedCount > 0 ? MESH_GREEN : colors.textFaint},
+                  ]}>
+                  {mappedCount}/{others.length} mapped to mesh
+                </Text>
+              </View>
+            )}
             {!nameKnown && !editingName && (
               <Text style={[type.caption, {color: colors.textFaint}]}>
                 Tap the name to rename it on this device.
@@ -299,6 +361,31 @@ export function GroupInfoScreen() {
           labelMember != null && saveMemberLabel(labelMember.address, v, ver)
         }
       />
+      <MeshMapModal
+        visible={mapMember != null}
+        memberAddress={mapMember?.address ?? null}
+        memberLabel={mapMember?.label ?? null}
+        currentMeshPubkey={mapMember?.meshPubkey ?? null}
+        onClose={() => setMapMember(null)}
+        onPick={(pubkey, name) => {
+          if (mapMember == null) {
+            return;
+          }
+          mapMeshIdentity(convoPk, mapMember.address, pubkey, name).catch(e =>
+            useNodeStore.setState({error: `mesh map failed: ${e?.message ?? e}`}),
+          );
+          setMapMember(null);
+        }}
+        onUnmap={() => {
+          if (mapMember == null) {
+            return;
+          }
+          unmapMeshIdentity(convoPk, mapMember.address).catch(e =>
+            useNodeStore.setState({error: `unmap failed: ${e?.message ?? e}`}),
+          );
+          setMapMember(null);
+        }}
+      />
     </View>
   );
 }
@@ -321,6 +408,8 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   memberText: {flex: 1, gap: 0},
+  meshTag: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, maxWidth: 120},
+  meshSummary: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   nameInput: {
     ...type.title,

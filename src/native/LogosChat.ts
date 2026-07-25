@@ -76,6 +76,9 @@ export interface MessageRow {
 export interface GroupMember {
   address: string;
   isSelf: boolean;
+  /** #168 (Phase 2): the MeshCore identity this member is mapped to, if any. */
+  meshPubkey?: string;
+  meshName?: string;
 }
 
 interface LogosChatNative {
@@ -102,6 +105,10 @@ interface LogosChatNative {
   setNickname(convoPk: number, nickname: string): Promise<null>;
   /** #153: set the local verified flag for a contact. */
   setVerified(convoPk: number, verified: boolean): Promise<null>;
+  /** #168 (Phase 2): map a Logos address → a MeshCore identity (local assertion). */
+  setMeshMap(logosAddress: string, meshPubkey: string, meshName: string | null): Promise<null>;
+  /** #168 (Phase 2): remove a Logos address ↔ mesh mapping. */
+  clearMeshMap(logosAddress: string): Promise<null>;
   /** #167: get-or-create the local conversation mirroring a MeshCore channel idx. */
   upsertMeshChannel(idx: number, name: string): Promise<number>;
   /** #167 (Phase 1b): get-or-create the local conversation mirroring a MeshCore DM. */

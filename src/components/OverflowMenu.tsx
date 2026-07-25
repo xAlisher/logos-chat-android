@@ -183,6 +183,37 @@ export function MessageCircleIcon({size = S, color = colors.textDim}: IconProps)
   );
 }
 
+/** lucide `chevron-left` — the back affordance (used in a custom header cluster). */
+export function BackIcon({size = 26, color = colors.text}: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="m15 18-6-6 6-6"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+/** lucide `waypoints` — map to a MeshCore identity (#168). */
+export function MeshIcon({size = S, color = colors.textDim}: IconProps) {
+  const p = {stroke: color, strokeWidth: SW, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const};
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx={12} cy={4.5} r={2.5} {...p} />
+      <Path d="m10.2 6.3-3.9 3.9" {...p} />
+      <Circle cx={4.5} cy={12} r={2.5} {...p} />
+      <Path d="M7 12h10" {...p} />
+      <Circle cx={19.5} cy={12} r={2.5} {...p} />
+      <Path d="m13.8 17.7 3.9-3.9" {...p} />
+      <Circle cx={12} cy={19.5} r={2.5} {...p} />
+    </Svg>
+  );
+}
+
 /** One menu row. `icon` is rendered as-is so callers can reuse existing glyphs. */
 export interface MenuItem {
   key: string;

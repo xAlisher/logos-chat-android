@@ -455,6 +455,28 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #168 (Phase 2): map a Logos address → a MeshCore identity (local assertion). */
+  @ReactMethod
+  fun setMeshMap(logosAddress: String, meshPubkey: String, meshName: String?, promise: Promise) {
+    try {
+      ChatRepo.requireDb().setMeshMap(logosAddress, meshPubkey, meshName)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /** #168 (Phase 2): remove a Logos address ↔ mesh mapping. */
+  @ReactMethod
+  fun clearMeshMap(logosAddress: String, promise: Promise) {
+    try {
+      ChatRepo.requireDb().clearMeshMap(logosAddress)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /** #167: get-or-create the local conversation mirroring a MeshCore channel. */
   @ReactMethod
   fun upsertMeshChannel(idx: Double, name: String, promise: Promise) {

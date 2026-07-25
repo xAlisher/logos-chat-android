@@ -34,6 +34,7 @@ import {SendIcon} from '../components/SendIcon';
 import {
   OverflowMenu,
   EllipsisIcon,
+  BackIcon,
   TagIcon,
   UserPlusIcon,
   UsersIcon,
@@ -448,14 +449,24 @@ export function ChatScreen() {
       ];
 
   useEffect(() => {
+    // #123: fold the back arrow + avatar + title into ONE left cluster via
+    // headerLeft, so the identity block truly hugs the arrow (native-stack leaves
+    // a fixed gap between the back button and headerTitle otherwise). headerTitle
+    // is emptied and the native back button hidden.
+    const back = (
+      <Pressable
+        onPress={() => navigation.goBack()}
+        hitSlop={12}
+        style={styles.headerBackBtn}
+        testID="chat-back">
+        <BackIcon color={colors.text} />
+      </Pressable>
+    );
     navigation.setOptions({
-      // #123: hug the back arrow — the avatar + title read as one left cluster.
-      headerTitleAlign: 'left',
-      // Custom title (#8/#9/#106): 1:1 shows label + short hex on two lines, a
-      // group its name. NOT pressable — labels are edited from the menu.
-      headerTitle: () => {
+      headerBackVisible: false,
+      headerLeft: () => {
         if (convo == null) {
-          return <Text style={styles.headerTitleText}> </Text>;
+          return <View style={styles.headerLeftCluster}>{back}</View>;
         }
         // Leading identicon matches the conversation list (#118): a group is
         // seeded by its shared lib id (azure), a 1:1 by the peer address (orange).
@@ -464,9 +475,10 @@ export function ChatScreen() {
         );
         if (isGroup) {
           return (
-            <View style={styles.headerTitleRow} testID="chat-title">
+            <View style={styles.headerLeftCluster} testID="chat-title">
+              {back}
               {avatar}
-              <Text style={styles.headerTitleText} numberOfLines={1}>
+              <Text style={[styles.headerTitleText, styles.headerTitleFlex]} numberOfLines={1}>
                 {convoDisplayName(convo)}
               </Text>
             </View>
@@ -478,9 +490,10 @@ export function ChatScreen() {
             : `peer #${convo.convoPk}`;
         const labelled = convo.nickname != null && convo.nickname.length > 0;
         return (
-          <View style={styles.headerTitleRow} testID="chat-title">
+          <View style={styles.headerLeftCluster} testID="chat-title">
+            {back}
             {avatar}
-            <View style={styles.headerTitleCol}>
+            <View style={[styles.headerTitleCol, styles.headerTitleFlex]}>
               {labelled ? (
                 <>
                   <View style={styles.headerNameRow}>
@@ -505,6 +518,7 @@ export function ChatScreen() {
           </View>
         );
       },
+      headerTitle: () => <View />,
       headerRight: () => (
         <Pressable
           onPress={() => setMenuOpen(true)}
@@ -781,6 +795,17 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
+  // #123: back + avatar + title as one tight left cluster. A small negative left
+  // margin pulls the chevron to the screen edge (native-stack pads headerLeft).
+  headerLeftCluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginLeft: -spacing.sm,
+    maxWidth: 300,
+  },
+  headerBackBtn: {padding: spacing.xs},
+  headerTitleFlex: {flexShrink: 1},
   headerTitleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   headerTitleCol: {justifyContent: 'center'},
   headerNameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
