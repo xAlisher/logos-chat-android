@@ -110,6 +110,7 @@ export {
   sortedConversations,
   convoDisplayName,
   knownContacts,
+  filterContacts,
   isAddressVerified,
 } from './conversationView';
 export type {KnownContact} from './conversationView';
