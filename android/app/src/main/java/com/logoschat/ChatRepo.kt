@@ -244,7 +244,19 @@ object ChatRepo {
       // 1:1 only: learn the peer address from the first verified sender. In a
       // group there are many senders, so we never overwrite the conversation's
       // address — attribution lives per-message (sender_account).
-      d.setPeerAddress(convoPk, senderAccount)
+      // #175/#176: reconcile by ACCOUNT. This convo is address-less (just started
+      // from a Welcome). If another 1:1 already holds this account — e.g. the peer
+      // REINSTALLED (new installation → new convoId) — merge this transient convo
+      // into that durable contact and adopt the new live binding, instead of
+      // forking a duplicate. Account is the identity; convoId is ephemeral.
+      val canonical = d.convoPkByAddress(senderAccount)
+      if (canonical != null && canonical != convoPk) {
+        d.mergeDirectConversation(fromPk = convoPk, intoPk = canonical, newLibConvoId = libConvoId)
+        convoPk = canonical
+        Log.i(TAG, "reconciled inbound 1:1 into existing contact account=$senderAccount lib=$libConvoId")
+      } else {
+        d.setPeerAddress(convoPk, senderAccount)
+      }
     }
     val msgPk = d.insertMessage(convoPk, "in", content, now, "received", senderAccount)
     d.touchConversation(convoPk, now)

@@ -154,7 +154,7 @@ class ChatDbTest {
         .rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null)
         .use { c -> while (c.moveToNext()) tables.add(c.getString(0)) }
     assertTrue("missing group_members table", "group_members" in tables)
-    assertEquals(3, db.readableDatabase.version)
+    assertEquals(ChatDb.DB_VERSION, db.readableDatabase.version)
   }
 
   // -- #112 dead-group bridge -------------------------------------------------
@@ -236,5 +236,32 @@ class ChatDbTest {
     db.insertMessage(g, "in", "hi all", 1001, "received", ADDR2)
     val msg = JSONArray(db.listMessagesJson(g, 0, 10)).getJSONObject(0)
     assertEquals(ADDR2, msg.getString("senderAccount"))
+  }
+
+  @Test
+  fun mergeDirectConversationReconcilesReinstalledPeerByAccount() {
+    // #175/#176: durable contact (labeled, old dead binding) + a transient convo the
+    // reinstalled peer forked (new live convoId). Merge must keep the contact's
+    // identity/label + its history, adopt the new binding, drop the transient row.
+    val canonical = db.insertConversation(ADDR, "lib-old", "Pixel", 1000)
+    db.setVerified(canonical, true)
+    db.insertMessage(canonical, "in", "old-history", 1001, "received", ADDR)
+    val transient = db.insertConversation(null, "lib-new", null, 2000)
+    db.insertMessage(transient, "in", "fresh-after-reinstall", 2001, "received", ADDR)
+
+    db.mergeDirectConversation(fromPk = transient, intoPk = canonical, newLibConvoId = "lib-new")
+
+    // transient row is gone; the account resolves to exactly one conversation.
+    assertNull(db.libConvoIdOf(transient))
+    assertEquals(canonical, db.convoPkByAddress(ADDR))
+    // survivor kept its label/verified/mesh identity and adopted the LIVE binding.
+    val row = JSONArray(db.listConversationsJson()).getJSONObject(0)
+    assertEquals("Pixel", row.getString("nickname"))
+    assertTrue(row.getBoolean("verified"))
+    assertEquals(canonical, db.convoPkByLibId("lib-new"))
+    assertNull(db.convoPkByLibId("lib-old"))
+    // both messages now live under the one contact.
+    val msgs = JSONArray(db.listMessagesJson(canonical, 0, 10))
+    assertEquals(2, msgs.length())
   }
 }

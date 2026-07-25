@@ -45,7 +45,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // Logos group can be mirrored into a MeshCore channel among mapped members.
     // v8 (#168, Phase 2c): per-group mesh-mirror state — when a Logos group is
     // switched to MeshCore, sends ride a private channel instead of the node.
-    const val DB_VERSION = 8
+    // v9 (#175/#176): collapse duplicate 1:1 conversations that share an account
+    // (a reinstalled peer forked a new convo) — account is the identity.
+    const val DB_VERSION = 9
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -149,7 +151,71 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_idx INT")
           db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_key TEXT")
         }
+        9 -> {
+          // #175/#176: one-time collapse of duplicate 1:1s sharing an account.
+          dedupeDirectByAddress(db)
+        }
         else -> throw IllegalStateException("no migration to schema v$v")
+      }
+    }
+  }
+
+  /**
+   * #175/#176: collapse duplicate 1:1 conversations that share a peer_address (a
+   * reinstalled peer forked a new convo). Runs on the migration's [db] (not the
+   * helper methods, which would re-enter getWritableDatabase during onUpgrade).
+   * Survivor = the labeled row if any, else the lowest convo_pk; it adopts the
+   * most-recently-active lib_convo_id (the live binding) and all messages.
+   */
+  private fun dedupeDirectByAddress(db: SQLiteDatabase) {
+    val dupAddrs = mutableListOf<String>()
+    db.rawQuery(
+            "SELECT peer_address FROM conversations " +
+                "WHERE is_group=0 AND peer_address IS NOT NULL " +
+                "GROUP BY peer_address HAVING COUNT(*)>1",
+            null)
+        .use { while (it.moveToNext()) dupAddrs.add(it.getString(0)) }
+    for (addr in dupAddrs) {
+      data class Row(val pk: Long, val labeled: Boolean, val libId: String?, val at: Long)
+      val rows = mutableListOf<Row>()
+      db.rawQuery(
+              "SELECT convo_pk, nickname, lib_convo_id, last_message_at " +
+                  "FROM conversations WHERE is_group=0 AND peer_address=?",
+              arrayOf(addr))
+          .use {
+            while (it.moveToNext()) {
+              rows.add(
+                  Row(
+                      it.getLong(0),
+                      !it.isNull(1) && it.getString(1).isNotEmpty(),
+                      if (it.isNull(2)) null else it.getString(2),
+                      it.getLong(3)))
+            }
+          }
+      if (rows.size < 2) continue
+      val survivor = (rows.firstOrNull { it.labeled } ?: rows.minByOrNull { it.pk }!!).pk
+      // The live binding = the lib_convo_id of the most-recently-active row.
+      val liveLibId = rows.filter { it.libId != null }.maxByOrNull { it.at }?.libId
+      db.beginTransaction()
+      try {
+        for (r in rows) {
+          if (r.pk == survivor) continue
+          db.execSQL("UPDATE messages SET convo_pk=? WHERE convo_pk=?", arrayOf(survivor, r.pk))
+          db.execSQL("DELETE FROM group_members WHERE convo_pk=?", arrayOf(r.pk))
+          db.execSQL("DELETE FROM conversations WHERE convo_pk=?", arrayOf(r.pk))
+        }
+        if (liveLibId != null) {
+          db.execSQL(
+              "UPDATE conversations SET lib_convo_id=? WHERE convo_pk=?", arrayOf(liveLibId, survivor))
+        }
+        db.execSQL(
+            "UPDATE conversations SET last_message_at=" +
+                "COALESCE((SELECT MAX(sent_at) FROM messages WHERE convo_pk=?), last_message_at) " +
+                "WHERE convo_pk=?",
+            arrayOf(survivor, survivor))
+        db.setTransactionSuccessful()
+      } finally {
+        db.endTransaction()
       }
     }
   }
@@ -459,6 +525,36 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   fun setPeerAddress(convoPk: Long, peerAddress: String) {
     writableDatabase.execSQL(
         "UPDATE conversations SET peer_address=? WHERE convo_pk=?", arrayOf(peerAddress, convoPk))
+  }
+
+  /**
+   * #175/#176: reconcile a 1:1 by ACCOUNT. Merge the transient conversation [fromPk]
+   * (a fresh convo a reinstalled peer forked) INTO the durable contact [intoPk] that
+   * already holds that account: move its messages over, adopt the new live
+   * lib_convo_id, keep the survivor's nickname/verified/mesh-map, drop the transient
+   * row. The account (peer_address) is the identity; convoId is an ephemeral binding.
+   */
+  fun mergeDirectConversation(fromPk: Long, intoPk: Long, newLibConvoId: String?) {
+    val db = writableDatabase
+    db.beginTransaction()
+    try {
+      db.execSQL("UPDATE messages SET convo_pk=? WHERE convo_pk=?", arrayOf(intoPk, fromPk))
+      // delete the now-empty transient row FIRST so its lib_convo_id is free to adopt.
+      db.execSQL("DELETE FROM group_members WHERE convo_pk=?", arrayOf(fromPk))
+      db.execSQL("DELETE FROM conversations WHERE convo_pk=?", arrayOf(fromPk))
+      if (newLibConvoId != null) {
+        db.execSQL(
+            "UPDATE conversations SET lib_convo_id=? WHERE convo_pk=?", arrayOf(newLibConvoId, intoPk))
+      }
+      db.execSQL(
+          "UPDATE conversations SET last_message_at=" +
+              "COALESCE((SELECT MAX(sent_at) FROM messages WHERE convo_pk=?), last_message_at) " +
+              "WHERE convo_pk=?",
+          arrayOf(intoPk, intoPk))
+      db.setTransactionSuccessful()
+    } finally {
+      db.endTransaction()
+    }
   }
 
   /** #153: set the local "verified" flag for a contact/conversation. */
