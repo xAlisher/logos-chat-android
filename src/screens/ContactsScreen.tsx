@@ -2,13 +2,13 @@
 // conversation list). Source: knownContacts() — every 1:1 peer address (with its
 // local label) plus any addresses seen in group rosters. Tapping a contact opens
 // (or creates) the 1:1 chat. Same compact row + identicon as everywhere (#118).
-import React, {useCallback, useState} from 'react';
-import {Text, View, Pressable, FlatList, StyleSheet, Vibration, ToastAndroid} from 'react-native';
+import React, {useCallback, useMemo, useState} from 'react';
+import {Text, TextInput, View, Pressable, FlatList, StyleSheet, Vibration, ToastAndroid} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import {colors, type, spacing} from '../theme';
+import {colors, type, spacing, radii} from '../theme';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {AddressModal} from '../components/AddressModal';
@@ -18,17 +18,20 @@ import {
   MessageCircleIcon,
   CopyIcon,
   TagIcon,
+  MeshIcon,
   type MenuItem,
 } from '../components/OverflowMenu';
 import {QrIcon} from '../components/QrIcon';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
-import {knownContacts} from '../stores/chatStore';
+import {knownContacts, filterContacts} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+const MESH_GREEN = '#22C55E'; // #174: mesh identity color, matches GroupInfo
 
 export function ContactsScreen() {
   const navigation = useNavigation<Nav>();
@@ -38,6 +41,9 @@ export function ContactsScreen() {
   const setNickname = useChatStore(s => s.setNickname);
   const setVerified = useChatStore(s => s.setVerified);
   const contacts = knownContacts(conversations, members);
+  // #173: search field — filters the (already alpha-sorted) list by label + hex.
+  const [query, setQuery] = useState('');
+  const visible = useMemo(() => filterContacts(contacts, query), [contacts, query]);
   // #131: long-press context menu + the address / label editors it can open.
   const [menuContact, setMenuContact] = useState<KnownContact | null>(null);
   const [menuY, setMenuY] = useState(0); // #157: tap Y to anchor the menu
@@ -167,6 +173,16 @@ export function ContactsScreen() {
             </View>
           )}
         </View>
+        {/* #174: mapped-to-mesh indicator — a green mesh glyph + the mesh name,
+            matching how a mapped member reads in Group info. */}
+        {item.meshPubkey != null && (
+          <View style={styles.meshTag}>
+            <MeshIcon size={16} color={MESH_GREEN} />
+            <Text style={[type.label, {color: MESH_GREEN}]} numberOfLines={1}>
+              {item.meshName || 'mesh'}
+            </Text>
+          </View>
+        )}
       </Pressable>
     ),
     [open],
@@ -181,13 +197,35 @@ export function ContactsScreen() {
           </Text>
         </View>
       ) : (
-        <FlatList
-          data={contacts}
-          keyExtractor={c => c.address}
-          renderItem={renderItem}
-          contentContainerStyle={styles.list}
-          ItemSeparatorComponent={() => <View style={styles.sep} />}
-        />
+        <>
+          {/* #173: search — filters by label + hex address, case-insensitive. */}
+          <View style={styles.searchWrap}>
+            <TextInput
+              style={styles.search}
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search contacts…"
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+              testID="contact-search"
+            />
+          </View>
+          <FlatList
+            data={visible}
+            keyExtractor={c => c.address}
+            renderItem={renderItem}
+            contentContainerStyle={styles.list}
+            keyboardShouldPersistTaps="handled"
+            ItemSeparatorComponent={() => <View style={styles.sep} />}
+            ListEmptyComponent={
+              <View style={styles.empty}>
+                <Text style={styles.emptyText}>no contacts match “{query}”</Text>
+              </View>
+            }
+          />
+        </>
       )}
       <OverflowMenu
         visible={menuContact != null}
@@ -243,6 +281,23 @@ const styles = StyleSheet.create({
   },
   rowText: {flex: 1, gap: 0},
   nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  meshTag: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, maxWidth: 120},
+  searchWrap: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  search: {
+    ...type.body,
+    color: colors.text,
+    backgroundColor: colors.pane,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.md,
+    minHeight: 40,
+    textAlignVertical: 'center',
+  },
   menuHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   sep: {height: 1, backgroundColor: colors.border, marginLeft: spacing.lg},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl},

@@ -11,6 +11,14 @@ export interface KnownContact {
   label: string | null;
   /** #153: local user-asserted verification for this address. */
   verified: boolean;
+  /**
+   * #174: the MeshCore identity this contact is mapped to, if any — harvested
+   * from group rosters (the mesh_map JOIN surfaced on GroupMember). Absent when
+   * the contact isn't mapped to a mesh identity anywhere we've seen.
+   */
+  meshPubkey?: string;
+  /** #174: the display name of the mapped mesh identity, if any. */
+  meshName?: string | null;
 }
 
 /** #153: is `address` locally marked verified? True iff we hold a 1:1 with that
@@ -38,6 +46,9 @@ export function isAddressVerified(
  * "Add members" picker (#13). Optionally excludes addresses already present in
  * `excludeAddresses` (e.g. the target group's current members) and always drops
  * blanks. Sorted: labelled contacts first (alpha), then bare addresses.
+ *
+ * #174: also harvests any mesh mapping (meshPubkey/meshName) seen for the
+ * address in a group roster, so contact lists can badge mesh-mapped people.
  */
 export function knownContacts(
   conversations: Record<number, ConversationRow>,
@@ -50,20 +61,33 @@ export function knownContacts(
     address: string | null,
     label: string | null,
     verified: boolean,
+    meshPubkey: string | null = null,
+    meshName: string | null = null,
   ) => {
     if (address == null) return;
     const a = address.trim().toLowerCase();
     if (a.length === 0 || exclude.has(a)) return;
     const existing = byAddr.get(a);
     if (existing == null) {
-      byAddr.set(a, {
+      const contact: KnownContact = {
         address: a,
         label: label && label.length > 0 ? label : null,
         verified,
-      });
+      };
+      // Only set the mesh fields when actually mapped — keeps the object shape
+      // (and toEqual-based tests) clean for the unmapped majority.
+      if (meshPubkey != null) {
+        contact.meshPubkey = meshPubkey;
+        contact.meshName = meshName ?? null;
+      }
+      byAddr.set(a, contact);
     } else {
       if (existing.label == null && label && label.length > 0) existing.label = label;
       if (verified) existing.verified = true;
+      if (existing.meshPubkey == null && meshPubkey != null) {
+        existing.meshPubkey = meshPubkey;
+        existing.meshName = meshName ?? null;
+      }
     }
   };
   for (const c of Object.values(conversations)) {
@@ -71,13 +95,33 @@ export function knownContacts(
   }
   for (const roster of Object.values(members)) {
     for (const m of roster) {
-      if (!m.isSelf) consider(m.address, null, false);
+      if (!m.isSelf) {
+        consider(m.address, null, false, m.meshPubkey ?? null, m.meshName ?? null);
+      }
     }
   }
   return Array.from(byAddr.values()).sort((x, y) => {
     if ((x.label != null) !== (y.label != null)) return x.label != null ? -1 : 1;
     return (x.label ?? x.address).localeCompare(y.label ?? y.address);
   });
+}
+
+/**
+ * #173: case-insensitive filter for a contact list search field — matches the
+ * query against the contact's label AND its hex address. Order is preserved
+ * (callers pass an already-sorted list). An empty/blank query returns all.
+ */
+export function filterContacts(
+  contacts: KnownContact[],
+  query: string,
+): KnownContact[] {
+  const q = query.trim().toLowerCase();
+  if (q.length === 0) return contacts;
+  return contacts.filter(
+    c =>
+      (c.label != null && c.label.toLowerCase().includes(q)) ||
+      c.address.toLowerCase().includes(q),
+  );
 }
 
 /** Conversations by most recent activity, newest first. */

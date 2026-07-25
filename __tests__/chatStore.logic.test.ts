@@ -2,6 +2,7 @@ import {
   sortedConversations,
   convoDisplayName,
   knownContacts,
+  filterContacts,
   isAddressVerified,
 } from '../src/stores/conversationView';
 import type {ConversationRow, GroupMember} from '../src/native/LogosChat';
@@ -182,5 +183,69 @@ describe('knownContacts', () => {
       {},
     );
     expect(out.map(c => c.label)).toEqual(['Amy', 'Zoe', null]);
+  });
+
+  it('#174: harvests a mesh mapping from a group roster onto the contact', () => {
+    const out = knownContacts(
+      {5: row({convoPk: 5, isGroup: true, groupName: 'team'})},
+      {
+        5: [
+          {
+            address: A3,
+            isSelf: false,
+            meshPubkey: 'deadbeef',
+            meshName: 'M1',
+          } as GroupMember,
+        ],
+      },
+    );
+    expect(out).toEqual([
+      {address: A3, label: null, verified: false, meshPubkey: 'deadbeef', meshName: 'M1'},
+    ]);
+  });
+
+  it('#174: an unmapped contact carries no mesh fields', () => {
+    const [c] = knownContacts(
+      {1: row({convoPk: 1, peerAddress: A1, nickname: 'Alice'})},
+      {},
+    );
+    expect(c.meshPubkey).toBeUndefined();
+    expect(c.meshName).toBeUndefined();
+  });
+
+  it('#174: a 1:1 contact also seen in a mapped roster picks up the mesh mapping', () => {
+    const out = knownContacts(
+      {1: row({convoPk: 1, peerAddress: A1, nickname: 'Alice'})},
+      {9: [{address: A1, isSelf: false, meshPubkey: 'aa', meshName: 'radio'} as GroupMember]},
+    );
+    expect(out).toEqual([
+      {address: A1, label: 'Alice', verified: false, meshPubkey: 'aa', meshName: 'radio'},
+    ]);
+  });
+});
+
+describe('filterContacts (#173)', () => {
+  const contacts = [
+    {address: A1, label: 'Alice', verified: false},
+    {address: A2, label: 'Bob', verified: true},
+    {address: A3, label: null, verified: false},
+  ];
+
+  it('returns all for a blank query', () => {
+    expect(filterContacts(contacts, '   ')).toEqual(contacts);
+  });
+
+  it('matches on label, case-insensitively', () => {
+    expect(filterContacts(contacts, 'ali').map(c => c.label)).toEqual(['Alice']);
+    expect(filterContacts(contacts, 'BOB').map(c => c.label)).toEqual(['Bob']);
+  });
+
+  it('matches on the hex address', () => {
+    // A3 is all 'c' — bare (no label), still findable by address.
+    expect(filterContacts(contacts, 'cccc').map(c => c.address)).toEqual([A3]);
+  });
+
+  it('preserves input order and yields nothing on no match', () => {
+    expect(filterContacts(contacts, 'zzz')).toEqual([]);
   });
 });
