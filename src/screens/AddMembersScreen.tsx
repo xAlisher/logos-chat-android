@@ -182,16 +182,26 @@ export function AddMembersScreen() {
         onPress={() => toggle(item.address)}>
         <HexAvatar seed={item.address} kind="contact" size={32} />
         <View style={styles.rowText}>
-          <Text
-            style={[type.title, {color: item.label ? colors.text : colors.textDim, lineHeight: 18}]}
-            numberOfLines={1}>
-            {item.label ?? '(no label)'}
-          </Text>
-          <Text
-            style={[type.label, {color: colors.textDim, lineHeight: 14}]}
-            numberOfLines={1}>
-            {shortAddress(item.address)}
-          </Text>
+          {item.label ? (
+            <>
+              <Text
+                style={[type.title, {color: colors.text, lineHeight: 18}]}
+                numberOfLines={1}>
+                {item.label}
+              </Text>
+              <Text
+                style={[type.label, {color: colors.textDim, lineHeight: 14}]}
+                numberOfLines={1}>
+                {shortAddress(item.address)}
+              </Text>
+            </>
+          ) : (
+            <Text
+              style={[type.title, {color: colors.text, lineHeight: 18}]}
+              numberOfLines={1}>
+              {shortAddress(item.address)}
+            </Text>
+          )}
         </View>
         <View style={[styles.checkbox, isChecked && styles.checkboxOn]}>
           {isChecked && <Text style={styles.checkmark}>✓</Text>}
@@ -331,7 +341,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.lg, // #122: more space between the avatar and the name
     paddingVertical: spacing.sm,
     minHeight: 48,
   },

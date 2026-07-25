@@ -85,11 +85,14 @@ export function GroupInfoScreen() {
     [conversations],
   );
 
-  // Two lines per member (label white / hex gray), matching Add Members. The
-  // leading HexAvatar (seeded by the member's address) matches the conversation
-  // list so a person reads identically everywhere (#118).
+  // Leading HexAvatar (seeded by the member's address) matches the conversation
+  // list so a person reads identically everywhere (#118). Identity lines (#122):
+  // the PRIMARY line is always white — a label if we have one (with the hex gray
+  // beneath it), otherwise the hex itself is promoted to the white primary line
+  // (never two gray lines / a gray "(no label)").
   const renderMember = ({item}: {item: GroupMember}) => {
     const label = item.isSelf ? 'You' : labelFor(item.address);
+    const hex = shortAddress(item.address);
     return (
       <Pressable
         style={styles.memberRow}
@@ -98,16 +101,26 @@ export function GroupInfoScreen() {
         testID={`member-${item.address}`}>
         <HexAvatar seed={item.address} kind="contact" size={32} />
         <View style={styles.memberText}>
-          <Text
-            style={[type.title, {color: label ? colors.text : colors.textDim, lineHeight: 18}]}
-            numberOfLines={1}>
-            {label ?? '(no label)'}
-          </Text>
-          <Text
-            style={[type.label, {color: colors.textDim, lineHeight: 14}]}
-            numberOfLines={1}>
-            {shortAddress(item.address)}
-          </Text>
+          {label != null ? (
+            <>
+              <Text
+                style={[type.title, {color: colors.text, lineHeight: 18}]}
+                numberOfLines={1}>
+                {label}
+              </Text>
+              <Text
+                style={[type.label, {color: colors.textDim, lineHeight: 14}]}
+                numberOfLines={1}>
+                {hex}
+              </Text>
+            </>
+          ) : (
+            <Text
+              style={[type.title, {color: colors.text, lineHeight: 18}]}
+              numberOfLines={1}>
+              {hex}
+            </Text>
+          )}
         </View>
       </Pressable>
     );
@@ -205,7 +218,7 @@ export function GroupInfoScreen() {
               </Pressable>
             )}
             <Text style={[type.label, {color: colors.textDim}]}>
-              {members.length} member{members.length === 1 ? '' : 's'} (this device's view)
+              {members.length} member{members.length === 1 ? '' : 's'}
             </Text>
             {!nameKnown && !editingName && (
               <Text style={[type.caption, {color: colors.textFaint}]}>
@@ -272,7 +285,7 @@ const styles = StyleSheet.create({
   memberRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.lg, // #122: more breathing room between the avatar and the name
     paddingVertical: spacing.sm,
   },
   memberText: {flex: 1, gap: 0},

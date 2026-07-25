@@ -136,14 +136,16 @@ function Bubble({
       {attribution != null && (
         <View style={styles.attrRow} testID={`attr-${attribution.address}`}>
           <HexAvatar seed={attribution.address} kind="contact" size={16} />
+          {/* #122: primary line white; the hex is the gray secondary when a
+              label exists, and the white primary itself when there's no label. */}
           {attribution.label != null ? (
             <Text style={styles.attrLine} numberOfLines={1}>
-              <Text style={{color: colors.contact}}>{attribution.label}</Text>
+              <Text style={{color: colors.text}}>{attribution.label}</Text>
               <Text style={{color: colors.textDim}}> {attribution.hex}</Text>
             </Text>
           ) : (
             <Text
-              style={[styles.attrLine, {color: colors.contact}]}
+              style={[styles.attrLine, {color: colors.text}]}
               numberOfLines={1}>
               {attribution.hex}
             </Text>
@@ -408,6 +410,8 @@ export function ChatScreen() {
 
   useEffect(() => {
     navigation.setOptions({
+      // #123: hug the back arrow — the avatar + title read as one left cluster.
+      headerTitleAlign: 'left',
       // Custom title (#8/#9/#106): 1:1 shows label + short hex on two lines, a
       // group its name. NOT pressable — labels are edited from the menu.
       headerTitle: () => {
@@ -687,7 +691,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
-  headerTitleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  headerTitleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   headerTitleCol: {justifyContent: 'center'},
   headerTitleText: {...type.title, color: colors.text},
   headerTitleSub: {...type.caption, color: colors.textDim},
