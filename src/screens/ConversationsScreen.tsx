@@ -27,8 +27,9 @@ import {
   useChatStore,
   sortedConversations,
   convoDisplayName,
+  conversationPreview,
 } from '../stores/chatStore';
-import type {Conversation} from '../stores/chatStore';
+import type {Conversation, ConvoPreview} from '../stores/chatStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -52,10 +53,12 @@ function formatTime(at: number): string {
 
 function ConversationRow({
   convo,
+  preview,
   onPress,
   onLongPress,
 }: {
   convo: Conversation;
+  preview: ConvoPreview;
   onPress: () => void;
   onLongPress: (pageY: number) => void;
 }) {
@@ -85,12 +88,16 @@ function ConversationRow({
           )}
         </View>
         {/* #155/#159: last message on the left, timestamp bottom-right on the
-            same line. */}
+            same line. #160: when the newest thread event is a system note
+            (someone left / group ended / invited), preview it (italic + dimmer)
+            with its own timestamp instead of a stale message. */}
         <View style={styles.previewRow}>
-          <Text style={styles.preview} numberOfLines={1}>
-            {convo.lastText || (convo.isGroup ? 'new group' : 'new conversation')}
+          <Text
+            style={[styles.preview, preview.isSystem && styles.systemPreview]}
+            numberOfLines={1}>
+            {preview.text || (convo.isGroup ? 'new group' : 'new conversation')}
           </Text>
-          <Text style={styles.time}>{formatTime(convo.lastMessageAt)}</Text>
+          <Text style={styles.time}>{formatTime(preview.at)}</Text>
         </View>
       </View>
       <View style={styles.rowRight}>
@@ -115,6 +122,9 @@ export function ConversationsScreen() {
   const clearError = useNodeStore(s => s.clearError);
   const myAddress = useNodeStore(s => s.myAddress);
   const conversations = useChatStore(s => s.conversations);
+  // #160: subscribe to the in-memory system notes so the list re-renders when a
+  // system event fires and surfaces it as the row preview.
+  const systemLines = useChatStore(s => s.systemLines);
   const refreshConversations = useChatStore(s => s.refreshConversations);
   const remove = useChatStore(s => s.remove);
   // Side-menu (#125): filter the list (All/Chats/Groups) or open a page.
@@ -256,6 +266,7 @@ export function ConversationsScreen() {
             <SwipeRow onDelete={() => onDeleteConvo(item.convoPk)}>
               <ConversationRow
                 convo={item}
+                preview={conversationPreview(item, systemLines[item.convoPk])}
                 onPress={() => openChat(item)}
                 onLongPress={pageY => onRowLongPress(item, pageY)}
               />
@@ -353,6 +364,8 @@ const styles = StyleSheet.create({
   rowBody: {flex: 1, gap: 0},
   previewRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   preview: {...type.label, color: colors.textDim, lineHeight: 14, flex: 1},
+  // #160: a system-note preview reads as a note, not a message — italic + dimmer.
+  systemPreview: {color: colors.textFaint, fontStyle: 'italic'},
   rowRight: {alignItems: 'flex-end', gap: spacing.xs},
   time: {...type.caption, color: colors.textFaint}, // #159: right-aligned by preview flex:1
   // #155: gray group glyph + participant count, pushed to the title row's right.

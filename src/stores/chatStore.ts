@@ -35,6 +35,37 @@ export interface SystemNote {
   info?: string;
 }
 
+/** #160: what the conversation list row shows as its preview + timestamp. */
+export interface ConvoPreview {
+  text: string;
+  at: number;
+  /** True when the preview is a system note (render it subtly), not a message. */
+  isSystem: boolean;
+}
+
+/**
+ * #160: the list preview for a conversation = whichever is NEWER, the last
+ * durable message (`lastText`/`lastMessageAt`) or the latest in-memory system
+ * note for the thread. System notes (invited/joined/left, group ended, mesh
+ * bridging) are UI-only and never persisted, so a thread whose newest event is a
+ * system line would otherwise show a stale message; this surfaces it instead.
+ * Pure/derived — reads both sources, mutates nothing. `systemLines` are appended
+ * in time order (pushSystemLine stamps `Date.now()`), so the last one is latest.
+ */
+export function conversationPreview(
+  convo: ConversationRow,
+  systemLines: SystemNote[] | undefined,
+): ConvoPreview {
+  const latest =
+    systemLines != null && systemLines.length > 0
+      ? systemLines[systemLines.length - 1]
+      : null;
+  if (latest != null && latest.at > convo.lastMessageAt) {
+    return {text: latest.text, at: latest.at, isSystem: true};
+  }
+  return {text: convo.lastText, at: convo.lastMessageAt, isSystem: false};
+}
+
 interface ChatState {
   conversations: Record<number, ConversationRow>;
   messages: Record<number, MessageRow[]>;
