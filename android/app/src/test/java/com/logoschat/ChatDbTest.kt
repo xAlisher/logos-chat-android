@@ -64,6 +64,27 @@ class ChatDbTest {
     assertEquals(ADDR, db.peerAddressOf(pk))
   }
 
+  /**
+   * #194: recreating a group must FOLD into the member's existing thread, not
+   * clone. The fold mechanic is a rebind old→new lib id on the SAME convo_pk:
+   * the new id resolves to that convo, the old id no longer resolves, and no
+   * second conversation row appears.
+   */
+  @Test
+  fun continuationRebindFoldsIntoSameConvoNoClone() {
+    val pk = db.insertConversation(null, "old-lib", null, 1000)
+    db.markGroup(pk, "Trio")
+    assertEquals(1, db.counts().first)
+
+    // The member receives the re-created group and rebinds old→new (the fold).
+    db.setLibConvoId(pk, "new-lib")
+
+    assertEquals("new id resolves to the same convo", pk, db.convoPkByLibId("new-lib"))
+    assertNull("old id no longer a separate row", db.convoPkByLibId("old-lib"))
+    assertEquals("no clone — still one conversation", 1, db.counts().first)
+    assertEquals("new-lib", db.libConvoIdOf(pk))
+  }
+
   @Test
   fun learnAddressAndNickname() {
     val pk = db.insertConversation(null, "lib-x", null, 1000)
