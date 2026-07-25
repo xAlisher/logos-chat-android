@@ -136,7 +136,7 @@ function Bubble({
   msg: Message;
   attribution: Attribution | null;
   onRetry: () => void;
-  onLongPress: () => void;
+  onLongPress: (pageY: number) => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
@@ -168,7 +168,7 @@ function Bubble({
           Pressable must stay ENABLED or `disabled` would kill onLongPress too. */}
       <Pressable
         onPress={failed ? onRetry : undefined}
-        onLongPress={onLongPress}
+        onLongPress={e => onLongPress(e.nativeEvent.pageY)}
         delayLongPress={350}
         testID={`bubble-${msg.msgPk}`}
         style={[
@@ -227,6 +227,7 @@ export function ChatScreen() {
     verified: boolean;
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
+  const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
   // #112: set after a successful re-create so the thread can report what happened.
   const [reviving, setReviving] = useState(false);
 
@@ -572,15 +573,16 @@ export function ChatScreen() {
               msg={item}
               attribution={attribution}
               onRetry={() => retry(convoPk, item.msgPk)}
-              onLongPress={() =>
+              onLongPress={pageY => {
+                setBubbleY(pageY);
                 setBubbleTarget({
                   own: item.direction === 'out',
                   isGroup,
                   text: item.text,
                   address: attribution?.address ?? null,
                   label: attribution?.label ?? null,
-                })
-              }
+                });
+              }}
             />
           );
         }}
@@ -654,6 +656,7 @@ export function ChatScreen() {
       />
       <BubbleActionMenu
         target={bubbleTarget}
+        anchorY={bubbleY}
         onClose={() => setBubbleTarget(null)}
         onAddLabel={t =>
           setLabelTarget({

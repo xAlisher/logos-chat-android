@@ -56,13 +56,13 @@ function ConversationRow({
 }: {
   convo: Conversation;
   onPress: () => void;
-  onLongPress: () => void;
+  onLongPress: (pageY: number) => void;
 }) {
   return (
     <Pressable
       style={styles.row}
       onPress={onPress}
-      onLongPress={onLongPress}
+      onLongPress={e => onLongPress(e.nativeEvent.pageY)}
       delayLongPress={300}
       testID={`convo-${convo.convoPk}`}>
       <HexAvatar
@@ -120,8 +120,9 @@ export function ConversationsScreen() {
   // Side-menu (#125): filter the list (All/Chats/Groups) or open a page.
   const [view, setView] = useState<MenuView>('all');
   const [menuOpen, setMenuOpen] = useState(false);
-  // #131: the row a long-press context menu is acting on.
+  // #131: the row a long-press context menu is acting on (+ tap Y for #157).
   const [rowMenu, setRowMenu] = useState<Conversation | null>(null);
+  const [rowMenuY, setRowMenuY] = useState(0);
   const all = sortedConversations(conversations);
   const list =
     view === 'chats'
@@ -151,8 +152,9 @@ export function ConversationsScreen() {
 
   // #131: long-press a row → haptic + a context menu (dim backdrop via the menu's
   // own modal) with the actions available from the list.
-  const onRowLongPress = useCallback((c: Conversation) => {
+  const onRowLongPress = useCallback((c: Conversation, pageY: number) => {
     Vibration.vibrate(18);
+    setRowMenuY(pageY);
     setRowMenu(c);
   }, []);
 
@@ -242,7 +244,7 @@ export function ConversationsScreen() {
               <ConversationRow
                 convo={item}
                 onPress={() => openChat(item)}
-                onLongPress={() => onRowLongPress(item)}
+                onLongPress={pageY => onRowLongPress(item, pageY)}
               />
             </SwipeRow>
           )}
@@ -266,7 +268,8 @@ export function ConversationsScreen() {
       />
       <OverflowMenu
         visible={rowMenu != null}
-        anchor="center"
+        anchor="point"
+        anchorY={rowMenuY}
         items={rowMenuItems}
         onClose={() => setRowMenu(null)}
         testID="row-menu"

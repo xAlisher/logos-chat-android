@@ -40,6 +40,8 @@ export function ContactsScreen() {
   const contacts = knownContacts(conversations, members);
   // #131: long-press context menu + the address / label editors it can open.
   const [menuContact, setMenuContact] = useState<KnownContact | null>(null);
+  const [menuY, setMenuY] = useState(0); // #157: tap Y to anchor the menu
+
   const [addressContact, setAddressContact] = useState<KnownContact | null>(null);
   const [labelContact, setLabelContact] = useState<KnownContact | null>(null);
 
@@ -129,8 +131,9 @@ export function ContactsScreen() {
       <Pressable
         style={styles.row}
         onPress={() => open(item.address)}
-        onLongPress={() => {
+        onLongPress={e => {
           Vibration.vibrate(18); // #131
+          setMenuY(e.nativeEvent.pageY); // #157
           setMenuContact(item);
         }}
         delayLongPress={300}
@@ -188,7 +191,8 @@ export function ContactsScreen() {
       )}
       <OverflowMenu
         visible={menuContact != null}
-        anchor="center"
+        anchor="point"
+        anchorY={menuY}
         items={menuItems}
         onClose={() => setMenuContact(null)}
         testID="contact-menu"

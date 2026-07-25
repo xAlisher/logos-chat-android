@@ -43,11 +43,14 @@ function copy(value: string) {
 
 export function BubbleActionMenu({
   target,
+  anchorY,
   onClose,
   onAddLabel,
   onSendMessage,
 }: {
   target: BubbleTarget | null;
+  /** #157: screen Y of the long-pressed bubble, to anchor the menu near it. */
+  anchorY?: number;
   onClose: () => void;
   /** Open the label editor for this sender (the screen owns LabelModal). */
   onAddLabel: (target: BubbleTarget) => void;
@@ -94,7 +97,8 @@ export function BubbleActionMenu({
       visible={target != null}
       items={items}
       onClose={onClose}
-      anchor="center"
+      anchor="point"
+      anchorY={anchorY}
       testID="bubble-menu"
     />
   );

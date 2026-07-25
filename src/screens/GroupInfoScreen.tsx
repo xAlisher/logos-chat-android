@@ -34,6 +34,7 @@ export function GroupInfoScreen() {
   const startConversation = useChatStore(s => s.startConversation);
   // The member a row-menu / label editor is acting on.
   const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
+  const [menuMemberY, setMenuMemberY] = useState(0); // #157: tap Y to anchor the menu
   const [labelMember, setLabelMember] = useState<{
     address: string;
     label: string | null;
@@ -104,9 +105,13 @@ export function GroupInfoScreen() {
       <Pressable
         style={styles.memberRow}
         disabled={item.isSelf}
-        onPress={() => setMenuMember({address: item.address, label: labelFor(item.address)})}
-        onLongPress={() => {
+        onPress={e => {
+          setMenuMemberY(e.nativeEvent.pageY);
+          setMenuMember({address: item.address, label: labelFor(item.address)});
+        }}
+        onLongPress={e => {
           Vibration.vibrate(18); // #131: hold a roster member for its menu
+          setMenuMemberY(e.nativeEvent.pageY); // #157
           setMenuMember({address: item.address, label: labelFor(item.address)});
         }}
         delayLongPress={300}
@@ -280,7 +285,8 @@ export function GroupInfoScreen() {
         visible={menuMember != null}
         items={menuItems}
         onClose={() => setMenuMember(null)}
-        anchor="center"
+        anchor="point"
+        anchorY={menuMemberY}
         testID="member-menu"
       />
       <LabelModal

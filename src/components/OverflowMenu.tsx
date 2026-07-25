@@ -7,7 +7,7 @@
 // small lucide-shaped glyphs drawn with react-native-svg (no font-icon dep).
 // `TrashIcon` (lucide trash-2) and `QrIcon` (lucide qr-code) already exist and
 // are reused instead of being redrawn.
-import React from 'react';
+import React, {useState} from 'react';
 import {
   Modal,
   Pressable,
@@ -15,6 +15,7 @@ import {
   Text,
   View,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 import Svg, {Circle, Path, Line} from 'react-native-svg';
 import {colors, type, spacing, radii, layout} from '../theme';
@@ -197,18 +198,26 @@ export function OverflowMenu({
   items,
   onClose,
   anchor = 'topRight',
+  anchorY,
   header,
   testID = 'overflow-menu',
 }: {
   visible: boolean;
   items: MenuItem[];
   onClose: () => void;
-  /** 'topRight' = header ellipsis popup; 'center' = a standalone action sheet. */
-  anchor?: 'topRight' | 'center';
+  /** 'topRight' = header ellipsis popup; 'center' = a standalone action sheet;
+   *  'point' = anchored near a tap Y (long-press context menu, #157). */
+  anchor?: 'topRight' | 'center' | 'point';
+  /** For anchor='point': the screen Y of the tap to sit the menu next to. */
+  anchorY?: number;
   /** Optional identity header (#131) — who/what this long-press menu acts on. */
   header?: React.ReactNode;
   testID?: string;
 }) {
+  const {height: winH} = useWindowDimensions();
+  // Measured card height → clamp/flip the 'point' anchor so it stays on-screen.
+  const [cardH, setCardH] = useState(0);
+
   // Close FIRST, then run the action on the next tick: an Alert or a second
   // Modal opened while this one is still mounted fights with it on Android.
   const run = (item: MenuItem) => {
@@ -218,6 +227,47 @@ export function OverflowMenu({
 
   const topInset = (StatusBar.currentHeight ?? 0) + layout.headerHeight;
 
+  // #157: center the card on the tap Y, clamped within [statusBar+margin,
+  // bottom-margin] so it never runs off-screen (flips up near the bottom edge).
+  const margin = spacing.md;
+  const minTop = (StatusBar.currentHeight ?? 0) + margin;
+  const pointTop =
+    anchor === 'point' && anchorY != null && cardH > 0
+      ? Math.max(minTop, Math.min(anchorY - cardH / 2, winH - cardH - margin * 3))
+      : minTop;
+
+  const card = (
+    <Pressable
+      style={styles.card}
+      onPress={() => {}}
+      onLayout={e => setCardH(e.nativeEvent.layout.height)}
+      testID={testID}>
+      {header != null && (
+        <>
+          <View style={styles.header}>{header}</View>
+          <View style={styles.headerDivider} />
+        </>
+      )}
+      {items.map(item => (
+        <Pressable
+          key={item.key}
+          style={styles.row}
+          onPress={() => run(item)}
+          testID={item.testID ?? `menu-${item.key}`}>
+          <View style={styles.rowIcon}>{item.icon}</View>
+          <Text
+            style={[
+              styles.rowLabel,
+              item.destructive === true && styles.rowLabelDestructive,
+            ]}
+            numberOfLines={1}>
+            {item.label}
+          </Text>
+        </Pressable>
+      ))}
+    </Pressable>
+  );
+
   return (
     <Modal
       visible={visible}
@@ -226,41 +276,29 @@ export function OverflowMenu({
       animationType="none"
       onRequestClose={onClose}
       statusBarTranslucent>
-      <Pressable
-        style={[
-          styles.backdrop,
-          anchor === 'topRight' ? styles.anchorTopRight : styles.anchorCenter,
-          anchor === 'topRight' && {paddingTop: topInset},
-        ]}
-        onPress={onClose}
-        testID={`${testID}-backdrop`}>
-        {/* Taps inside the card must not fall through to the backdrop. */}
-        <Pressable style={styles.card} onPress={() => {}} testID={testID}>
-          {header != null && (
-            <>
-              <View style={styles.header}>{header}</View>
-              <View style={styles.headerDivider} />
-            </>
-          )}
-          {items.map(item => (
-            <Pressable
-              key={item.key}
-              style={styles.row}
-              onPress={() => run(item)}
-              testID={item.testID ?? `menu-${item.key}`}>
-              <View style={styles.rowIcon}>{item.icon}</View>
-              <Text
-                style={[
-                  styles.rowLabel,
-                  item.destructive === true && styles.rowLabelDestructive,
-                ]}
-                numberOfLines={1}>
-                {item.label}
-              </Text>
-            </Pressable>
-          ))}
+      {anchor === 'point' ? (
+        <Pressable
+          style={styles.backdropPlain}
+          onPress={onClose}
+          testID={`${testID}-backdrop`}>
+          <View
+            style={[styles.pointWrap, {top: pointTop, opacity: cardH > 0 ? 1 : 0}]}
+            pointerEvents="box-none">
+            {card}
+          </View>
         </Pressable>
-      </Pressable>
+      ) : (
+        <Pressable
+          style={[
+            styles.backdrop,
+            anchor === 'topRight' ? styles.anchorTopRight : styles.anchorCenter,
+            anchor === 'topRight' && {paddingTop: topInset},
+          ]}
+          onPress={onClose}
+          testID={`${testID}-backdrop`}>
+          {card}
+        </Pressable>
+      )}
     </Modal>
   );
 }
@@ -273,6 +311,18 @@ const styles = StyleSheet.create({
   },
   anchorTopRight: {alignItems: 'flex-end'},
   anchorCenter: {alignItems: 'center', justifyContent: 'center'},
+  // #157: full-screen dim, card positioned absolutely near the tap.
+  backdropPlain: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  pointWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+  },
   card: {
     backgroundColor: colors.panel,
     borderColor: colors.border,
