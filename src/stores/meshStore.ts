@@ -10,6 +10,7 @@ import MeshCore, {
   parseSelfInfo,
 } from '../native/MeshCore';
 import type {MeshChannel, MeshContact, MeshStatus} from '../native/MeshCore';
+import {useSettingsStore} from './settingsStore';
 
 interface MeshState {
   status: MeshStatus;
@@ -59,6 +60,9 @@ export const useMeshStore = create<MeshState>((set, get) => ({
       if (info) {
         set({selfPubkey: info.pubkeyHex, selfName: info.name});
       }
+      // First successful connect on this device — remember that MeshCore has been
+      // set up so the transport pill/modal show it as a live toggle from now on.
+      useSettingsStore.getState().setMeshConfigured(true);
       // Now connected — hydrate channel list + contact roster (best-effort; each
       // has its own try/catch so one failing doesn't sink the other).
       await get().loadChannels();

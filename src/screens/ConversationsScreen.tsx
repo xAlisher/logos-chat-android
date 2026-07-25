@@ -14,6 +14,7 @@ import {SpeedDialFab, GroupGlyph} from '../components/SpeedDialFab';
 import {HexAvatar, avatarSeed, convoKind} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SideMenu, type MenuView} from '../components/SideMenu';
+import {TransportPill} from '../components/TransportPill';
 import {
   OverflowMenu,
   UsersIcon,
@@ -226,8 +227,11 @@ export function ConversationsScreen() {
           onPress={() => setMenuOpen(true)}>
           <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={34} />
         </Pressable>
-        {/* Reserved right slot (kept for header balance; transport chip lands here). */}
-        <View style={styles.headerRightSlot} />
+        {/* Transport indicator (#146): live tri-state of Logos (+ MeshCore once
+            configured); tap to open the transports modal. */}
+        <View style={styles.headerRightSlot}>
+          <TransportPill />
+        </View>
       </View>
       {list.length === 0 ? (
         <View style={styles.empty}>
@@ -325,9 +329,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   headerTitle: {...type.brand, color: colors.text},
-  // Balances the 34px avatar on the left so the centered title stays optically
-  // centered; the offline transport chip (#146) will live here.
-  headerRightSlot: {width: 34, height: 34},
+  // Holds the transport pill (#146): one glyph (Logos) or two (Logos + MeshCore,
+  // 22px each + 6 gap = 50px). Content hugs the right edge (justify flex-end),
+  // mirroring the left avatar that hugs the left edge, so the absolutely-centered
+  // title stays optically centered between them.
+  headerRightSlot: {
+    minWidth: 50,
+    height: 34,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   rowMenuHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   listContent: {paddingBottom: 88},
   titleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},

@@ -258,7 +258,11 @@ object ChatRepo {
         d.setPeerAddress(convoPk, senderAccount)
       }
     }
-    val msgPk = d.insertMessage(convoPk, "in", content, now, "received", senderAccount)
+    // #168: dual-send dedup. A mirrored group's message can arrive via BOTH
+    // transports; if the mesh copy already landed, merge (mark 'both') and don't
+    // insert a second bubble.
+    val dup = if (d.isMeshMode(convoPk)) d.dedupInbound(convoPk, content, now, "logos") else -1L
+    val msgPk = if (dup >= 0) dup else d.insertMessage(convoPk, "in", content, now, "received", senderAccount)
     d.touchConversation(convoPk, now)
     // #95: joiner-side roster fill-in. On a GROUP, a verified inbound sender that
     // isn't us and isn't already on the roster is recorded (idempotent). This is

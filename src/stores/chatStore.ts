@@ -268,6 +268,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       (convo?.isGroup ?? false) &&
       (convo?.meshMode ?? false) &&
       convo?.meshChannelIdx != null;
+    const running = useNodeStore.getState().status === 'running';
     const via: 'logos' | 'mesh' = transport === 'mesh' || meshMirror ? 'mesh' : 'logos';
     // Optimistic pending bubble; the durable row lands native-side and the
     // reload below replaces this. sentVia matches the transport actually used.
@@ -300,10 +301,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Persist to the shared timeline (the optimistic bubble is replaced below).
         await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
       } else if (meshMirror) {
-        // #168: mirror the group message onto its private channel; land it in the
-        // one shared timeline tagged mesh (interleaved with Logos history).
-        await MeshCore.sendChannelText(convo!.meshChannelIdx!, text);
-        await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+        // #168 (dual-send): mirroring is ADDITIVE. Send on EVERY live transport so
+        // Logos-only AND mesh-only members both receive. If the node is up, Logos
+        // carries + records the outbound bubble and we also transmit on the mesh
+        // channel; if the node is down, it's a mesh-only send (recorded here).
+        const idx = convo!.meshChannelIdx!;
+        await MeshCore.sendChannelText(idx, text);
+        if (running) {
+          const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
+          if (res.status === 'failed') {
+            useNodeStore.setState({error: 'send failed — tap the message to retry'});
+          }
+        } else {
+          await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+        }
       } else {
         const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
         if (res.status === 'failed') {

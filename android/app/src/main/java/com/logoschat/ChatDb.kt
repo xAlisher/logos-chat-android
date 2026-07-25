@@ -48,6 +48,10 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // v9 (#175/#176): collapse duplicate 1:1 conversations that share an account
     // (a reinstalled peer forked a new convo) — account is the identity.
     const val DB_VERSION = 9
+
+    // #168 (dual-send dedup): a mirrored group's message can arrive on BOTH
+    // transports; the two copies land within this window (LoRa latency = minutes).
+    const val DEDUP_WINDOW_MS = 10 * 60 * 1000L
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -331,6 +335,15 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       senderName: String?,
       isActive: Boolean,
   ): Long {
+    // #168: a mirrored group's message can arrive via BOTH transports. If the Logos
+    // copy already landed, merge (mark 'both') and skip the duplicate bubble/unread.
+    if (direction == "in" && isMeshMode(convoPk)) {
+      val dup = dedupInbound(convoPk, text, at, "mesh")
+      if (dup >= 0) {
+        touchConversation(convoPk, at)
+        return dup
+      }
+    }
     val status = if (direction == "out") "sent" else "received"
     val msgPk = insertMessage(convoPk, direction, text, at, status, senderName, "mesh")
     touchConversation(convoPk, at)
@@ -459,6 +472,43 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     writableDatabase.execSQL(
         "UPDATE conversations SET mesh_mode=0 WHERE convo_pk=?", arrayOf(convoPk))
   }
+
+  /** True if this group is currently mirrored onto MeshCore (dual-transport). */
+  fun isMeshMode(convoPk: Long): Boolean =
+      readableDatabase
+          .rawQuery("SELECT mesh_mode FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .use { it.moveToFirst() && it.getInt(0) == 1 }
+
+  /**
+   * #168 (Phase 2 dual-send): dedup an inbound message that arrived on BOTH
+   * transports. A mirrored group's sender (when dual-connected) sends over Logos
+   * AND the mesh channel, so a member on both receives it twice. If a message with
+   * the SAME content already exists in this convo within [DEDUP_WINDOW_MS] (LoRa
+   * latency is minutes, so the window is generous), mark it `sent_via='both'` and
+   * return its msg_pk — the caller then skips inserting a duplicate bubble. Returns
+   * -1 when it's a genuinely new message. v1 keys on (content, time-window); a
+   * sender-stamped nonce would make it exact (deferred, costs mesh chars).
+   */
+  fun dedupInbound(convoPk: Long, content: String, atMs: Long, via: String): Long =
+      readableDatabase
+          .rawQuery(
+              "SELECT msg_pk, sent_via FROM messages WHERE convo_pk=? AND content=? " +
+                  "AND sent_at>=? AND sent_at<=? ORDER BY msg_pk DESC LIMIT 1",
+              arrayOf(
+                  convoPk.toString(),
+                  content,
+                  (atMs - DEDUP_WINDOW_MS).toString(),
+                  (atMs + DEDUP_WINDOW_MS).toString()))
+          .use {
+            if (!it.moveToFirst()) return -1L
+            val msgPk = it.getLong(0)
+            val existingVia = if (it.isNull(1)) "logos" else it.getString(1)
+            if (existingVia != via && existingVia != "both") {
+              writableDatabase.execSQL(
+                  "UPDATE messages SET sent_via='both' WHERE msg_pk=?", arrayOf(msgPk))
+            }
+            msgPk
+          }
 
   /** (channelIdx, channelKey) of a group's mesh mirror, or null if never switched. */
   fun meshMirrorFor(convoPk: Long): Pair<Int, String>? =

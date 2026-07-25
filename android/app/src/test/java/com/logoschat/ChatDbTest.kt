@@ -239,6 +239,23 @@ class ChatDbTest {
   }
 
   @Test
+  fun dedupInboundMergesDualTransportCopies() {
+    // #168 dual-send: a mirrored group's message arrives via BOTH transports; the
+    // second copy must merge into the first (marked 'both'), not add a bubble.
+    val g = db.insertConversation(null, "glib", null, 1000, isGroup = true, groupName = "g")
+    db.setMeshMirror(g, 1, "k".repeat(32))
+    assertTrue(db.isMeshMode(g))
+    val m1 = db.insertMessage(g, "in", "hello team", 5000, "received", null, "mesh")
+    // the Logos copy within the window → dedup returns m1 and upgrades it to 'both'.
+    assertEquals(m1, db.dedupInbound(g, "hello team", 5200, "logos"))
+    val msg = JSONArray(db.listMessagesJson(g, 0, 10)).getJSONObject(0)
+    assertEquals("both", msg.getString("sentVia"))
+    // different content is not a dup; same content outside the window is not a dup.
+    assertEquals(-1L, db.dedupInbound(g, "different", 5300, "logos"))
+    assertEquals(-1L, db.dedupInbound(g, "hello team", 5000L + 11L * 60 * 1000, "logos"))
+  }
+
+  @Test
   fun mergeDirectConversationReconcilesReinstalledPeerByAccount() {
     // #175/#176: durable contact (labeled, old dead binding) + a transient convo the
     // reinstalled peer forked (new live convoId). Merge must keep the contact's

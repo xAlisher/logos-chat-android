@@ -74,9 +74,10 @@ export interface MessageRow {
   senderAccount: string | null;
   /**
    * #165 (docs/mesh-transport.md): which transport this message went over.
-   * 'logos' (default) or 'mesh' — one shared timeline, mesh rows badged.
+   * 'logos' (default) or 'mesh'; #168 adds 'both' — a mirrored-group message that
+   * arrived on BOTH transports (deduped to one row). One shared timeline, badged.
    */
-  sentVia: 'logos' | 'mesh';
+  sentVia: 'logos' | 'mesh' | 'both';
 }
 
 /** A group roster entry (app-side, best-effort). */

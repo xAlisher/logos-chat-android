@@ -23,6 +23,7 @@ import {
 import {useRoute, useFocusEffect, useNavigation} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
+import Svg, {Circle, Line} from 'react-native-svg';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
@@ -41,10 +42,12 @@ import {
   UsersIcon,
   EraserIcon,
   LogOutIcon,
+  MeshIcon,
   type MenuItem,
 } from '../components/OverflowMenu';
 import {AddressModal} from '../components/AddressModal';
 import {LabelModal} from '../components/LabelModal';
+import {MeshInfoModal} from '../components/MeshInfoModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
@@ -62,6 +65,31 @@ const MESH_MAX_CHARS = 140;
 // Mesh transport accent — theme has no green token (brand is orange), so the
 // literal lives here per the mesh-transport design (docs/mesh-transport.md).
 const MESH_GREEN = '#22C55E';
+
+/** lucide `info` — the (i) affordance that opens the mesh-mirroring explainer (#168). */
+function InfoIcon({
+  size = 18,
+  color = colors.textDim,
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Circle cx={12} cy={12} r={10} stroke={color} strokeWidth={1.8} />
+      <Line
+        x1={12}
+        y1={11}
+        x2={12}
+        y2={16}
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+      />
+      <Circle cx={12} cy={8} r={1} fill={color} />
+    </Svg>
+  );
+}
 
 /** The attribution shown above an incoming bubble (#10). Display-only (#109). */
 interface Attribution {
@@ -153,7 +181,9 @@ function Bubble({
   const failed = msg.status === 'failed';
   // #167: a message that rode the MeshCore radio (not MLS) is badged — subtle
   // green edge + a "via mesh" caption, so it reads as "over the mesh, not MLS".
-  const viaMesh = msg.sentVia === 'mesh';
+  // #168: 'both' = delivered on Logos AND mesh (deduped) — still badge it as mesh-touched.
+  const viaMesh = msg.sentVia === 'mesh' || msg.sentVia === 'both';
+  const viaLabel = msg.sentVia === 'both' ? 'via mesh + logos · ' : 'via mesh · ';
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
       {/* Display only (#109): the contact actions live on the bubble long-press.
@@ -197,7 +227,7 @@ function Bubble({
         </Text>
       </Pressable>
       <View style={styles.timeRow}>
-        {viaMesh && <Text style={styles.viaMesh}>via mesh · </Text>}
+        {viaMesh && <Text style={styles.viaMesh}>{viaLabel}</Text>}
         <Text style={[styles.time, failed && {color: colors.unread}]}>
           {msg.status === 'pending'
             ? 'sending…'
@@ -253,6 +283,8 @@ export function ChatScreen() {
   const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
   // #112: set after a successful re-create so the thread can report what happened.
   const [reviving, setReviving] = useState(false);
+  // #168: the "About mesh mirroring" explainer (banner (i) + ⋮ menu).
+  const [meshInfoOpen, setMeshInfoOpen] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -575,9 +607,13 @@ export function ChatScreen() {
   const radioConnected = meshStatus === 'connected';
   const mappedMembers = (groupMembers ?? []).filter(m => !m.isSelf && m.meshPubkey != null);
   const otherMembers = (groupMembers ?? []).filter(m => !m.isSelf);
-  const showMeshBanner =
-    isGroup && !isMesh && radioConnected && (meshMode || mappedMembers.length > 0);
   const nodeOffline = !running && !connecting;
+  // #168 refinement (point 1): the banner is OFFLINE-ONLY. It renders only when
+  // the group is ALREADY mirroring, or the Logos node is offline (the fallback
+  // prompt). When the node is online and not yet mirroring, the banner stays
+  // hidden — the user enables mirroring from the ⋮ menu instead.
+  const showMeshBanner =
+    isGroup && !isMesh && radioConnected && (meshMode || nodeOffline);
   const [switching, setSwitching] = useState(false);
 
   const doSwitchToMesh = async () => {
@@ -585,7 +621,7 @@ export function ChatScreen() {
     try {
       const {invited} = await switchGroupToMesh(convoPk);
       ToastAndroid.show(
-        `On MeshCore — invited ${invited} mapped member${invited === 1 ? '' : 's'}`,
+        `Mesh mirroring on — invited ${invited} mapped member${invited === 1 ? '' : 's'}`,
         ToastAndroid.SHORT,
       );
     } catch (e: any) {
@@ -598,13 +634,41 @@ export function ChatScreen() {
     setSwitching(true);
     try {
       await switchGroupToLogos(convoPk);
-      ToastAndroid.show('Back on Logos', ToastAndroid.SHORT);
+      ToastAndroid.show('Mesh mirroring stopped', ToastAndroid.SHORT);
     } catch (e: any) {
       useNodeStore.setState({error: `switch failed: ${e?.message ?? e}`});
     } finally {
       setSwitching(false);
     }
   };
+
+  // #168 (point 4): mesh entries appended to a group's ⋮ menu — only with a radio
+  // connected. Enable/stop mirroring (labels only; actions unchanged) plus an
+  // always-present "About mesh mirroring" that opens the explainer.
+  const meshMenuItems: MenuItem[] = [];
+  if (isGroup && !isMesh && radioConnected) {
+    if (meshMode) {
+      meshMenuItems.push({
+        key: 'mesh-stop',
+        label: 'Stop mesh mirroring',
+        icon: <MeshIcon color={MESH_GREEN} />,
+        onPress: doSwitchToLogos,
+      });
+    } else if (mappedMembers.length > 0) {
+      meshMenuItems.push({
+        key: 'mesh-add',
+        label: 'Add mesh mirroring',
+        icon: <MeshIcon color={MESH_GREEN} />,
+        onPress: doSwitchToMesh,
+      });
+    }
+    meshMenuItems.push({
+      key: 'mesh-about',
+      label: 'About mesh mirroring',
+      icon: <InfoIcon color={colors.textDim} />,
+      onPress: () => setMeshInfoOpen(true),
+    });
+  }
 
   const doSend = async () => {
     if (!canSend) {
@@ -676,7 +740,7 @@ export function ChatScreen() {
               ]}
               numberOfLines={2}>
               {meshMode
-                ? 'On MeshCore — sending over the mesh, not MLS'
+                ? 'Mesh mirroring on — over the mesh, not MLS'
                 : nodeOffline
                 ? 'Logos node offline — reach mapped members over the mesh'
                 : 'Logos node online'}
@@ -690,6 +754,14 @@ export function ChatScreen() {
               </Text>
             </Pressable>
           </View>
+          {/* #168 (point 3): (i) explainer, next to the mesh action. */}
+          <Pressable
+            onPress={() => setMeshInfoOpen(true)}
+            hitSlop={8}
+            style={styles.meshInfoBtn}
+            testID="mesh-info">
+            <InfoIcon color={meshMode ? MESH_GREEN : colors.textDim} />
+          </Pressable>
           <Pressable
             style={[styles.meshBannerBtn, meshMode ? styles.meshBannerBtnBack : styles.meshBannerBtnGo]}
             disabled={switching}
@@ -703,7 +775,7 @@ export function ChatScreen() {
                   type.label,
                   {color: meshMode ? colors.textDim : colors.onAccent},
                 ]}>
-                {meshMode ? 'Switch to Logos' : 'Switch to MeshCore'}
+                {meshMode ? 'Stop mesh mirroring' : 'Add mesh mirroring'}
               </Text>
             )}
           </Pressable>
@@ -810,7 +882,7 @@ export function ChatScreen() {
       )}
       <OverflowMenu
         visible={menuOpen}
-        items={menuItems}
+        items={[...menuItems, ...meshMenuItems]}
         onClose={() => setMenuOpen(false)}
         testID="chat-menu"
       />
@@ -846,6 +918,10 @@ export function ChatScreen() {
         onSave={(newLabel, verified) =>
           saveLabelFor(labelTarget?.address ?? null, newLabel, verified)
         }
+      />
+      <MeshInfoModal
+        visible={meshInfoOpen}
+        onClose={() => setMeshInfoOpen(false)}
       />
       <ErrorToast message={nodeError} onDismiss={clearError} />
     </KeyboardAvoidingView>
@@ -950,6 +1026,13 @@ const styles = StyleSheet.create({
   },
   meshBannerBtnGo: {backgroundColor: MESH_GREEN},
   meshBannerBtnBack: {borderColor: colors.border, borderWidth: 1},
+  // #168: the (i) explainer affordance sitting between the banner text and action.
+  meshInfoBtn: {
+    minWidth: layout.minTouchTarget,
+    minHeight: layout.minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   composer: {
     backgroundColor: colors.pane,
     borderTopColor: colors.border,
