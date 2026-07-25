@@ -578,13 +578,19 @@ export function ChatScreen() {
   // #168 (Phase 2c): this Logos group is switched to its MeshCore mirror — sends
   // ride the radio, so it's live regardless of the node.
   const meshMode = (convo?.meshMode ?? false) && convo?.meshChannelIdx != null;
-  const overMesh = isMesh || meshMode; // sends leave over the radio
-  const canSend = (overMesh || running) && text.trim().length > 0 && !busy;
+  const overMesh = isMesh || meshMode; // configured to leave over the radio
+  // A mesh send only actually works when the radio is CONNECTED. When it isn't,
+  // a mesh-mirrored group still sends over Logos (dual-send skips mesh), but a
+  // pure mesh channel can't send at all — so gate on the live radio, not just
+  // on being mesh-configured.
+  const meshLive = overMesh && meshStatus === 'connected';
+  const canSend = (meshLive || running) && text.trim().length > 0 && !busy;
 
-  // Submit button color signals the transport (#169). Mesh rides the radio and is
-  // always live → green (the mesh identity color, NOT MLS). Logos mirrors node
-  // status (#17): orange running, gray connecting, red offline.
-  const sendColor = overMesh
+  // Submit button color signals the transport actually in play (#169). Green ONLY
+  // when the mesh radio is connected (not merely mesh-configured — the radio can
+  // be down). Otherwise mirror Logos node status (#17): orange running, gray
+  // connecting, red offline.
+  const sendColor = meshLive
     ? MESH_GREEN
     : running
     ? colors.accent
@@ -709,17 +715,20 @@ export function ChatScreen() {
   };
 
   const onSubmit = () => {
-    // #167/#168: anything that rides the radio — a mesh channel (isMesh) or a Logos
-    // group switched to its mesh mirror (meshMode) — sends over MeshCore regardless
-    // of the Logos node. Only a pure-Logos conversation is gated on node status.
-    if (overMesh || running) {
+    // A send goes through if the mesh radio is live (mesh path) OR the Logos node
+    // is running (a mesh-mirrored group falls back to Logos when the radio is
+    // down). Otherwise say which transport is missing.
+    if (meshLive || running) {
       doSend();
+    } else if (isMesh) {
+      // Pure mesh channel with no radio — nothing to fall back to.
+      ToastAndroid.show('Mesh radio not connected', ToastAndroid.SHORT);
     } else if (connecting) {
       // Keep the draft; just tell the user to wait.
       ToastAndroid.show('Logos node connecting…', ToastAndroid.SHORT);
     } else {
-      // #183: name the transport — this is the LOGOS node, and it only blocks a
-      // pure-Logos send (a mirrored/mesh convo never reaches here).
+      // #183: name the transport — the LOGOS node is down (a mirrored group with
+      // the radio also down lands here: neither transport is available).
       useNodeStore.setState({error: 'Logos node offline'});
     }
   };
