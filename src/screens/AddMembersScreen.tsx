@@ -29,6 +29,7 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
+import {HexAvatar} from '../components/HexAvatar';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useChatStore, convoDisplayName, knownContacts} from '../stores/chatStore';
@@ -179,13 +180,16 @@ export function AddMembersScreen() {
         style={styles.row}
         testID={`add-member-row-${item.address}`}
         onPress={() => toggle(item.address)}>
+        <HexAvatar seed={item.address} kind="contact" size={32} />
         <View style={styles.rowText}>
           <Text
-            style={[type.body, {color: item.label ? colors.text : colors.textDim}]}
+            style={[type.title, {color: item.label ? colors.text : colors.textDim, lineHeight: 18}]}
             numberOfLines={1}>
             {item.label ?? '(no label)'}
           </Text>
-          <Text style={[type.code, {color: colors.textDim}]} numberOfLines={1}>
+          <Text
+            style={[type.label, {color: colors.textDim, lineHeight: 14}]}
+            numberOfLines={1}>
             {shortAddress(item.address)}
           </Text>
         </View>
@@ -331,7 +335,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     minHeight: 48,
   },
-  rowText: {flex: 1, gap: 2},
+  rowText: {flex: 1, gap: 0},
   checkbox: {
     width: 24,
     height: 24,

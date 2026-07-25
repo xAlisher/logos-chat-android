@@ -14,6 +14,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
+import {HexAvatar} from '../components/HexAvatar';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
@@ -60,10 +61,16 @@ export function NewConversationScreen() {
     <View style={styles.root}>
       <KeyboardAwareScreen contentContainerStyle={styles.content}>
         <View style={styles.card}>
-          <Text style={[type.label, {color: colors.textDim}]}>Peer Address</Text>
-          <Text style={styles.address} selectable numberOfLines={2}>
-            {address}
-          </Text>
+          {/* Preview the identicon this contact will get everywhere (#118). */}
+          <View style={styles.addrRow}>
+            <HexAvatar seed={address} kind="contact" size={40} />
+            <View style={styles.addrText}>
+              <Text style={[type.label, {color: colors.textDim}]}>Peer Address</Text>
+              <Text style={styles.address} selectable numberOfLines={2}>
+                {address}
+              </Text>
+            </View>
+          </View>
         </View>
 
         {!running && (
@@ -131,6 +138,8 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.md,
   },
+  addrRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  addrText: {flex: 1, gap: spacing.xs},
   address: {...type.code, color: colors.text},
   input: {
     ...type.body,

@@ -36,6 +36,40 @@ function rng(seed: string): () => number {
   };
 }
 
+export const AVATAR_N = 5;
+
+/** A filled cell of the identicon, in grid units (0..AVATAR_N). Deterministic
+ *  per (seed, kind). Shared by HexAvatar and the QR badge so both draw the same
+ *  identicon from the same source (#118). */
+export interface IdenticonCell {
+  x: number;
+  y: number;
+  fill: string;
+}
+
+export function identiconCells(
+  seed: string,
+  kind: 'contact' | 'group',
+): IdenticonCell[] {
+  const ramp = kind === 'group' ? GROUP_RAMP : CONTACT_RAMP;
+  const r = rng((kind === 'group' ? 'g:' : 'c:') + seed);
+  const cells: IdenticonCell[] = [];
+  // Only the left three columns are decided; columns 0,1 mirror to 4,3.
+  for (let x = 0; x < 3; x++) {
+    for (let y = 0; y < AVATAR_N; y++) {
+      if (r() > 0.5) {
+        continue; // empty cell → shows the avatar ground
+      }
+      const fill = ramp[Math.floor(r() * ramp.length)];
+      const xs = x === 2 ? [2] : [x, AVATAR_N - 1 - x];
+      for (const xx of xs) {
+        cells.push({x: xx, y, fill});
+      }
+    }
+  }
+  return cells;
+}
+
 export function HexAvatar({
   seed,
   kind,
@@ -45,35 +79,18 @@ export function HexAvatar({
   kind: 'contact' | 'group';
   size?: number;
 }) {
-  const N = 5;
-  const cell = size / N;
-  const ramp = kind === 'group' ? GROUP_RAMP : CONTACT_RAMP;
-  const r = rng((kind === 'group' ? 'g:' : 'c:') + seed);
-
-  const rects: React.ReactNode[] = [];
-  // Only the left three columns are decided; columns 0,1 mirror to 4,3.
-  for (let x = 0; x < 3; x++) {
-    for (let y = 0; y < N; y++) {
-      if (r() > 0.5) {
-        continue; // empty cell → shows the avatar ground
-      }
-      const fill = ramp[Math.floor(r() * ramp.length)];
-      const xs = x === 2 ? [2] : [x, N - 1 - x];
-      for (const xx of xs) {
-        rects.push(
-          <Rect
-            key={`${xx}-${y}`}
-            // +0.5 overlap so anti-aliasing never leaves a seam between cells.
-            x={xx * cell}
-            y={y * cell}
-            width={cell + 0.5}
-            height={cell + 0.5}
-            fill={fill}
-          />,
-        );
-      }
-    }
-  }
+  const cell = size / AVATAR_N;
+  const rects = identiconCells(seed, kind).map(c => (
+    <Rect
+      key={`${c.x}-${c.y}`}
+      // +0.5 overlap so anti-aliasing never leaves a seam between cells.
+      x={c.x * cell}
+      y={c.y * cell}
+      width={cell + 0.5}
+      height={cell + 0.5}
+      fill={c.fill}
+    />
+  ));
 
   return (
     <View

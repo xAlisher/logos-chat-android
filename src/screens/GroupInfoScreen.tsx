@@ -9,6 +9,7 @@ import type {RouteProp} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
+import {HexAvatar} from '../components/HexAvatar';
 import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon} from '../components/OverflowMenu';
 import {LabelModal} from '../components/LabelModal';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
@@ -84,7 +85,9 @@ export function GroupInfoScreen() {
     [conversations],
   );
 
-  // Two lines per member (label white / hex gray), matching Add Members.
+  // Two lines per member (label white / hex gray), matching Add Members. The
+  // leading HexAvatar (seeded by the member's address) matches the conversation
+  // list so a person reads identically everywhere (#118).
   const renderMember = ({item}: {item: GroupMember}) => {
     const label = item.isSelf ? 'You' : labelFor(item.address);
     return (
@@ -93,14 +96,16 @@ export function GroupInfoScreen() {
         disabled={item.isSelf}
         onPress={() => setMenuMember({address: item.address, label: labelFor(item.address)})}
         testID={`member-${item.address}`}>
-        <View style={styles.memberDot} />
+        <HexAvatar seed={item.address} kind="contact" size={32} />
         <View style={styles.memberText}>
           <Text
-            style={[type.body, {color: label ? colors.text : colors.textDim}]}
+            style={[type.title, {color: label ? colors.text : colors.textDim, lineHeight: 18}]}
             numberOfLines={1}>
             {label ?? '(no label)'}
           </Text>
-          <Text style={[type.code, {color: colors.textDim}]} numberOfLines={1}>
+          <Text
+            style={[type.label, {color: colors.textDim, lineHeight: 14}]}
+            numberOfLines={1}>
             {shortAddress(item.address)}
           </Text>
         </View>
@@ -169,35 +174,46 @@ export function GroupInfoScreen() {
   return (
     <View style={styles.root}>
       <View style={styles.header}>
-        {editingName ? (
-          <TextInput
-            style={styles.nameInput}
-            value={nameDraft}
-            onChangeText={setNameDraft}
-            onBlur={commitName}
-            onSubmitEditing={commitName}
-            placeholder="Name this group…"
-            placeholderTextColor={colors.textFaint}
-            autoFocus
-            returnKeyType="done"
-            testID="group-name-edit"
+        {/* Group identicon (azure, seeded by the shared lib id) — same avatar the
+            group shows in the conversation list (#118). */}
+        <View style={styles.headerRow}>
+          <HexAvatar
+            seed={convo?.libConvoId ?? `pk${convoPk}`}
+            kind="group"
+            size={48}
           />
-        ) : (
-          <Pressable
-            onPress={() => setEditingName(true)}
-            hitSlop={6}
-            testID="group-rename">
-            <Text style={[type.title, {color: colors.text}]}>{displayName}</Text>
-          </Pressable>
-        )}
-        <Text style={[type.label, {color: colors.textDim}]}>
-          {members.length} member{members.length === 1 ? '' : 's'} (this device's view)
-        </Text>
-        {!nameKnown && !editingName && (
-          <Text style={[type.caption, {color: colors.textFaint}]}>
-            Tap the name to rename it on this device.
-          </Text>
-        )}
+          <View style={styles.headerText}>
+            {editingName ? (
+              <TextInput
+                style={styles.nameInput}
+                value={nameDraft}
+                onChangeText={setNameDraft}
+                onBlur={commitName}
+                onSubmitEditing={commitName}
+                placeholder="Name this group…"
+                placeholderTextColor={colors.textFaint}
+                autoFocus
+                returnKeyType="done"
+                testID="group-name-edit"
+              />
+            ) : (
+              <Pressable
+                onPress={() => setEditingName(true)}
+                hitSlop={6}
+                testID="group-rename">
+                <Text style={[type.title, {color: colors.text}]}>{displayName}</Text>
+              </Pressable>
+            )}
+            <Text style={[type.label, {color: colors.textDim}]}>
+              {members.length} member{members.length === 1 ? '' : 's'} (this device's view)
+            </Text>
+            {!nameKnown && !editingName && (
+              <Text style={[type.caption, {color: colors.textFaint}]}>
+                Tap the name to rename it on this device.
+              </Text>
+            )}
+          </View>
+        </View>
       </View>
 
       <FlatList
@@ -234,6 +250,7 @@ export function GroupInfoScreen() {
       <LabelModal
         visible={labelMember != null}
         label={labelMember?.label ?? null}
+        address={labelMember?.address ?? null}
         onClose={() => setLabelMember(null)}
         onSave={v => labelMember != null && saveMemberLabel(labelMember.address, v)}
       />
@@ -245,11 +262,12 @@ const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.canvas},
   header: {
     padding: spacing.lg,
-    gap: spacing.xs,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
     backgroundColor: colors.panel,
   },
+  headerRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  headerText: {flex: 1, gap: spacing.xs},
   list: {padding: spacing.lg},
   memberRow: {
     flexDirection: 'row',
@@ -257,8 +275,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingVertical: spacing.sm,
   },
-  memberText: {flex: 1, gap: 2},
-  memberDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: colors.accent},
+  memberText: {flex: 1, gap: 0},
   nameInput: {
     ...type.title,
     color: colors.text,

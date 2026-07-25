@@ -15,15 +15,19 @@ import {
   StyleSheet,
 } from 'react-native';
 import {colors, type, spacing, radii, layout} from '../theme';
+import {HexAvatar} from './HexAvatar';
 
 export function LabelModal({
   visible,
   label,
+  address,
   onClose,
   onSave,
 }: {
   visible: boolean;
   label: string | null;
+  /** The contact being labelled — shows their identicon so it's clear who (#118). */
+  address?: string | null;
   onClose: () => void;
   onSave: (newLabel: string) => void;
 }) {
@@ -51,7 +55,12 @@ export function LabelModal({
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
         <Pressable style={styles.card} onPress={() => {}} testID="label-modal">
-          <Text style={styles.heading}>Label</Text>
+          <View style={styles.headingRow}>
+            {address != null && address.length > 0 && (
+              <HexAvatar seed={address} kind="contact" size={40} />
+            )}
+            <Text style={styles.heading}>Label</Text>
+          </View>
           <Text style={styles.helper}>
             Only you see this — it never leaves your device.
           </Text>
@@ -101,6 +110,7 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     gap: spacing.lg,
   },
+  headingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   heading: {...type.title, color: colors.text},
   helper: {...type.caption, color: colors.textDim, marginTop: -spacing.sm},
   input: {

@@ -5,6 +5,7 @@ import React, {useEffect, useState} from 'react';
 import {Modal, Pressable, Text, View, StyleSheet} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii, layout} from '../theme';
+import {HexAvatar} from './HexAvatar';
 
 export function AddressModal({
   visible,
@@ -48,7 +49,13 @@ export function AddressModal({
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
         <Pressable style={styles.card} onPress={() => {}} testID="address-modal">
-          <Text style={styles.heading}>Address</Text>
+          {/* The contact's identicon confirms whose address this is (#118). */}
+          <View style={styles.headingRow}>
+            {address != null && (
+              <HexAvatar seed={address} kind="contact" size={40} />
+            )}
+            <Text style={styles.heading}>Address</Text>
+          </View>
 
           <Text style={styles.addr} selectable testID="contact-address">
             {address ?? '(unknown address)'}
@@ -93,6 +100,7 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     gap: spacing.lg,
   },
+  headingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   heading: {...type.title, color: colors.text},
   addr: {
     ...type.code,

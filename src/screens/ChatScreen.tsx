@@ -25,6 +25,7 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
+import {HexAvatar, avatarSeed} from '../components/HexAvatar';
 import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
 import {QrIcon} from '../components/QrIcon';
@@ -130,9 +131,11 @@ function Bubble({
   const failed = msg.status === 'failed';
   return (
     <View style={[styles.bubbleWrap, own ? styles.wrapOwn : styles.wrapPeer]}>
-      {/* Display only (#109): the contact actions live on the bubble long-press. */}
+      {/* Display only (#109): the contact actions live on the bubble long-press.
+          A tiny identicon (#118) makes senders distinct in a busy group thread. */}
       {attribution != null && (
-        <View testID={`attr-${attribution.address}`}>
+        <View style={styles.attrRow} testID={`attr-${attribution.address}`}>
+          <HexAvatar seed={attribution.address} kind="contact" size={16} />
           {attribution.label != null ? (
             <Text style={styles.attrLine} numberOfLines={1}>
               <Text style={{color: colors.contact}}>{attribution.label}</Text>
@@ -411,11 +414,23 @@ export function ChatScreen() {
         if (convo == null) {
           return <Text style={styles.headerTitleText}> </Text>;
         }
+        // Leading identicon matches the conversation list (#118): a group is
+        // seeded by its shared lib id (azure), a 1:1 by the peer address (orange).
+        const avatar = (
+          <HexAvatar
+            seed={avatarSeed(convo)}
+            kind={isGroup ? 'group' : 'contact'}
+            size={28}
+          />
+        );
         if (isGroup) {
           return (
-            <Text style={styles.headerTitleText} numberOfLines={1}>
-              {convoDisplayName(convo)}
-            </Text>
+            <View style={styles.headerTitleRow} testID="chat-title">
+              {avatar}
+              <Text style={styles.headerTitleText} numberOfLines={1}>
+                {convoDisplayName(convo)}
+              </Text>
+            </View>
           );
         }
         const shortHex =
@@ -424,21 +439,24 @@ export function ChatScreen() {
             : `peer #${convo.convoPk}`;
         const labelled = convo.nickname != null && convo.nickname.length > 0;
         return (
-          <View testID="chat-title">
-            {labelled ? (
-              <>
+          <View style={styles.headerTitleRow} testID="chat-title">
+            {avatar}
+            <View style={styles.headerTitleCol}>
+              {labelled ? (
+                <>
+                  <Text style={styles.headerTitleText} numberOfLines={1}>
+                    {convo.nickname}
+                  </Text>
+                  <Text style={styles.headerTitleSub} numberOfLines={1}>
+                    {shortHex}
+                  </Text>
+                </>
+              ) : (
                 <Text style={styles.headerTitleText} numberOfLines={1}>
-                  {convo.nickname}
-                </Text>
-                <Text style={styles.headerTitleSub} numberOfLines={1}>
                   {shortHex}
                 </Text>
-              </>
-            ) : (
-              <Text style={styles.headerTitleText} numberOfLines={1}>
-                {shortHex}
-              </Text>
-            )}
+              )}
+            </View>
           </View>
         );
       },
@@ -620,6 +638,7 @@ export function ChatScreen() {
       <LabelModal
         visible={labelTarget != null}
         label={labelTarget?.label ?? null}
+        address={labelTarget?.address ?? null}
         onClose={() => setLabelTarget(null)}
         onSave={newLabel => saveLabelFor(labelTarget?.address ?? null, newLabel)}
       />
@@ -659,7 +678,8 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     padding: spacing.md,
   },
-  attrLine: {...type.caption, marginBottom: 2},
+  attrRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginBottom: 2},
+  attrLine: {...type.caption, flexShrink: 1},
   time: {...type.caption, color: colors.textFaint},
   headerBtn: {
     minWidth: layout.minTouchTarget,
@@ -667,6 +687,8 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
+  headerTitleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  headerTitleCol: {justifyContent: 'center'},
   headerTitleText: {...type.title, color: colors.text},
   headerTitleSub: {...type.caption, color: colors.textDim},
   composer: {

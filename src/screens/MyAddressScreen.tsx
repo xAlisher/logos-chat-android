@@ -55,7 +55,12 @@ export function MyAddressScreen() {
             </Text>
           ) : (
             <>
-              <QrCard data={myAddress} size={260} />
+              <QrCard
+                data={myAddress}
+                size={260}
+                badgeSeed={myAddress}
+                badgeKind="contact"
+              />
               <Text style={styles.code} selectable>
                 {myAddress}
               </Text>
