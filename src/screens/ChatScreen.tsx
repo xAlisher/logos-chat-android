@@ -30,6 +30,7 @@ import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
 import {QrIcon} from '../components/QrIcon';
+import {SendIcon} from '../components/SendIcon';
 import {
   OverflowMenu,
   EllipsisIcon,
@@ -520,9 +521,12 @@ export function ChatScreen() {
   const connecting = nodeStatus === 'initializing' || nodeStatus === 'starting';
   const canSend = (isMesh || running) && text.trim().length > 0 && !busy;
 
-  // Submit button color mirrors node status (#17): orange running, gray while
-  // connecting, red offline. A mesh channel rides the radio, so it's always live.
-  const sendColor = isMesh || running
+  // Submit button color signals the transport (#169). Mesh rides the radio and is
+  // always live → green (the mesh identity color, NOT MLS). Logos mirrors node
+  // status (#17): orange running, gray connecting, red offline.
+  const sendColor = isMesh
+    ? MESH_GREEN
+    : running
     ? colors.accent
     : connecting
     ? colors.nodeConnecting
@@ -669,9 +673,12 @@ export function ChatScreen() {
             style={[styles.send, {backgroundColor: sendColor}]}
             onPress={onSubmit}
             testID="composer-send">
-            <Text style={[type.title, {color: colors.onAccent}]}>
-              {busy ? '…' : '>>'}
-            </Text>
+            {busy ? (
+              <Text style={[type.title, {color: colors.onAccent}]}>…</Text>
+            ) : (
+              // #171: paper-plane for Logos, mesh (waypoints) glyph over the mesh.
+              <SendIcon mesh={isMesh} color={colors.onAccent} />
+            )}
           </Pressable>
         </View>
       </View>

@@ -22,11 +22,27 @@ import {ErrorToast} from '../components/ErrorToast';
 import {HexAvatar} from '../components/HexAvatar';
 import {useMeshStore} from '../stores/meshStore';
 import {useChatStore} from '../stores/chatStore';
-import MeshCore from '../native/MeshCore';
+import MeshCore, {type MeshChannel} from '../native/MeshCore';
 import {shortAddress} from '../native/LogosChat';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+// #170: MeshCore's publicly-known 16-byte channel key (docs/companion_protocol.md:436).
+// A slot holding this key — or an all-zero secret (firmware stores public as zeros) —
+// IS the public channel. Everything else is a private channel, shown by its real name.
+const PUBLIC_CHANNEL_KEY = '8b3387e9c5cdea6ac9e5edbaa115cd72';
+const PUBLIC_SECRET_ZEROS = '00000000000000000000000000000000';
+function isPublicChannel(secretHex: string): boolean {
+  const s = secretHex.toLowerCase();
+  return s === PUBLIC_CHANNEL_KEY || s === PUBLIC_SECRET_ZEROS;
+}
+function channelDisplayName(ch: MeshChannel): string {
+  if (ch.name && ch.name.trim().length > 0) {
+    return ch.name;
+  }
+  return isPublicChannel(ch.secretHex) ? 'Public' : `Channel ${ch.idx}`;
+}
 
 // Android 12+ needs BLUETOOTH_SCAN + BLUETOOTH_CONNECT granted at runtime.
 async function ensureBlePermissions(): Promise<boolean> {
@@ -80,6 +96,22 @@ export function MeshCoreScreen() {
       navigation.navigate('Chat', {convoPk, convoName: name || 'Mesh DM', isGroup: false});
     } catch (e: any) {
       useMeshStore.setState({error: `could not open DM: ${e?.message ?? e}`});
+    }
+  };
+
+  // #170: is the well-known public channel configured on any slot?
+  const hasPublic = channels.some(ch => isPublicChannel(ch.secretHex));
+
+  // #170: join the actual public channel by CONFIGURING the well-known key into a
+  // free slot (never assume slot 0 — it may hold a private channel like Tariqa).
+  const joinPublic = async () => {
+    setJoining(true);
+    try {
+      await addChannel('Public', PUBLIC_CHANNEL_KEY);
+    } catch (e: any) {
+      useMeshStore.setState({error: `could not join public: ${e?.message ?? e}`});
+    } finally {
+      setJoining(false);
     }
   };
 
@@ -161,27 +193,34 @@ export function MeshCoreScreen() {
                 Group messages over the mesh — encrypted by a shared channel key,
                 NOT MLS.
               </Text>
-              {channels
-                .filter(ch => ch.idx !== 0)
-                .map(ch => (
-                  <Pressable
-                    key={ch.idx}
-                    style={styles.chRow}
-                    onPress={() => openChannel(ch.idx, ch.name || `Channel ${ch.idx}`)}
-                    testID={`mesh-channel-${ch.idx}`}>
-                    <HexAvatar seed={`mesh:chan:${ch.idx}`} kind="mesh" size={28} />
-                    <Text style={[type.body, {color: colors.text}]} numberOfLines={1}>
-                      {ch.name || `Channel ${ch.idx}`}
-                    </Text>
-                  </Pressable>
-                ))}
-              <Pressable
-                style={styles.chRow}
-                onPress={() => openChannel(0, 'Public')}
-                testID="mesh-channel-public">
-                <HexAvatar seed="mesh:chan:0" kind="mesh" size={28} />
-                <Text style={[type.body, {color: colors.text}]}>Public channel</Text>
-              </Pressable>
+              {/* #170: list every configured slot by its REAL radio name (a private
+                  channel like Tariqa is never mislabeled "Public"). */}
+              {channels.map(ch => (
+                <Pressable
+                  key={ch.idx}
+                  style={styles.chRow}
+                  onPress={() => openChannel(ch.idx, channelDisplayName(ch))}
+                  testID={`mesh-channel-${ch.idx}`}>
+                  <HexAvatar seed={`mesh:chan:${ch.idx}`} kind="mesh" size={28} />
+                  <Text style={[type.body, {color: colors.text}]} numberOfLines={1}>
+                    {channelDisplayName(ch)}
+                  </Text>
+                </Pressable>
+              ))}
+              {/* #170: reach the public channel only by configuring the well-known key
+                  — shown only when no slot already holds it. */}
+              {!hasPublic && (
+                <Pressable
+                  style={[styles.chRow, joining && styles.btnDisabled]}
+                  disabled={joining}
+                  onPress={joinPublic}
+                  testID="mesh-join-public">
+                  <HexAvatar seed="mesh:public" kind="mesh" size={28} />
+                  <Text style={[type.body, {color: colors.accent}]}>
+                    Join public channel
+                  </Text>
+                </Pressable>
+              )}
 
               {/* #167 (Phase 1b): join a channel — #hashtag derives its key, or paste a
                   32-hex secret shared out-of-band for a private channel. */}

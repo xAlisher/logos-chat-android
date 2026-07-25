@@ -168,7 +168,16 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
    * group-like mesh conversation (transport='mesh', is_group=1).
    */
   fun upsertMeshChannel(channelKey: String, name: String): Long {
-    convoPkByLibId(channelKey)?.let { return it }
+    convoPkByLibId(channelKey)?.let { pk ->
+      // #170: correct a previously-stored name (e.g. a slot mislabeled "Public" that
+      // is really a private channel) when the caller now knows the radio's real name.
+      if (name.isNotEmpty()) {
+        writableDatabase.execSQL(
+            "UPDATE conversations SET group_name=? WHERE convo_pk=? AND IFNULL(group_name,'')<>?",
+            arrayOf(name, pk, name))
+      }
+      return pk
+    }
     return insertConversation(
         peerAddress = null,
         libConvoId = channelKey,
