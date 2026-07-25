@@ -75,8 +75,9 @@ object NodeBridge {
   /** Encrypt + send raw bytes (NOT hex) to convoId. 0 on success, -1 on failure. */
   external fun chatSendMessage(handle: Long, convoId: String, content: ByteArray): Int
 
-  /** Conversation ids as a JSON array string, or null. */
-  external fun chatListConversations(handle: Long): String?
+  // #163: chatListConversations removed — the app reads conversations from ChatDb
+  // (the durable app-side store), never from the lib. The dead binding + its JNI
+  // function are gone; bridge rebuilt.
 
   /** Create a GroupV2 (MLS) conversation (M2'). Returns convoId or null. */
   external fun chatCreateGroup(handle: Long, name: String, desc: String): String?

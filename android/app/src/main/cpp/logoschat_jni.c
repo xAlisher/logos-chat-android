@@ -210,11 +210,8 @@ Java_com_logoschat_NodeBridge_chatSendMessage(JNIEnv *env, jobject thiz, jlong h
   return rc;
 }
 
-JNIEXPORT jstring JNICALL
-Java_com_logoschat_NodeBridge_chatListConversations(JNIEnv *env, jobject thiz, jlong handle) {
-  (void)thiz;
-  return take_cstr(env, logoschat_list_conversations((void *)handle));
-}
+// #163: chatListConversations removed — dead binding (app reads ChatDb, never
+// the lib for the conversation list).
 
 // Group verbs (M2', bound now for forward-compat; not wired to UI yet).
 JNIEXPORT jstring JNICALL
