@@ -167,15 +167,22 @@ function Bubble({
   const viaLabel = msg.sentVia === 'both' ? 'via mesh + logos · ' : 'via mesh · ';
   // #168: a bridged (relayed) message carries an envelope naming its ORIGINAL
   // sender — B (the relayer) signed/sent it, so its raw attribution is B. Unwrap
-  // it: show the real origin + the real text, marked "via bridge" and NOT
+  // it: show the real origin + the real text, marked "via <bridge>" and NOT
   // verified (a relay is a local assertion, not per-message crypto).
+  // #190: name the relayer instead of the anonymous "via bridge". The carrying
+  // message's sender IS the bridge, so the PRE-override `attribution` (built from
+  // msg.senderAccount for a Logos-arrived relay) describes them — reuse its
+  // label ?? hex. MessageRow carries no mesh sender-name, so a mesh-arrived relay
+  // (attribution == null) falls back to a plain 'bridge'.
   const relay = parseRelay(msg.text);
   const displayText = relay?.text ?? msg.text;
+  const bridgeName =
+    attribution != null ? attribution.label ?? attribution.hex : 'bridge';
   const effAttr =
-    relay != null && attribution != null
+    relay != null
       ? {
           label: relay.origin,
-          hex: 'via bridge',
+          hex: `· via ${bridgeName}`,
           address: relay.origin,
           verified: false,
         }
@@ -243,6 +250,8 @@ export function ChatScreen() {
   const convo = useChatStore(s => s.conversations[convoPk]);
   const messages = useChatStore(s => s.messages[convoPk]) ?? [];
   const groupMembers = useChatStore(s => s.members[convoPk]);
+  // #174: all rosters — used to resolve whether the 1:1 peer is mesh-mapped.
+  const allMembers = useChatStore(s => s.members);
   const loadMembers = useChatStore(s => s.loadMembers);
   const switchGroupToMesh = useChatStore(s => s.switchGroupToMesh);
   const switchGroupToLogos = useChatStore(s => s.switchGroupToLogos);
@@ -308,6 +317,24 @@ export function ChatScreen() {
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
   // #167: a MeshCore channel (transport='mesh') sends over the radio, not the node.
   const isMesh = convo?.transport === 'mesh';
+
+  // #174: is the 1:1 peer mapped to a MeshCore identity? The mapping is harvested
+  // from group rosters (the mesh_map JOIN surfaced on GroupMember) — scan every
+  // roster for this peer's address, same source the contact/list surfaces use.
+  const peerMesh = useMemo(() => {
+    if (isGroup || convo?.peerAddress == null) {
+      return null;
+    }
+    const target = convo.peerAddress.toLowerCase();
+    for (const roster of Object.values(allMembers)) {
+      for (const m of roster) {
+        if (!m.isSelf && m.meshPubkey != null && m.address.toLowerCase() === target) {
+          return {pubkey: m.meshPubkey, name: m.meshName ?? null};
+        }
+      }
+    }
+    return null;
+  }, [isGroup, convo?.peerAddress, allMembers]);
 
   const onTrash = useCallback(() => {
     Alert.alert('Delete conversation', 'Delete this conversation and all its messages?', [
@@ -544,17 +571,43 @@ export function ChatScreen() {
                     </Text>
                     {convo.verified && <VerifiedBadge size={14} />}
                   </View>
-                  <Text style={styles.headerTitleSub} numberOfLines={1}>
-                    {shortHex}
-                  </Text>
+                  <View style={styles.headerSubRow}>
+                    <Text style={styles.headerTitleSub} numberOfLines={1}>
+                      {shortHex}
+                    </Text>
+                    {/* #174: mapped-to-mesh indicator — green mesh glyph + name,
+                        same treatment as the GroupInfo member badge / contact row. */}
+                    {peerMesh != null && (
+                      <View style={styles.headerMeshTag} testID="chat-header-mesh">
+                        <MeshIcon size={12} color={MESH_GREEN} />
+                        <Text
+                          style={[styles.headerTitleSub, {color: MESH_GREEN}]}
+                          numberOfLines={1}>
+                          {peerMesh.name || 'mesh'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 </>
               ) : (
-                <View style={styles.headerNameRow}>
-                  <Text style={styles.headerTitleText} numberOfLines={1}>
-                    {shortHex}
-                  </Text>
-                  {convo.verified && <VerifiedBadge size={14} />}
-                </View>
+                <>
+                  <View style={styles.headerNameRow}>
+                    <Text style={styles.headerTitleText} numberOfLines={1}>
+                      {shortHex}
+                    </Text>
+                    {convo.verified && <VerifiedBadge size={14} />}
+                  </View>
+                  {peerMesh != null && (
+                    <View style={styles.headerSubRow} testID="chat-header-mesh">
+                      <MeshIcon size={12} color={MESH_GREEN} />
+                      <Text
+                        style={[styles.headerTitleSub, {color: MESH_GREEN}]}
+                        numberOfLines={1}>
+                        {peerMesh.name || 'mesh'}
+                      </Text>
+                    </View>
+                  )}
+                </>
               )}
             </View>
           </View>
@@ -571,7 +624,7 @@ export function ChatScreen() {
         </Pressable>
       ),
     });
-  }, [navigation, convo, isGroup]);
+  }, [navigation, convo, isGroup, peerMesh]);
 
   // #193/docs/test-matrix: composer/liveness state is derived by the pure,
   // unit-tested deriveComposerState — the screen only maps sendColorKind→color
@@ -1103,10 +1156,18 @@ const styles = StyleSheet.create({
   headerBackBtn: {padding: spacing.xs},
   headerTitleFlex: {flexShrink: 1},
   headerTitleRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  // #178: no extra vertical slack — tight line-heights below make the two-line
+  // identity block sit as one compact unit, matching the list / GroupInfo rows.
   headerTitleCol: {justifyContent: 'center'},
   headerNameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
-  headerTitleText: {...type.title, color: colors.text},
-  headerTitleSub: {...type.caption, color: colors.textDim},
+  headerSubRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  // #174: green mesh tag on the header sub-line, capped so a long mesh name can't
+  // shove the identity block.
+  headerMeshTag: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, maxWidth: 120},
+  // #178: tight line-heights (18 / 14) — same density the conversation list and
+  // GroupInfo member rows use, so the header reads identically everywhere.
+  headerTitleText: {...type.title, color: colors.text, lineHeight: 18},
+  headerTitleSub: {...type.caption, color: colors.textDim, lineHeight: 14},
   // #168 (Phase 2b): mesh-mirror banner across the top of a group thread.
   meshBanner: {
     flexDirection: 'row',
