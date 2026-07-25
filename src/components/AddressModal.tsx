@@ -1,19 +1,27 @@
-// AddressModal (#105) — one job: show a peer's FULL hex address and let the user
-// copy it. Split out of the old ContactLabelModal, which mixed "look at the
-// address" with "name this contact" and made both feel like a form to fill in.
+// AddressModal (#105, #124) — show a peer's identity: their label as the title, a
+// badged QR of their address, the full hex, and Copy. Split out of the old
+// ContactLabelModal, which mixed "look at the address" with "name this contact".
+// The QR mirrors My-address (same QrCard + centered identicon badge, #118) so a
+// peer can scan you back the same way.
 import React, {useEffect, useState} from 'react';
 import {Modal, Pressable, Text, View, StyleSheet} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import {colors, type, spacing, radii, layout} from '../theme';
+import {colors, type, spacing, radii} from '../theme';
 import {HexAvatar} from './HexAvatar';
+import {QrCard} from './QrCard';
+import {XIcon} from './XIcon';
+import {shortAddress} from '../native/LogosChat';
 
 export function AddressModal({
   visible,
   address,
+  label,
   onClose,
 }: {
   visible: boolean;
   address: string | null;
+  /** The contact's label — shown as the modal title (falls back to short hex). */
+  label?: string | null;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
@@ -39,6 +47,13 @@ export function AddressModal({
     }
   };
 
+  const hasLabel = label != null && label.length > 0;
+  const title = hasLabel
+    ? label
+    : address != null
+    ? shortAddress(address)
+    : 'Address';
+
   return (
     <Modal
       visible={visible}
@@ -49,13 +64,28 @@ export function AddressModal({
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
         <Pressable style={styles.card} onPress={() => {}} testID="address-modal">
-          {/* The contact's identicon confirms whose address this is (#118). */}
-          <View style={styles.headingRow}>
+          {/* Title row: identicon + label (or short hex) + X close. */}
+          <View style={styles.titleRow}>
             {address != null && (
-              <HexAvatar seed={address} kind="contact" size={40} />
+              <HexAvatar seed={address} kind="contact" size={32} />
             )}
-            <Text style={styles.heading}>Address</Text>
+            <Text style={styles.title} numberOfLines={1} testID="address-title">
+              {title}
+            </Text>
+            <Pressable
+              onPress={onClose}
+              hitSlop={10}
+              style={styles.closeBtn}
+              testID="contact-close">
+              <XIcon size={22} color={colors.textDim} />
+            </Pressable>
           </View>
+
+          {address != null && (
+            <View style={styles.qrWrap}>
+              <QrCard data={address} size={200} badgeSeed={address} badgeKind="contact" />
+            </View>
+          )}
 
           <Text style={styles.addr} selectable testID="contact-address">
             {address ?? '(unknown address)'}
@@ -70,15 +100,6 @@ export function AddressModal({
               {copied ? 'Copied' : 'Copy'}
             </Text>
           </Pressable>
-
-          <View style={styles.actions}>
-            <Pressable
-              style={styles.closeBtn}
-              onPress={onClose}
-              testID="contact-close">
-              <Text style={[type.title, {color: colors.textDim}]}>Close</Text>
-            </Pressable>
-          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -99,13 +120,25 @@ const styles = StyleSheet.create({
     borderRadius: radii.card,
     padding: spacing.xl,
     gap: spacing.lg,
+    alignItems: 'center',
   },
-  headingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
-  heading: {...type.title, color: colors.text},
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    alignSelf: 'stretch',
+  },
+  title: {...type.title, color: colors.text, flex: 1},
+  closeBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrWrap: {alignItems: 'center'},
   addr: {
     ...type.code,
     color: colors.text,
     alignSelf: 'stretch',
+    textAlign: 'center',
     backgroundColor: colors.canvas,
     borderColor: colors.border,
     borderWidth: 1,
@@ -119,19 +152,6 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     alignItems: 'center',
     minHeight: 48,
-    justifyContent: 'center',
-  },
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
-  },
-  closeBtn: {
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.card,
-    paddingHorizontal: spacing.xl,
-    minHeight: layout.minTouchTarget,
     justifyContent: 'center',
   },
 });

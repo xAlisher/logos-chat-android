@@ -637,6 +637,7 @@ export function ChatScreen() {
       <AddressModal
         visible={addressOpen}
         address={convo?.peerAddress ?? null}
+        label={convo?.nickname ?? null}
         onClose={() => setAddressOpen(false)}
       />
       <LabelModal
