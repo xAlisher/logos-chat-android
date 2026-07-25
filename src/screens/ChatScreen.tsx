@@ -696,16 +696,18 @@ export function ChatScreen() {
   };
 
   const onSubmit = () => {
-    // #167: a mesh channel goes over the radio, not the Logos node — never gate it
-    // on node status.
-    if (isMesh || running) {
+    // #167/#168: anything that rides the radio — a mesh channel (isMesh) or a Logos
+    // group switched to its mesh mirror (meshMode) — sends over MeshCore regardless
+    // of the Logos node. Only a pure-Logos conversation is gated on node status.
+    if (overMesh || running) {
       doSend();
     } else if (connecting) {
       // Keep the draft; just tell the user to wait.
-      ToastAndroid.show('Node connecting…', ToastAndroid.SHORT);
+      ToastAndroid.show('Logos node connecting…', ToastAndroid.SHORT);
     } else {
-      // Offline (stopped/error): keep the draft, fire the red error toast.
-      useNodeStore.setState({error: 'Node offline'});
+      // #183: name the transport — this is the LOGOS node, and it only blocks a
+      // pure-Logos send (a mirrored/mesh convo never reaches here).
+      useNodeStore.setState({error: 'Logos node offline'});
     }
   };
 
