@@ -33,6 +33,8 @@ export interface ConversationRow {
   nickname: string | null;
   /** True once the lib conversation id is bound (a route exists to send). */
   bound: boolean;
+  /** The lib conversation id — the SHARED group id (avatar seed for groups). */
+  libConvoId: string | null;
   createdAt: number;
   lastMessageAt: number;
   unread: number;

@@ -11,6 +11,7 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     peerAddress: null,
     nickname: null,
     bound: false,
+    libConvoId: null,
     createdAt: 0,
     lastMessageAt: 0,
     unread: 0,

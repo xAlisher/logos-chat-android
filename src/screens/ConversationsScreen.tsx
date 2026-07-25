@@ -1,7 +1,6 @@
 // Conversations list. Rows come from the DURABLE store (SQLite) so history is
-// visible across restarts. Keyed by peer address + nickname. Leading glyph = a
-// people icon (orange) for groups · a single-person icon (green) for 1:1s (#15);
-// unread badge (#EF4444, capped 99+).
+// visible across restarts. Leading element = a HexAvatar generated from the
+// identity (orange for a contact, azure for a group — #117); unread badge.
 import React, {useCallback} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -13,11 +12,8 @@ import {QrIcon} from '../components/QrIcon';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
-import {
-  SpeedDialFab,
-  ContactGlyph,
-  GroupGlyph,
-} from '../components/SpeedDialFab';
+import {SpeedDialFab} from '../components/SpeedDialFab';
+import {HexAvatar, avatarSeed} from '../components/HexAvatar';
 import {useNodeStore} from '../stores/nodeStore';
 import {
   useChatStore,
@@ -58,13 +54,11 @@ function ConversationRow({
       style={styles.row}
       onPress={onPress}
       testID={`convo-${convo.convoPk}`}>
-      <View style={styles.leadIcon}>
-        {convo.isGroup ? (
-          <GroupGlyph size={20} color={colors.accent} />
-        ) : (
-          <ContactGlyph size={20} color={colors.contact} />
-        )}
-      </View>
+      <HexAvatar
+        seed={avatarSeed(convo)}
+        kind={convo.isGroup ? 'group' : 'contact'}
+        size={44}
+      />
       <View style={styles.rowBody}>
         <View style={styles.titleRow}>
           <Text
@@ -188,12 +182,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
     gap: spacing.md,
-  },
-  leadIcon: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   rowBody: {flex: 1, gap: 2},
   preview: {...type.label, color: colors.textDim},

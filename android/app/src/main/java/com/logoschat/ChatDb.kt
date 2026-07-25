@@ -392,6 +392,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   if (cur.isNull(1)) put("peerAddress", JSONObject.NULL) else put("peerAddress", cur.getString(1))
                   if (cur.isNull(2)) put("nickname", JSONObject.NULL) else put("nickname", cur.getString(2))
                   put("bound", !cur.isNull(3))
+                  if (cur.isNull(3)) put("libConvoId", JSONObject.NULL) else put("libConvoId", cur.getString(3))
                   put("createdAt", cur.getLong(4))
                   put("lastMessageAt", cur.getLong(5))
                   put("unread", cur.getInt(6))
