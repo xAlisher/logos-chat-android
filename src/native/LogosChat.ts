@@ -105,7 +105,9 @@ interface LogosChatNative {
   leaveGroup(convoPk: number): Promise<null>;
   /** #112: is a group still operable by the lib? 'live' | 'dead' | 'unknown'. */
   groupLiveness(convoPk: number): Promise<string>;
-  /** #112: re-create a dead group in place. Resolves '{"invited":n,"total":m}'. */
+  /** #112: re-create a dead group in place. NATIVE resolves '{"members":[…]}'
+   *  (the addresses to re-invite); chatStore.recreateGroup derives {invited,total}
+   *  from it. (Doc corrected per the #161 API-surface audit.) */
   recreateGroup(convoPk: number): Promise<string>;
   /** Delete a conversation's messages but KEEP the conversation (#107 wipe). */
   wipeConversationContent(convoPk: number): Promise<null>;
