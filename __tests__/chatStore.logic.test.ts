@@ -24,6 +24,8 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     createdByMe: false,
     verified: false,
     transport: 'logos',
+    meshMode: false,
+    meshChannelIdx: null,
     ...over,
   };
 }

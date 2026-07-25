@@ -55,6 +55,13 @@ export interface ConversationRow {
    * 'logos' = the Logos MLS node (default); 'mesh' = a paired MeshCore radio.
    */
   transport: 'logos' | 'mesh';
+  /**
+   * #168 (Phase 2c): a Logos GROUP currently mirrored onto MeshCore — sends ride
+   * the private channel at meshChannelIdx instead of the node. The conversation's
+   * `transport` stays 'logos' (it is fundamentally an MLS group).
+   */
+  meshMode: boolean;
+  meshChannelIdx: number | null;
 }
 
 export interface MessageRow {
@@ -109,6 +116,12 @@ interface LogosChatNative {
   setMeshMap(logosAddress: string, meshPubkey: string, meshName: string | null): Promise<null>;
   /** #168 (Phase 2): remove a Logos address ↔ mesh mapping. */
   clearMeshMap(logosAddress: string): Promise<null>;
+  /** #168 (Phase 2c): switch a group onto its MeshCore mirror channel. */
+  setMeshMirror(convoPk: number, channelIdx: number, channelKey: string): Promise<null>;
+  /** #168 (Phase 2c): switch a group back to Logos (keeps the channel binding). */
+  clearMeshMirror(convoPk: number): Promise<null>;
+  /** #168 (Phase 2c): the group whose mesh mirror rides channel idx, or -1. */
+  groupForMeshChannel(idx: number): Promise<number>;
   /** #167: get-or-create the local conversation mirroring a MeshCore channel idx. */
   upsertMeshChannel(idx: number, name: string): Promise<number>;
   /** #167 (Phase 1b): get-or-create the local conversation mirroring a MeshCore DM. */

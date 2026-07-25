@@ -43,7 +43,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // by default (additive, no FFI).
     // v7 (#168, Phase 2): mesh_map — a local contact↔mesh-identity mapping so a
     // Logos group can be mirrored into a MeshCore channel among mapped members.
-    const val DB_VERSION = 7
+    // v8 (#168, Phase 2c): per-group mesh-mirror state — when a Logos group is
+    // switched to MeshCore, sends ride a private channel instead of the node.
+    const val DB_VERSION = 8
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -59,6 +61,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              created_by_me INT DEFAULT 0,
              verified INT DEFAULT 0,
              transport TEXT DEFAULT 'logos',
+             mesh_mode INT DEFAULT 0,
+             mesh_channel_idx INT,
+             mesh_channel_key TEXT,
              created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
     db.execSQL(
         """CREATE TABLE messages(
@@ -136,6 +141,13 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                    mesh_pubkey TEXT NOT NULL,
                    mesh_name TEXT,
                    mapped_at INT)""")
+        }
+        8 -> {
+          // #168 (Phase 2c): per-group mesh-mirror state. mesh_mode=1 routes the
+          // group's sends over the private channel at mesh_channel_idx.
+          db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_mode INT DEFAULT 0")
+          db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_idx INT")
+          db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_key TEXT")
         }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
@@ -367,6 +379,41 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           .rawQuery("SELECT mesh_pubkey FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
           .use { if (it.moveToFirst()) it.getString(0) else null }
 
+  // -- group mesh-mirror state (#168, Phase 2c) ------------------------------
+
+  /** Switch a group onto its MeshCore mirror: record the channel slot + key, mode on. */
+  fun setMeshMirror(convoPk: Long, channelIdx: Int, channelKey: String) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET mesh_mode=1, mesh_channel_idx=?, mesh_channel_key=? WHERE convo_pk=?",
+        arrayOf(channelIdx, channelKey, convoPk))
+  }
+
+  /** Switch a group back to Logos (keeps the channel binding for a later re-switch). */
+  fun clearMeshMirror(convoPk: Long) {
+    writableDatabase.execSQL(
+        "UPDATE conversations SET mesh_mode=0 WHERE convo_pk=?", arrayOf(convoPk))
+  }
+
+  /** (channelIdx, channelKey) of a group's mesh mirror, or null if never switched. */
+  fun meshMirrorFor(convoPk: Long): Pair<Int, String>? =
+      readableDatabase
+          .rawQuery(
+              "SELECT mesh_channel_idx, mesh_channel_key FROM conversations WHERE convo_pk=?",
+              arrayOf(convoPk.toString()))
+          .use {
+            if (it.moveToFirst() && !it.isNull(0) && !it.isNull(1)) Pair(it.getInt(0), it.getString(1))
+            else null
+          }
+
+  /** The group whose mesh mirror rides channel slot [idx], or -1 — routes inbound
+   *  channel traffic into the mirrored group instead of a standalone channel convo. */
+  fun groupForMeshChannel(idx: Int): Long =
+      readableDatabase
+          .rawQuery(
+              "SELECT convo_pk FROM conversations WHERE is_group=1 AND mesh_channel_idx=? LIMIT 1",
+              arrayOf(idx.toString()))
+          .use { if (it.moveToFirst()) it.getLong(0) else -1L }
+
   fun groupMemberCount(convoPk: Long): Int =
       readableDatabase
           .rawQuery("SELECT COUNT(*) FROM group_members WHERE convo_pk=?", arrayOf(convoPk.toString()))
@@ -541,7 +588,8 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),
-                      c.created_by_me, c.verified, c.transport
+                      c.created_by_me, c.verified, c.transport,
+                      c.mesh_mode, c.mesh_channel_idx
                FROM conversations c
                ORDER BY c.last_message_at DESC""",
             null)
@@ -566,6 +614,10 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("verified", cur.getInt(13) == 1)
                   // #165: transport tag; default to 'logos' if unexpectedly null.
                   put("transport", if (cur.isNull(14)) "logos" else cur.getString(14))
+                  // #168 (Phase 2c): group mesh-mirror state.
+                  put("meshMode", cur.getInt(15) == 1)
+                  if (cur.isNull(16)) put("meshChannelIdx", JSONObject.NULL)
+                  else put("meshChannelIdx", cur.getInt(16))
                 })
           }
         }

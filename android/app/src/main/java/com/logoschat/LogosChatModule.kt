@@ -477,6 +477,38 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #168 (Phase 2c): switch a group onto its MeshCore mirror channel. */
+  @ReactMethod
+  fun setMeshMirror(convoPk: Double, channelIdx: Double, channelKey: String, promise: Promise) {
+    try {
+      ChatRepo.requireDb().setMeshMirror(convoPk.toLong(), channelIdx.toInt(), channelKey)
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /** #168 (Phase 2c): switch a group back to Logos (keeps the channel binding). */
+  @ReactMethod
+  fun clearMeshMirror(convoPk: Double, promise: Promise) {
+    try {
+      ChatRepo.requireDb().clearMeshMirror(convoPk.toLong())
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
+  /** #168 (Phase 2c): the group whose mesh mirror rides channel [idx], or -1. */
+  @ReactMethod
+  fun groupForMeshChannel(idx: Double, promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().groupForMeshChannel(idx.toInt()).toDouble())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /** #167: get-or-create the local conversation mirroring a MeshCore channel. */
   @ReactMethod
   fun upsertMeshChannel(idx: Double, name: String, promise: Promise) {

@@ -118,6 +118,11 @@ interface MeshCoreNative {
    * `#hashtag` channel = SHA256("#name")[:16].
    */
   deriveChannelSecret(name: string): Promise<string>;
+  /**
+   * #168 (Phase 2c): a fresh random 16-byte channel key (32 hex) for a group's
+   * private mesh mirror. SecureRandom native-side; no BLE.
+   */
+  randomChannelKey(): Promise<string>;
 }
 
 const native: MeshCoreNative = NativeModules.MeshCore;

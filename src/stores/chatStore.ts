@@ -7,11 +7,19 @@
 import {create} from 'zustand';
 import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat';
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
-import MeshCore, {addMeshListener} from '../native/MeshCore';
+import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {useNodeStore} from './nodeStore';
+import {convoDisplayName} from './conversationView';
 
 export type {ConversationRow as Conversation, MessageRow as Message};
 export type {GroupMember} from '../native/LogosChat';
+
+/**
+ * #168 (Phase 2c): sentinel prefixing a group's mesh-mirror invite DM
+ * (`<prefix><idx>:<32hexkey>:<name>`). A peer running this app recognises it and
+ * auto-joins the mirror channel; an official-app peer just sees the text.
+ */
+export const MESH_INVITE_PREFIX = 'lmi:';
 
 /** A UI-only note rendered inline in a thread (never stored, never sent). */
 export interface SystemNote {
@@ -40,6 +48,14 @@ interface ChatState {
   /** #168 (Phase 2): map/unmap a Logos address ↔ a MeshCore identity, then reload the group roster. */
   mapMeshIdentity: (convoPk: number, address: string, meshPubkey: string, meshName: string | null) => Promise<void>;
   unmapMeshIdentity: (convoPk: number, address: string) => Promise<void>;
+  /**
+   * #168 (Phase 2c): switch a Logos group onto a MeshCore mirror channel — create a
+   * private channel, DM its key to each mapped member, route sends there. Resolves
+   * with the chosen slot + how many mapped members were invited.
+   */
+  switchGroupToMesh: (convoPk: number) => Promise<{channelIdx: number; invited: number}>;
+  /** #168 (Phase 2c): switch a mirrored group back to the Logos node. */
+  switchGroupToLogos: (convoPk: number) => Promise<void>;
   /** Send a message into a conversation (1:1 or group). */
   send: (convoPk: number, text: string) => Promise<void>;
   /** Re-send a failed outbound message. */
@@ -190,13 +206,71 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().loadMembers(convoPk);
   },
 
+  switchGroupToMesh: async (convoPk: number) => {
+    const convo = get().conversations[convoPk];
+    if (convo == null || !convo.isGroup) {
+      throw new Error('not a group');
+    }
+    // Only members the user has mapped to a mesh identity can receive the mirror.
+    await get().loadMembers(convoPk);
+    const mapped = (get().members[convoPk] ?? []).filter(
+      m => !m.isSelf && m.meshPubkey != null,
+    );
+    if (mapped.length === 0) {
+      throw new Error('no members are mapped to a mesh identity');
+    }
+    // Pick the lowest free private slot (1..7; 0 is the reserved public channel).
+    const used = new Set(parseChannels(await MeshCore.getChannels()).map(c => c.idx));
+    let idx = -1;
+    for (let i = 1; i <= 7; i++) {
+      if (!used.has(i)) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) {
+      throw new Error('no free mesh channel slot on the radio');
+    }
+    const key = await MeshCore.randomChannelKey();
+    const name = convoDisplayName(convo).slice(0, 31);
+    await MeshCore.setChannel(idx, name, key);
+    await LogosChat.setMeshMirror(convoPk, idx, key);
+    // Invite each mapped member: an ECDH DM carrying the channel slot + key + name.
+    // A peer running this app auto-joins; an official-app peer sees a text invite.
+    const invite = `${MESH_INVITE_PREFIX}${idx}:${key}:${name}`;
+    let invited = 0;
+    for (const m of mapped) {
+      try {
+        await MeshCore.sendDm(m.meshPubkey!, invite);
+        invited++;
+      } catch {
+        // best-effort: an unreachable member shouldn't abort the switch
+      }
+    }
+    await get().refreshConversations();
+    return {channelIdx: idx, invited};
+  },
+
+  switchGroupToLogos: async (convoPk: number) => {
+    await LogosChat.clearMeshMirror(convoPk);
+    await get().refreshConversations();
+  },
+
   send: async (convoPk: number, text: string) => {
     // #165 (docs/mesh-transport.md): route by the conversation's transport.
     // Undefined/'logos' → the Logos MLS node (unchanged). 'mesh' → a paired
     // MeshCore radio, wired in #166 (dormant: no mesh conversations exist yet).
-    const transport = get().conversations[convoPk]?.transport ?? 'logos';
+    const convo = get().conversations[convoPk];
+    const transport = convo?.transport ?? 'logos';
+    // #168 (Phase 2c): a Logos group switched to its MeshCore mirror — sends ride
+    // the private channel, but the conversation stays 'logos' (it IS an MLS group).
+    const meshMirror =
+      (convo?.isGroup ?? false) &&
+      (convo?.meshMode ?? false) &&
+      convo?.meshChannelIdx != null;
+    const via: 'logos' | 'mesh' = transport === 'mesh' || meshMirror ? 'mesh' : 'logos';
     // Optimistic pending bubble; the durable row lands native-side and the
-    // reload below replaces this. sentVia matches the convo's transport.
+    // reload below replaces this. sentVia matches the transport actually used.
     const temp: MessageRow = {
       msgPk: -Date.now(),
       direction: 'out',
@@ -204,7 +278,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       at: Date.now(),
       status: 'pending',
       senderAccount: null,
-      sentVia: transport,
+      sentVia: via,
     };
     set(s => ({
       messages: {...s.messages, [convoPk]: [temp, ...(s.messages[convoPk] ?? [])]},
@@ -213,7 +287,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (transport === 'mesh') {
         // #167: a mesh conversation is either a channel ("mesh:chan:<idx>") or an
         // ECDH DM ("mesh:dm:<pubkeyHex>"). Route to the matching MeshCore verb.
-        const convo = get().conversations[convoPk];
         const libId = convo?.libConvoId ?? '';
         const chan = libId.match(/^mesh:chan:(\d+)$/);
         const dm = libId.match(/^mesh:dm:([0-9a-fA-F]+)$/);
@@ -225,6 +298,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           throw new Error('unsupported mesh conversation');
         }
         // Persist to the shared timeline (the optimistic bubble is replaced below).
+        await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+      } else if (meshMirror) {
+        // #168: mirror the group message onto its private channel; land it in the
+        // one shared timeline tagged mesh (interleaved with Logos history).
+        await MeshCore.sendChannelText(convo!.meshChannelIdx!, text);
         await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
       } else {
         const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
@@ -391,8 +469,16 @@ addMeshListener(e => {
   }
   (async () => {
     try {
-      const name = channelIdx === 0 ? 'Public' : `Channel ${channelIdx}`;
-      const convoPk = await LogosChat.upsertMeshChannel(channelIdx, name);
+      // #168 (Phase 2c): if this channel is a Logos group's mesh mirror, land the
+      // message in the GROUP's timeline (not a standalone channel convo).
+      const mirroredGroup = await LogosChat.groupForMeshChannel(channelIdx);
+      const convoPk =
+        mirroredGroup >= 0
+          ? mirroredGroup
+          : await LogosChat.upsertMeshChannel(
+              channelIdx,
+              channelIdx === 0 ? 'Public' : `Channel ${channelIdx}`,
+            );
       await LogosChat.recordMeshMessage(
         convoPk,
         'in',
@@ -426,6 +512,21 @@ addMeshListener(e => {
   }
   (async () => {
     try {
+      // #168 (Phase 2c): a group-mirror INVITE ("lmi:<idx>:<key>:<name>") is a
+      // control message, not chat — auto-join the channel so the mirror flows in,
+      // and don't render it as a DM bubble.
+      if (text.startsWith(MESH_INVITE_PREFIX)) {
+        const m = text
+          .slice(MESH_INVITE_PREFIX.length)
+          .match(/^(\d+):([0-9a-fA-F]{32}):(.*)$/);
+        if (m != null) {
+          const inviteIdx = parseInt(m[1], 10);
+          const inviteName = m[3].length > 0 ? m[3] : `Channel ${inviteIdx}`;
+          await MeshCore.setChannel(inviteIdx, inviteName, m[2].toLowerCase());
+          await useChatStore.getState().refreshConversations();
+          return;
+        }
+      }
       const found = await LogosChat.meshDmByPrefix(prefix);
       const name = e.fromName && e.fromName.length > 0 ? e.fromName : null;
       const convoPk =

@@ -17,6 +17,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ToastAndroid,
+  ActivityIndicator,
   StyleSheet,
 } from 'react-native';
 import {useRoute, useFocusEffect, useNavigation} from '@react-navigation/native';
@@ -50,6 +51,7 @@ import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatS
 import type {Conversation, Message} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
+import {useMeshStore} from '../stores/meshStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -214,6 +216,11 @@ export function ChatScreen() {
   const {convoPk} = route.params;
   const convo = useChatStore(s => s.conversations[convoPk]);
   const messages = useChatStore(s => s.messages[convoPk]) ?? [];
+  const groupMembers = useChatStore(s => s.members[convoPk]);
+  const loadMembers = useChatStore(s => s.loadMembers);
+  const switchGroupToMesh = useChatStore(s => s.switchGroupToMesh);
+  const switchGroupToLogos = useChatStore(s => s.switchGroupToLogos);
+  const meshStatus = useMeshStore(s => s.status);
   const loadMessages = useChatStore(s => s.loadMessages);
   const send = useChatStore(s => s.send);
   const retry = useChatStore(s => s.retry);
@@ -259,8 +266,12 @@ export function ChatScreen() {
       if (c?.transport !== 'mesh' && (route.params.isGroup === true || c?.isGroup)) {
         probeGroup(convoPk).catch(() => {});
       }
+      // #168: a Logos group needs its roster to compute "N/M mapped to mesh".
+      if (c?.transport !== 'mesh' && (route.params.isGroup === true || c?.isGroup)) {
+        loadMembers(convoPk).catch(() => {});
+      }
       return () => setActive(null);
-    }, [convoPk, setActive, loadMessages, probeGroup, route.params.isGroup]),
+    }, [convoPk, setActive, loadMessages, probeGroup, loadMembers, route.params.isGroup]),
   );
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
@@ -533,12 +544,17 @@ export function ChatScreen() {
 
   const running = nodeStatus === 'running';
   const connecting = nodeStatus === 'initializing' || nodeStatus === 'starting';
-  const canSend = (isMesh || running) && text.trim().length > 0 && !busy;
+
+  // #168 (Phase 2c): this Logos group is switched to its MeshCore mirror — sends
+  // ride the radio, so it's live regardless of the node.
+  const meshMode = (convo?.meshMode ?? false) && convo?.meshChannelIdx != null;
+  const overMesh = isMesh || meshMode; // sends leave over the radio
+  const canSend = (overMesh || running) && text.trim().length > 0 && !busy;
 
   // Submit button color signals the transport (#169). Mesh rides the radio and is
   // always live → green (the mesh identity color, NOT MLS). Logos mirrors node
   // status (#17): orange running, gray connecting, red offline.
-  const sendColor = isMesh
+  const sendColor = overMesh
     ? MESH_GREEN
     : running
     ? colors.accent
@@ -549,9 +565,46 @@ export function ChatScreen() {
   // #112: a group the lib can no longer operate. Only the CREATOR may revive it;
   // everyone else is offered a fresh group instead (two re-creators would fork it,
   // and a joiner's roster is partial (#95) so it would silently drop members).
-  // #167: mesh channels are never "dead" (no Logos MLS lifecycle) — always show the composer.
-  const dead = isGroup && !isMesh && liveness === 'dead';
+  // #167: mesh channels are never "dead". #168: a mirrored group rides the radio,
+  // so it's never a dead composer either.
+  const dead = isGroup && !isMesh && !meshMode && liveness === 'dead';
   const canRevive = dead && (convo?.createdByMe ?? false);
+
+  // #168 (Phase 2b): mesh-mirror banner state. Shown on a Logos group when a radio
+  // is connected and the group is either already mirrored or has mapped members.
+  const radioConnected = meshStatus === 'connected';
+  const mappedMembers = (groupMembers ?? []).filter(m => !m.isSelf && m.meshPubkey != null);
+  const otherMembers = (groupMembers ?? []).filter(m => !m.isSelf);
+  const showMeshBanner =
+    isGroup && !isMesh && radioConnected && (meshMode || mappedMembers.length > 0);
+  const nodeOffline = !running && !connecting;
+  const [switching, setSwitching] = useState(false);
+
+  const doSwitchToMesh = async () => {
+    setSwitching(true);
+    try {
+      const {invited} = await switchGroupToMesh(convoPk);
+      ToastAndroid.show(
+        `On MeshCore — invited ${invited} mapped member${invited === 1 ? '' : 's'}`,
+        ToastAndroid.SHORT,
+      );
+    } catch (e: any) {
+      useNodeStore.setState({error: `switch failed: ${e?.message ?? e}`});
+    } finally {
+      setSwitching(false);
+    }
+  };
+  const doSwitchToLogos = async () => {
+    setSwitching(true);
+    try {
+      await switchGroupToLogos(convoPk);
+      ToastAndroid.show('Back on Logos', ToastAndroid.SHORT);
+    } catch (e: any) {
+      useNodeStore.setState({error: `switch failed: ${e?.message ?? e}`});
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const doSend = async () => {
     if (!canSend) {
@@ -598,6 +651,48 @@ export function ChatScreen() {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* #168 (Phase 2b): mesh-mirror banner. On a Logos group with a radio
+          connected: either the group is already on its MeshCore mirror, or it can
+          be switched. The "N/M mapped" is tappable → Group info (mapping lives
+          there). More assertive when the Logos node is offline. */}
+      {showMeshBanner && (
+        <View style={[styles.meshBanner, meshMode && styles.meshBannerOn]}>
+          <View style={styles.meshBannerText}>
+            <Text style={[type.label, {color: meshMode ? MESH_GREEN : colors.text}]} numberOfLines={1}>
+              {meshMode
+                ? 'On MeshCore — sending over the mesh, not MLS'
+                : nodeOffline
+                ? 'Logos node offline'
+                : 'Logos node online'}
+            </Text>
+            <Pressable
+              onPress={() => navigation.navigate('GroupInfo', {convoPk})}
+              hitSlop={8}
+              testID="mesh-banner-mapped">
+              <Text style={[type.caption, {color: colors.textDim}]}>
+                {mappedMembers.length}/{otherMembers.length} mapped to mesh ›
+              </Text>
+            </Pressable>
+          </View>
+          <Pressable
+            style={[styles.meshBannerBtn, meshMode ? styles.meshBannerBtnBack : styles.meshBannerBtnGo]}
+            disabled={switching}
+            onPress={meshMode ? doSwitchToLogos : doSwitchToMesh}
+            testID="mesh-switch">
+            {switching ? (
+              <ActivityIndicator color={meshMode ? colors.textDim : colors.onAccent} />
+            ) : (
+              <Text
+                style={[
+                  type.label,
+                  {color: meshMode ? colors.textDim : colors.onAccent},
+                ]}>
+                {meshMode ? 'Switch to Logos' : 'Switch to MeshCore'}
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      )}
       <FlatList
         inverted
         data={messages}
@@ -811,6 +906,28 @@ const styles = StyleSheet.create({
   headerNameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   headerTitleText: {...type.title, color: colors.text},
   headerTitleSub: {...type.caption, color: colors.textDim},
+  // #168 (Phase 2b): mesh-mirror banner across the top of a group thread.
+  meshBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.pane,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+  },
+  meshBannerOn: {borderBottomColor: MESH_GREEN},
+  meshBannerText: {flex: 1, gap: 2},
+  meshBannerBtn: {
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.md,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  meshBannerBtnGo: {backgroundColor: MESH_GREEN},
+  meshBannerBtnBack: {borderColor: colors.border, borderWidth: 1},
   composer: {
     backgroundColor: colors.pane,
     borderTopColor: colors.border,

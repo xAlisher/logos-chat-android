@@ -567,6 +567,21 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * #168 (Phase 2c): a fresh random 16-byte channel key (32 hex) for a group's
+   * private mesh mirror. SecureRandom — this is the shared group secret. No BLE.
+   */
+  @ReactMethod
+  fun randomChannelKey(promise: Promise) {
+    try {
+      val key = ByteArray(CHANNEL_SECRET_LEN)
+      java.security.SecureRandom().nextBytes(key)
+      promise.resolve(key.toHex())
+    } catch (t: Throwable) {
+      promise.reject("random_failed", "could not generate channel key: ${t.message}")
+    }
+  }
+
+  /**
    * Drain all messages queued on the radio: loop CMD_SYNC_NEXT_MESSAGE until
    * RESP_CODE_NO_MORE_MESSAGES, emitting a `channelMessage` event for each channel
    * message frame. Resolves once the drain completes.
