@@ -281,4 +281,52 @@ class ChatDbTest {
     val msgs = JSONArray(db.listMessagesJson(canonical, 0, 10))
     assertEquals(2, msgs.length())
   }
+
+  // -- mesh contact roster (#172) --------------------------------------------
+
+  @Test
+  fun meshContactUpsertListAndPrefixLookup() {
+    val pk1 = "a".repeat(64)
+    val pk2 = "b".repeat(64)
+    db.upsertMeshContact(pk1, "Tariqa", 1000)
+    db.upsertMeshContact(pk2, "T1", 2000)
+
+    // list: JSON [{pubkeyHex,name}], newest-seen first (pk2 has later last_seen).
+    val arr = JSONArray(db.listMeshContactsJson())
+    assertEquals(2, arr.length())
+    assertEquals(pk2, arr.getJSONObject(0).getString("pubkeyHex"))
+    assertEquals("T1", arr.getJSONObject(0).getString("name"))
+    assertEquals(pk1, arr.getJSONObject(1).getString("pubkeyHex"))
+    assertEquals("Tariqa", arr.getJSONObject(1).getString("name"))
+
+    // prefix lookup: the 6-byte (12-hex) pubkey prefix resolves the display name.
+    assertEquals("Tariqa", db.meshContactName(pk1.substring(0, 12)))
+    assertEquals("T1", db.meshContactName(pk2.substring(0, 12)))
+    assertNull(db.meshContactName("c".repeat(12)))
+  }
+
+  @Test
+  fun meshContactUpsertIsIdempotentAndRefreshes() {
+    val pk = "a".repeat(64)
+    db.upsertMeshContact(pk, "Old", 1000)
+    // Re-upsert same key: updates name + last_seen in place, no duplicate row.
+    db.upsertMeshContact(pk, "New", 3000)
+    val arr = JSONArray(db.listMeshContactsJson())
+    assertEquals(1, arr.length())
+    assertEquals("New", arr.getJSONObject(0).getString("name"))
+    assertEquals(3000L, arr.getJSONObject(0).getLong("lastSeen"))
+
+    // An empty incoming name must NOT clobber a previously-learned one.
+    db.upsertMeshContact(pk, "", 4000)
+    val arr2 = JSONArray(db.listMeshContactsJson())
+    assertEquals(1, arr2.length())
+    assertEquals("New", arr2.getJSONObject(0).getString("name"))
+    assertEquals(4000L, arr2.getJSONObject(0).getLong("lastSeen"))
+  }
+
+  @Test
+  fun meshContactsEmptyRosterListsAsEmptyArray() {
+    assertEquals(0, JSONArray(db.listMeshContactsJson()).length())
+    assertNull(db.meshContactName("a".repeat(12)))
+  }
 }

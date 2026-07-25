@@ -107,6 +107,14 @@ interface MeshCoreNative {
    */
   getContacts(): Promise<string>;
   /**
+   * #172: return the DURABLE mesh contact roster persisted from prior getContacts
+   * runs, as a JSON array of {@link MeshContact} (parse with {@link parseContacts}).
+   * Pure DB read (no BLE) — usable before a radio is connected, so the UI can
+   * hydrate the roster on connect and refresh it live afterwards. Resolves "[]"
+   * when the store is empty or unavailable.
+   */
+  listMeshContacts(): Promise<string>;
+  /**
    * Send a plain-text direct message to the contact whose account pubkey is
    * `pubkeyHex` (its first 6 bytes are used as the dest prefix). Resolves when the
    * radio accepts it (firmware RESP_CODE_SENT / RESP_CODE_OK). Respect the mesh cap.

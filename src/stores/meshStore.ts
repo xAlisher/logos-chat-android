@@ -33,6 +33,12 @@ interface MeshState {
   /** Refresh the contact roster from the radio. */
   loadContacts: () => Promise<void>;
   /**
+   * #172: hydrate `contacts` from the DURABLE roster (persisted across restarts)
+   * — pure DB read, no BLE — so the roster shows immediately on connect, before a
+   * fresh GET_CONTACTS lands. A subsequent {@link loadContacts} refreshes it live.
+   */
+  hydrateContacts: () => Promise<void>;
+  /**
    * Create a channel in the first free slot with the given name + 16-byte secret
    * (`secretHex` = 32 hex chars), then reload the channel list.
    */
@@ -63,8 +69,10 @@ export const useMeshStore = create<MeshState>((set, get) => ({
       // First successful connect on this device — remember that MeshCore has been
       // set up so the transport pill/modal show it as a live toggle from now on.
       useSettingsStore.getState().setMeshConfigured(true);
-      // Now connected — hydrate channel list + contact roster (best-effort; each
-      // has its own try/catch so one failing doesn't sink the other).
+      // Now connected — show the durable roster instantly (#172), then hydrate the
+      // channel list + refresh the roster live from the radio (best-effort; each
+      // has its own try/catch so one failing doesn't sink the others).
+      await get().hydrateContacts();
       await get().loadChannels();
       await get().loadContacts();
     } catch (e: any) {
@@ -104,6 +112,20 @@ export const useMeshStore = create<MeshState>((set, get) => ({
     try {
       const json = await MeshCore.getContacts();
       set({contacts: parseContacts(json)});
+    } catch (e: any) {
+      set({error: String(e?.message ?? e)});
+    }
+  },
+
+  hydrateContacts: async () => {
+    try {
+      const json = await MeshCore.listMeshContacts();
+      const persisted = parseContacts(json);
+      // Only seed from the DB when we don't already have a live roster — never
+      // overwrite fresher radio data with the durable snapshot.
+      if (persisted.length > 0 && get().contacts.length === 0) {
+        set({contacts: persisted});
+      }
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }

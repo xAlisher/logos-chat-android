@@ -506,6 +506,22 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * #172: return the DURABLE mesh contact roster (persisted from prior
+   * getContacts runs) as a JSON array `[{pubkeyHex,name}]`. Pure DB read, NO BLE —
+   * available even before a radio is connected, so the UI can hydrate the roster
+   * immediately on connect and refresh it live afterwards. Resolves `"[]"` if the
+   * store is empty or unavailable.
+   */
+  @ReactMethod
+  fun listMeshContacts(promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().listMeshContactsJson())
+    } catch (t: Throwable) {
+      promise.resolve("[]")
+    }
+  }
+
+  /**
    * Send a plain-text direct message to a contact. Frame (MyMesh.cpp:1071-1116):
    *   [2][txt_type=0][attempt=0][ts:4LE seconds][6-byte dest pubkey prefix][UTF-8 text].
    * The first 6 bytes of `pubkeyHex` are the dest prefix (firmware matches via
@@ -1022,8 +1038,40 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
       }
     }
     contactNamesByPrefix = names
+    // #172: persist the roster alongside the in-memory map so it survives restart
+    // (hydrated back into meshStore.contacts on the next connect). Best-effort:
+    // never let a DB hiccup on the BLE thread sink the getContacts promise.
+    persistContacts(collector.results)
     collector.settle.resolve(collector.results.toString())
   }
+
+  /**
+   * #172: upsert each collected contact into the durable [ChatDb] roster. Runs on
+   * the BLE handler thread; SQLite serialises writes internally. Guarded so a DB
+   * failure (or ChatRepo not yet inited, e.g. a bare test) is logged, not fatal.
+   */
+  private fun persistContacts(results: org.json.JSONArray) {
+    try {
+      val db = ChatRepo.requireDb()
+      val now = System.currentTimeMillis()
+      for (n in 0 until results.length()) {
+        val o = results.optJSONObject(n) ?: continue
+        val pk = o.optString("pubkeyHex")
+        if (pk.isEmpty()) continue
+        db.upsertMeshContact(pk, o.optString("name"), now)
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "persistContacts: ${t.message}")
+    }
+  }
+
+  /** #172: durable-roster fallback for inbound-DM attribution across restarts. */
+  private fun meshContactNameFromDb(prefixHex: String): String? =
+      try {
+        ChatRepo.requireDb().meshContactName(prefixHex)
+      } catch (t: Throwable) {
+        null
+      }
 
   /**
    * Parse a RESP_CODE_CONTACT frame (MyMesh.cpp:166-187 writeContactRespFrame):
@@ -1228,7 +1276,9 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
         if (frame.size > textStart)
             String(frame, textStart, frame.size - textStart, Charsets.UTF_8)
         else ""
-    val fromName = contactNamesByPrefix[prefixHex] ?: ""
+    // Prefer this session's live roster; fall back to the durable roster (#172) so
+    // a DM from a peer learned before restart is still attributed by name.
+    val fromName = contactNamesByPrefix[prefixHex] ?: meshContactNameFromDb(prefixHex) ?: ""
     val params =
         Arguments.createMap().apply {
           putString("eventType", "dmMessage")

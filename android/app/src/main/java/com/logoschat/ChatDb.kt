@@ -47,7 +47,10 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // switched to MeshCore, sends ride a private channel instead of the node.
     // v9 (#175/#176): collapse duplicate 1:1 conversations that share an account
     // (a reinstalled peer forked a new convo) — account is the identity.
-    const val DB_VERSION = 9
+    // v10 (#172): mesh_contacts — persist the MeshCore radio's contact roster
+    // (peers heard over LoRa) so it survives restarts instead of living only in
+    // MeshCoreModule's in-memory map. Additive, no FFI (Kotlin BLE + DB).
+    const val DB_VERSION = 10
 
     // #168 (dual-send dedup): a mirrored group's message can arrive on BOTH
     // transports; the two copies land within this window (LoRa latency = minutes).
@@ -97,6 +100,14 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
              mesh_pubkey TEXT NOT NULL,
              mesh_name TEXT,
              mapped_at INT)""")
+    // #172: durable MeshCore contact roster (peers heard over LoRa). Keyed by the
+    // full 32-byte account pubkey (64 hex). `last_seen` is ms since epoch of the
+    // most recent time we learned/refreshed this contact.
+    db.execSQL(
+        """CREATE TABLE mesh_contacts(
+             pubkey_hex TEXT PRIMARY KEY,
+             name TEXT,
+             last_seen INT)""")
     db.execSQL("CREATE INDEX idx_messages_convo ON messages(convo_pk, msg_pk)")
     db.execSQL("CREATE INDEX idx_convo_addr ON conversations(peer_address)")
     db.execSQL("CREATE INDEX idx_convo_lib ON conversations(lib_convo_id)")
@@ -158,6 +169,14 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         9 -> {
           // #175/#176: one-time collapse of duplicate 1:1s sharing an account.
           dedupeDirectByAddress(db)
+        }
+        10 -> {
+          // #172: durable MeshCore contact roster (was in-memory only).
+          db.execSQL(
+              """CREATE TABLE mesh_contacts(
+                   pubkey_hex TEXT PRIMARY KEY,
+                   name TEXT,
+                   last_seen INT)""")
         }
         else -> throw IllegalStateException("no migration to schema v$v")
       }
@@ -457,6 +476,60 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       readableDatabase
           .rawQuery("SELECT mesh_pubkey FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
           .use { if (it.moveToFirst()) it.getString(0) else null }
+
+  // -- mesh contact roster (#172) --------------------------------------------
+
+  /**
+   * #172: persist (or refresh) a MeshCore contact heard over the radio. Keyed by
+   * the full account pubkey hex; upsert bumps the name + last_seen. An empty
+   * incoming name never clobbers a previously-learned one (COALESCE/NULLIF).
+   * Mirrors — alongside, not replacing — MeshCoreModule's in-memory prefix map.
+   */
+  fun upsertMeshContact(pubkeyHex: String, name: String?, lastSeen: Long) {
+    writableDatabase.execSQL(
+        "INSERT INTO mesh_contacts(pubkey_hex,name,last_seen) VALUES(?,?,?) " +
+            "ON CONFLICT(pubkey_hex) DO UPDATE SET " +
+            "name=COALESCE(NULLIF(excluded.name,''), mesh_contacts.name), " +
+            "last_seen=excluded.last_seen",
+        arrayOf(pubkeyHex, name, lastSeen))
+  }
+
+  /**
+   * #172: the persisted mesh roster as a JSON array `[{pubkeyHex,name}]`
+   * (matching the JS `MeshContact` / parseContacts shape), newest-seen first.
+   * Hydrates meshStore.contacts on connect, before a fresh GET_CONTACTS lands.
+   */
+  fun listMeshContactsJson(): String {
+    val arr = JSONArray()
+    readableDatabase
+        .rawQuery(
+            "SELECT pubkey_hex, name, last_seen FROM mesh_contacts " +
+                "ORDER BY last_seen DESC, pubkey_hex ASC",
+            null)
+        .use { cur ->
+          while (cur.moveToNext()) {
+            arr.put(
+                JSONObject().apply {
+                  put("pubkeyHex", cur.getString(0))
+                  put("name", if (cur.isNull(1)) "" else cur.getString(1))
+                  put("lastSeen", cur.getLong(2))
+                })
+          }
+        }
+    return arr.toString()
+  }
+
+  /**
+   * #172: resolve a mesh contact's display name from a 6-byte pubkey PREFIX (12
+   * hex chars) — inbound DM frames carry only the prefix. Mirrors the in-memory
+   * contactNamesByPrefix so DM attribution survives a restart. Null if unknown.
+   */
+  fun meshContactName(prefixHex: String): String? =
+      readableDatabase
+          .rawQuery(
+              "SELECT name FROM mesh_contacts WHERE pubkey_hex LIKE ? LIMIT 1",
+              arrayOf("$prefixHex%"))
+          .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
 
   // -- group mesh-mirror state (#168, Phase 2c) ------------------------------
 
