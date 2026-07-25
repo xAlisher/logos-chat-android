@@ -656,13 +656,29 @@ export function ChatScreen() {
           be switched. The "N/M mapped" is tappable → Group info (mapping lives
           there). More assertive when the Logos node is offline. */}
       {showMeshBanner && (
-        <View style={[styles.meshBanner, meshMode && styles.meshBannerOn]}>
+        <View
+          style={[
+            styles.meshBanner,
+            meshMode && styles.meshBannerOn,
+            !meshMode && nodeOffline && styles.meshBannerAlert,
+          ]}>
           <View style={styles.meshBannerText}>
-            <Text style={[type.label, {color: meshMode ? MESH_GREEN : colors.text}]} numberOfLines={1}>
+            <Text
+              style={[
+                type.label,
+                {
+                  color: meshMode
+                    ? MESH_GREEN
+                    : nodeOffline
+                    ? colors.nodeOffline
+                    : colors.text,
+                },
+              ]}
+              numberOfLines={2}>
               {meshMode
                 ? 'On MeshCore — sending over the mesh, not MLS'
                 : nodeOffline
-                ? 'Logos node offline'
+                ? 'Logos node offline — reach mapped members over the mesh'
                 : 'Logos node online'}
             </Text>
             <Pressable
@@ -918,6 +934,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   meshBannerOn: {borderBottomColor: MESH_GREEN},
+  // #168: assertive when the Logos node is offline — the banner suggests the switch.
+  meshBannerAlert: {
+    backgroundColor: 'rgba(239,68,68,0.12)',
+    borderBottomColor: colors.nodeOffline,
+    borderBottomWidth: 2,
+  },
   meshBannerText: {flex: 1, gap: 2},
   meshBannerBtn: {
     borderRadius: radii.card,
