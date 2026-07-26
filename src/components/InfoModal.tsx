@@ -48,10 +48,13 @@ export function InfoModal({
             <InfoIcon size={24} color={colors.accent} />
             <Text style={styles.heading}>{title}</Text>
           </View>
+          {/* Show the scrollbar so a long explainer (e.g. "Restarting a group")
+              reads as scrollable — hiding it made it look cut off at "Got it". */}
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}>
+            showsVerticalScrollIndicator={true}
+            persistentScrollbar={true}>
             {children}
           </ScrollView>
           <View style={styles.actions}>

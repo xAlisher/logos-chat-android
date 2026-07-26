@@ -191,6 +191,8 @@ interface ChatState {
     info?: string,
     infoAddress?: string,
   ) => void;
+  /** #228: load persisted system notes for a thread into memory (on thread open). */
+  hydrateSystemLines: (convoPk: number) => Promise<void>;
   /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
   liveness: Record<number, string>;
   /** #112: probe whether the lib can still operate this group. */
@@ -251,6 +253,14 @@ function describePeer(address: string): string {
  * we release these FIFO — the order we invited them in.
  */
 const pendingJoins: Record<number, string[]> = {};
+
+// #228: system notes (invited/joined/left/group-ended) persist per conversation in
+// the KV store so they survive an app restart. Bounded so KV never grows unbounded.
+const SYSLINE_CAP = 60;
+const sysLineKey = (convoPk: number) => `sysln:${convoPk}`;
+function persistSystemLines(convoPk: number, notes: SystemNote[]): void {
+  LogosChat.setSetting(sysLineKey(convoPk), JSON.stringify(notes)).catch(() => {});
+}
 
 /**
  * #195: how long we wait for an invitee's `members_changed` "joined" before we
@@ -873,21 +883,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
     info?: string,
     infoAddress?: string,
   ) => {
-    set(s => ({
-      systemLines: {
-        ...s.systemLines,
-        [convoPk]: [
-          ...(s.systemLines[convoPk] ?? []),
-          {
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            text,
-            at: Date.now(),
-            info,
-            infoAddress,
-          },
-        ],
-      },
-    }));
+    const note: SystemNote = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text,
+      at: Date.now(),
+      info,
+      infoAddress,
+    };
+    set(s => {
+      // #228: cap + PERSIST so invited/joined lines survive an app restart (they
+      // were UI-only before, so every reinstall/relaunch wiped them — which read
+      // as "no invite ever happened").
+      const next = [...(s.systemLines[convoPk] ?? []), note].slice(-SYSLINE_CAP);
+      persistSystemLines(convoPk, next);
+      return {systemLines: {...s.systemLines, [convoPk]: next}};
+    });
+  },
+
+  hydrateSystemLines: async (convoPk: number) => {
+    // Already in memory (pushed this session) → nothing to load.
+    if (get().systemLines[convoPk] != null) return;
+    try {
+      const raw = await LogosChat.getSetting(sysLineKey(convoPk));
+      if (raw == null || raw.length === 0) return;
+      const arr = JSON.parse(raw) as SystemNote[];
+      if (!Array.isArray(arr)) return;
+      // Don't clobber notes pushed while we were awaiting.
+      set(s =>
+        s.systemLines[convoPk] != null
+          ? {}
+          : {systemLines: {...s.systemLines, [convoPk]: arr}},
+      );
+    } catch {
+      // corrupt/missing KV — start fresh, non-fatal.
+    }
   },
 
   probeGroup: async (convoPk: number) => {
@@ -944,6 +973,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     delete pendingInvites[convoPk];
     delete pendingJoins[convoPk];
+    // #228: drop the persisted system notes for the removed thread.
+    LogosChat.setSetting(sysLineKey(convoPk), '').catch(() => {});
     set(s => {
       const conversations = {...s.conversations};
       delete conversations[convoPk];
@@ -951,7 +982,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       delete messages[convoPk];
       const members = {...s.members};
       delete members[convoPk];
-      return {conversations, messages, members};
+      const systemLines = {...s.systemLines};
+      delete systemLines[convoPk];
+      return {conversations, messages, members, systemLines};
     });
   },
 
@@ -1155,25 +1188,41 @@ addLogosChatListener(e => {
   if (e.source === 'repo' && e.eventType === 'db_changed') {
     // #112: the invitee's join committed — release any message held for it.
     if (e.kind === 'members_changed' && e.convoPk != null) {
-      const queue = pendingJoins[e.convoPk];
-      const joined = queue?.shift();
-      if (joined != null) {
-        // #195: the join landed in time — cancel its "hasn't joined" timeout.
-        clearPendingInvite(e.convoPk, joined);
-        s.pushSystemLine(e.convoPk, `${describePeer(joined)} joined`);
-      }
+      const convoPk = e.convoPk;
       // #116: anyone the lib roster diff found missing → "<x> left".
       if (e.detail != null && e.detail.length > 0) {
         try {
           const left: string[] = JSON.parse(e.detail).left ?? [];
           for (const addr of left) {
-            s.pushSystemLine(e.convoPk!, `${describePeer(addr)} left`);
+            s.pushSystemLine(convoPk, `${describePeer(addr)} left`);
           }
         } catch {
           // malformed detail — ignore, the roster is still reconciled native-side.
         }
       }
-      notifyJoin(e.convoPk);
+      // #228: derive "joined" from a ROSTER DIFF, not the pendingJoins FIFO. The
+      // FIFO broke across recreate (empty queue → the join committed but no line),
+      // and native members_changed carries only {"left"} — never the added member.
+      // Snapshot the roster we knew, reload, and announce whoever is newly present.
+      // Guard: only when we already had a roster (skips the first-load / the
+      // joiner's own admission, where every existing member would look "new").
+      const prevRoster = useChatStore.getState().members[convoPk];
+      const prev = new Set((prevRoster ?? []).map(m => m.address.toLowerCase()));
+      s.loadMembers(convoPk)
+        .then(() => {
+          if (prevRoster == null) return; // first time we learned the roster — seed only
+          const cur = useChatStore.getState().members[convoPk] ?? [];
+          const st = useChatStore.getState();
+          for (const m of cur) {
+            const a = m.address.toLowerCase();
+            if (!prev.has(a)) {
+              clearPendingInvite(convoPk, a); // cancel its "hasn't joined" timeout
+              st.pushSystemLine(convoPk, `${describePeer(m.address)} joined`);
+            }
+          }
+        })
+        .catch(() => {});
+      notifyJoin(convoPk);
     }
     // #168 logos→mesh re-forward: an inbound Logos group message on a
     // mesh-mirrored group is relayed onto the mesh channel so mesh-only members

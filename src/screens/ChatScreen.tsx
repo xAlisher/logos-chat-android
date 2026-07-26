@@ -356,6 +356,7 @@ export function ChatScreen() {
   const remove = useChatStore(s => s.remove);
   const startConversation = useChatStore(s => s.startConversation);
   const probeGroup = useChatStore(s => s.probeGroup);
+  const hydrateSystemLines = useChatStore(s => s.hydrateSystemLines);
   const recreateGroup = useChatStore(s => s.recreateGroup);
   const liveness = useChatStore(s => s.liveness[convoPk]);
   const systemLines = useChatStore(s => s.systemLines[convoPk]);
@@ -401,6 +402,8 @@ export function ChatScreen() {
     useCallback(() => {
       setActive(convoPk);
       loadMessages(convoPk);
+      // #228: load persisted invited/joined system notes so they survive restart.
+      hydrateSystemLines(convoPk).catch(() => {});
       // #112: a group from an earlier node session cannot be operated (#103).
       // Probe once on focus so the thread can say so instead of failing on send.
       // #167: a MeshCore channel is is_group=true but NOT a Logos MLS group — the
@@ -414,7 +417,7 @@ export function ChatScreen() {
         loadMembers(convoPk).catch(() => {});
       }
       return () => setActive(null);
-    }, [convoPk, setActive, loadMessages, probeGroup, loadMembers, route.params.isGroup]),
+    }, [convoPk, setActive, loadMessages, hydrateSystemLines, probeGroup, loadMembers, route.params.isGroup]),
   );
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
