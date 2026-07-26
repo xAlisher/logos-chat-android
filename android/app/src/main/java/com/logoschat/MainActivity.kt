@@ -31,7 +31,13 @@ class MainActivity : ReactActivity() {
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
+    // Pass null, never the saved bundle: react-native-screens crashes with
+    // "Screen fragments should never be restored" if Android tries to restore the
+    // fragment back-stack after process-death / config-change / returning from the
+    // background (RN owns navigation state, not the Android fragment manager). This
+    // was causing crash-on-resume + blank/black screens on the test phones. See
+    // github.com/software-mansion/react-native-screens/issues/17.
+    super.onCreate(null)
     capture(intent)
     // Auto-start is driven from JS on launch (nodeStore.autoStart) so it can fetch
     // the address once the node is running. The headless START_STICKY path
