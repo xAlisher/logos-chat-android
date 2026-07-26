@@ -52,3 +52,60 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   column-migration = no bridge rebuild.
 - Issue map (§10) refreshed with the shipped UI issues + the offline epic tree.
 - Process: embedded-repo commit guard → `~/fieldcraft/`.
+
+## Week of 2026-07-26 — transports + rich messaging (BLE #133 · images #197 · rich #199–#207 · map-to-mesh #210 · delivery dig #209/#211)
+
+### Wins
+- **[process] Verify-before-claiming with committed proof caught a real shipped bug.**
+  After the user's "you must see proofs = add to files" directive, adopted a strict
+  see-it-then-claim-it loop: every feature has a committed `logs/verification/*.png`.
+  It caught the #202 fat-border bug ON-DEVICE that code review had passed. Without the
+  screenshot pass it would have shipped broken.
+- **[process] "Verify DELIVERY, not just send" (user rule) surfaced the truth.** Sends
+  reported success (rc=0, own bubble rendered) while photos never arrived. Treating
+  send≠delivery led to root-causing the Waku "no subscribed peers" outage + the image
+  size ceiling (→ #209/#211) instead of false-claiming success.
+- **[process] Research-before-implement, twice.** (a) 3 parallel agents (upstream lib /
+  Status / Codex) → adopted Status's compress-to-fit-single-message (no chunking) —
+  simpler + correct. (b) For delivery reliability, dug the prebuilt `.so` + pulled the
+  EXACT `channel_*` FFI contract from the upstream header (logos-messaging/logos-delivery)
+  before writing any FFI — avoided a guess-and-crash. → red-team-fork-tree.
+- **[process] Worktree/background agents on disjoint files merged clean.** BLE natives;
+  rich-messaging natives (Audio/Location) built in parallel, sequential merge, no conflicts.
+- **[project] Inline base64 over the existing text pipe = zero-lib-change media.** ASCII
+  base64 survives the lib's inbound `from_utf8_lossy`, so images/voice ride the text send
+  path; location is tiny text and reuses `send()` directly.
+
+### Fails
+- **[project] #202 fat image border shipped — RN style SPECIFICITY, not array order.**
+  Moment: set `bubbleImage:{padding:2}` in the style array after `styles.bubble`. Wrong
+  action: assumed last-in-array wins, claimed it fixed. Root cause: RN merges styles by
+  SPECIFICITY — a base style's `paddingHorizontal`/`paddingVertical` beat a later general
+  `padding`, so the fat 12dp frame stayed. Fix: set the specific keys
+  (`paddingHorizontal:2, paddingVertical:2`). Only on-device verification caught it.
+- **[process] Misread physical-px vs dp on a screenshot.** Moment: thought a 230**dp**
+  image "wasn't capped" because it measured ~630px wide. Root cause: adb screenshots are
+  PHYSICAL pixels (1080w); RN sizes are dp; this device is ~2.75× → dp×2.75=px. Corrected
+  after re-measuring. Lesson: multiply RN dp by device density before judging size in a shot.
+- **[process] Hammered a flaky network to "verify" photo delivery while the whole channel
+  was down.** Moment: both nodes flooding "no subscribed peers"; kept driving the picker +
+  send anyway. A control TEXT also failed → the channel was down, not photos. Root cause:
+  didn't bisect the layer first (confirm plain text delivers) before testing photos. Lesson:
+  for delivery tests, confirm the base channel (text) is up FIRST; if down, stop + log the
+  network blocker — don't hammer.
+- **[project] Claimed "images work end-to-end" off ONE small image.** A 576×1280 image
+  delivered at 06:22; larger camera/album photos silently didn't. Root cause: verified one
+  send, not delivery across sizes — ~160KB base64 exceeded the reliable message size. Led to
+  the user's correction. Fix: #209 compress-to-fit (60KB/1024) + the standing per-delivery rule.
+- **[project] Map-to-mesh was group-info-only + gated on a connected radio, though mapping
+  is LOCAL/offline.** Root cause: built only for the group path; didn't consider "everywhere
+  you touch a contact" or offline use. Fix (#210): added to the bubble context menu (1:1 +
+  group), hydrate the persisted #172 roster so it works with the radio off, + search + sort.
+
+### Skills / doc updates from this batch
+- PROJECT_KNOWLEDGE **§10b** added: media-over-text-pipe wire envelopes (img1/voc1/loc1 +
+  local file markers); compress-to-fit for Waku (no chunking, ~60KB); RN padding-specificity
+  for image bubbles; dp↔physical-px screenshot rule; **SDS reliable channels = the delivery
+  backfill path** (Waku Store absent from the binary) + the `channel_*` FFI contract;
+  map-to-mesh is local/offline (hydrate the persisted roster).
+- Process → fieldcraft: **verify-delivery-not-just-send** (+ bisect-the-layer-for-delivery).

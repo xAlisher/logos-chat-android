@@ -201,10 +201,14 @@ npx jest --config jest.logic.config.js
 npx tsc --noEmit
 
 # Kotlin unit tests / APK — Gradle picks a JRE-only java-21 by default and fails
-# with "does not provide [JAVA_COMPILER]". Always pin a real JDK:
-cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ./gradlew :app:testDebugUnitTest \
-  -Dorg.gradle.java.installations.paths=/usr/lib/jvm/java-17-openjdk-amd64
-#   …:app:assembleRelease  for the APK
+# with "does not provide [JAVA_COMPILER]". Always pin a real JDK AND stop auto-detect
+# (auto-detect re-grabs jdk-21 even with JAVA_HOME set):
+cd android && JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 PATH="$JAVA_HOME/bin:$PATH" \
+  ./gradlew :app:assembleRelease -Dorg.gradle.java.installations.auto-detect=false
+#   …:app:testDebugUnitTest  for Kotlin tests
+# GOTCHA: "configs.toReversed is not a function" at the Metro bundle step = a STALE
+# Gradle daemon holding an old Node on PATH. Fix: `./gradlew --stop` then rebuild with
+# the nvm node first on PATH (v22): PATH="$HOME/.nvm/versions/node/v22.22.2/bin:$PATH".
 
 # Rebuild liblogoschat.so (arm64) — in logos-libchat-mls-android
 bash scripts/build-android-arm64.sh          # needs ANDROID_NDK_HOME (r27)
@@ -280,6 +284,61 @@ Durable UI lessons from the identicon / verified / side-menu / long-press / typo
    (`ALTER TABLE … ADD COLUMN … DEFAULT`), thread it through `listConversationsJson`
    → `ConversationRow`. A Gradle rebuild suffices; `build-bridge.sh` is only for FFI
    export changes (§2). → #153 `verified` (v4).
+
+## 10b. Media + delivery patterns (2026-07-26 batch)
+
+Durable lessons from BLE transport, image/voice/location attachments, and the
+delivery-reliability investigation.
+
+1. **Media rides the existing text pipe as base64 — no lib change.** The lib's
+   inbound path is `String::from_utf8_lossy` (binary-lossy) but **ASCII base64
+   survives** it. So attachments are self-describing text envelopes over the same
+   `chatSendMessage` path. Wire vs local forms:
+   - image `img1:<mime>:<w>:<h>␟<base64>` → stored as `img1v:…␟<filepath>`
+   - voice `voc1:<mime>:<durMs>:<wavecsv>␟<base64>` → `voc1v:…␟<filepath>`
+   - location `loc1:<lat>,<lng>[,<acc>]` (coords ARE the content — same on wire+DB)
+   ChatRepo converts inbound `img1:`/`voc1:` → saves the blob (ImageFiles/BlobFiles,
+   content-addressed under filesDir) + stores the small marker; the DB stays light.
+   Pure wire codecs live in `src/native/{imageMsg,voiceMsg,locMsg}.ts` (unit-tested).
+2. **Compress-to-fit, never chunk (Status's model).** Downscale + JPEG quality-step
+   to a byte budget so an image is ONE Waku message. **~160KB base64 does NOT reliably
+   deliver** (small images did, large didn't) — budget **60KB JPEG / 1024px** →
+   ~80KB base64, safely under the ceiling. Native `ImagePicker.pickImage(maxDim,
+   budgetBytes)` does the stepping. Never mirror media to the mesh (LoRa can't carry it).
+3. **RN merges styles by SPECIFICITY, not array order.** A base style's
+   `paddingHorizontal`/`paddingVertical` BEAT a later `[…, {padding:2}]` in the array.
+   To override, set the SAME specific keys (`paddingHorizontal:2, paddingVertical:2`).
+   (This shipped the #202 fat image border.)
+4. **Screenshots are physical px; RN sizes are dp.** adb screencap on the Samsung is
+   1080px wide at ~2.75× density → a `width:230` (dp) image measures ~630px. Multiply
+   RN dp by device density before judging on-screen size. `Image` dp × ~2.75 = px here.
+5. **Delivery reliability = SDS reliable channels, NOT Waku Store.** The prebuilt
+   `liblogosdelivery.so` exports **no Store/history/query** symbol — classic Store
+   backfill is uncallable. It DOES export `logosdelivery_channel_{create,send,close}`
+   (SDS: causal history, `missingDeps`, repair, rolling bloom filter). The chat lib
+   uses the plain `send`/`subscribe` path, so a message published while the receiver
+   has no filter peer is LOST. Migrating the delivery path to channels gives automatic
+   repair. FFI contract (upstream `logos-messaging/logos-delivery` `library/liblogosdelivery.h`):
+   `channel_create(ctx,cb,ud,channelId,contentTopic,senderId)`,
+   `channel_send(ctx,cb,ud,channelId,{"payload","ephemeral"})`, `channel_close(…)`;
+   config accepts `channelsOverrides`. Rebuilding `liblogoschat.so` locally is enough
+   (the prebuilt delivery `.so` already has the symbols). → #211, branch
+   `feat/sds-reliable-channels` in the lib repo.
+6. **"no subscribed peers found" = the node has no filter-serving fleet peer → cannot
+   RECEIVE (send/lightpush may still publish).** 3 co-located phones do NOT peer over
+   LAN — no local discovery; all route through the Waku fleet. Node logs are suppressed
+   (`dynamic log output writer not configured`) and there's no peer-count ABI verb, so
+   Waku health is a black box from the app. For a delivery test: confirm a plain TEXT
+   delivers first; if it doesn't, the channel is down — stop and log it, don't hammer.
+7. **Contact-level actions must be local + offline + everywhere.** Map-to-mesh is a
+   LOCAL assertion (stored in the DB) — it must NOT gate on a connected radio: hydrate
+   the persisted `mesh_contacts` roster (#172) so the picker works offline. And put it
+   on every surface where you touch a contact (bubble long-press, group info), with
+   search + alphabetical sort. → #210.
+8. **BLE mesh = a third transport, presence-first.** `BleMeshModule` (peripheral
+   advertises a fixed service UUID + central scans → TTL-pruned nearby-peer count),
+   surfaced as a 3rd header pill glyph + 3rd Transports-modal row. Pure Kotlin BLE, no
+   FFI. Flood routing / GATT data channels are later children of #133.
 
 ## 10. Issue map
 
