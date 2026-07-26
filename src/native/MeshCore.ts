@@ -34,6 +34,9 @@ export interface MeshContact {
   pubkeyHex: string;
   /** The contact's advert label. */
   name: string;
+  /** #212: epoch-ms we last heard this identity on the mesh (0 = unknown). From
+   *  the persisted roster (#172); the basis for an honest "heard Xm ago" badge. */
+  lastSeen?: number;
 }
 
 export interface MeshCoreEvent {
@@ -184,7 +187,11 @@ export function parseContacts(json: string): MeshContact[] {
           (o: any) =>
             typeof o?.pubkeyHex === 'string' && typeof o?.name === 'string',
         )
-        .map((o: any) => ({pubkeyHex: o.pubkeyHex, name: o.name}));
+        .map((o: any) => ({
+          pubkeyHex: o.pubkeyHex,
+          name: o.name,
+          lastSeen: typeof o.lastSeen === 'number' ? o.lastSeen : 0,
+        }));
     }
   } catch {
     // fall through

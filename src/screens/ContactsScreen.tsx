@@ -2,7 +2,7 @@
 // conversation list). Source: knownContacts() — every 1:1 peer address (with its
 // local label) plus any addresses seen in group rosters. Tapping a contact opens
 // (or creates) the 1:1 chat. Same compact row + identicon as everywhere (#118).
-import React, {useCallback, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Text, TextInput, View, Pressable, FlatList, StyleSheet, Vibration, ToastAndroid} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import Clipboard from '@react-native-clipboard/clipboard';
@@ -28,6 +28,8 @@ import {knownContacts, filterContacts} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
+import {useMeshStore} from '../stores/meshStore';
+import {meshPresence} from '../stores/meshPresence';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -44,7 +46,14 @@ export function ContactsScreen() {
   const meshMap = useChatStore(s => s.meshMap); // #210
   const setContactMeshMap = useChatStore(s => s.setContactMeshMap);
   const clearContactMeshMap = useChatStore(s => s.clearContactMeshMap);
+  const meshContacts = useMeshStore(s => s.contacts); // #212 presence roster
+  const meshConnected = useMeshStore(s => s.status) === 'connected';
+  const hydrateMeshContacts = useMeshStore(s => s.hydrateContacts);
   const contacts = knownContacts(conversations, members, [], meshMap);
+  // #212: load the persisted mesh roster (with last-heard) so presence shows offline.
+  useEffect(() => {
+    hydrateMeshContacts();
+  }, [hydrateMeshContacts]);
   // #173: search field — filters the (already alpha-sorted) list by label + hex.
   const [query, setQuery] = useState('');
   const visible = useMemo(() => filterContacts(contacts, query), [contacts, query]);
@@ -186,17 +195,39 @@ export function ContactsScreen() {
         </View>
         {/* #174: mapped-to-mesh indicator — a green mesh glyph + the mesh name,
             matching how a mapped member reads in Group info. */}
-        {item.meshPubkey != null && (
-          <View style={styles.meshTag}>
-            <MeshIcon size={16} color={MESH_GREEN} />
-            <Text style={[type.label, {color: MESH_GREEN}]} numberOfLines={1}>
-              {item.meshName || 'mesh'}
-            </Text>
-          </View>
-        )}
+        {item.meshPubkey != null &&
+          (() => {
+            // #212: honest presence for the mapped mesh identity ("heard Xm ago").
+            const pres = meshPresence(
+              item.meshPubkey,
+              meshContacts,
+              meshConnected,
+              Date.now(),
+            );
+            return (
+              <View style={styles.meshCol}>
+                <View style={styles.meshTag}>
+                  <MeshIcon size={16} color={MESH_GREEN} />
+                  <Text style={[type.label, {color: MESH_GREEN}]} numberOfLines={1}>
+                    {item.meshName || 'mesh'}
+                  </Text>
+                </View>
+                {pres != null && (
+                  <Text
+                    style={[
+                      type.caption,
+                      {color: pres.live ? MESH_GREEN : colors.textFaint},
+                    ]}
+                    numberOfLines={1}>
+                    {pres.text}
+                  </Text>
+                )}
+              </View>
+            );
+          })()}
       </Pressable>
     ),
-    [open],
+    [open, meshContacts, meshConnected],
   );
 
   return (
@@ -316,6 +347,7 @@ const styles = StyleSheet.create({
   },
   rowText: {flex: 1, gap: 0},
   nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  meshCol: {alignItems: 'flex-end', gap: 2},
   meshTag: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, maxWidth: 120},
   searchWrap: {
     paddingHorizontal: spacing.lg,

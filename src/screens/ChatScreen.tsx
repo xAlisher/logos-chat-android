@@ -62,6 +62,7 @@ import {MeshMapModal} from '../components/MeshMapModal';
 import ImagePickerNative from '../native/ImagePicker';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import {formatLastSeen} from '../stores/conversationView';
+import {meshPresence} from '../stores/meshPresence';
 import type {Conversation, Message, SystemNote} from '../stores/chatStore';
 
 // #188: a timeline row is either a message or an interleaved system line.
@@ -333,6 +334,9 @@ export function ChatScreen() {
   const switchGroupToMesh = useChatStore(s => s.switchGroupToMesh);
   const switchGroupToLogos = useChatStore(s => s.switchGroupToLogos);
   const meshStatus = useMeshStore(s => s.status);
+  const meshContacts = useMeshStore(s => s.contacts); // #212 presence roster
+  const hydrateMeshContacts = useMeshStore(s => s.hydrateContacts);
+  const meshMapCache = useChatStore(s => s.meshMap); // #210
   const loadMessages = useChatStore(s => s.loadMessages);
   const loadMoreMessages = useChatStore(s => s.loadMoreMessages);
   const loadingMore = useChatStore(s => s.loadingMore[convoPk]) ?? false;
@@ -425,6 +429,10 @@ export function ChatScreen() {
       return null;
     }
     const target = convo.peerAddress.toLowerCase();
+    // #210: an explicit mesh_map (set from Contacts / a 1:1) wins + covers peers
+    // never seen in a group roster.
+    const mapped = meshMapCache[target];
+    if (mapped != null) return {pubkey: mapped.pubkey, name: mapped.name};
     for (const roster of Object.values(allMembers)) {
       for (const m of roster) {
         if (!m.isSelf && m.meshPubkey != null && m.address.toLowerCase() === target) {
@@ -433,7 +441,19 @@ export function ChatScreen() {
       }
     }
     return null;
-  }, [isGroup, convo?.peerAddress, allMembers]);
+  }, [isGroup, convo?.peerAddress, allMembers, meshMapCache]);
+
+  // #212: honest mesh presence for this peer — "heard Xm ago" (green when live).
+  const peerPresence = useMemo(
+    () =>
+      meshPresence(peerMesh?.pubkey, meshContacts, meshStatus === 'connected', Date.now()),
+    [peerMesh, meshContacts, meshStatus],
+  );
+
+  // Load the persisted mesh roster (with last-heard) so presence shows even offline.
+  useEffect(() => {
+    hydrateMeshContacts();
+  }, [hydrateMeshContacts]);
 
   const onTrash = useCallback(() => {
     Alert.alert('Delete conversation', 'Delete this conversation and all its messages?', [
@@ -720,6 +740,18 @@ export function ChatScreen() {
                     {formatLastSeen(convo.lastInboundAt, Date.now())}
                   </Text>
                 )}
+              {/* #212: honest mesh presence — "heard Xm ago", green when live. */}
+              {!isGroup && peerPresence != null && (
+                <Text
+                  style={[
+                    styles.headerLastSeen,
+                    peerPresence.live && {color: MESH_GREEN},
+                  ]}
+                  numberOfLines={1}
+                  testID="chat-header-meshpresence">
+                  📡 {peerPresence.text}
+                </Text>
+              )}
             </View>
           </View>
         );
@@ -735,7 +767,7 @@ export function ChatScreen() {
         </Pressable>
       ),
     });
-  }, [navigation, convo, isGroup, peerMesh]);
+  }, [navigation, convo, isGroup, peerMesh, peerPresence]);
 
   // #193/docs/test-matrix: composer/liveness state is derived by the pure,
   // unit-tested deriveComposerState — the screen only maps sendColorKind→color
