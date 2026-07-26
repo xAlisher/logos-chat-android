@@ -639,6 +639,16 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #210: the whole address↔mesh mapping as JSON, so any contact reflects its map. */
+  @ReactMethod
+  fun listMeshMap(promise: Promise) {
+    try {
+      promise.resolve(ChatRepo.requireDb().listMeshMapJson())
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   /** #168 (Phase 2c): switch a group onto its MeshCore mirror channel. */
   @ReactMethod
   fun setMeshMirror(convoPk: Double, channelIdx: Double, channelKey: String, promise: Promise) {

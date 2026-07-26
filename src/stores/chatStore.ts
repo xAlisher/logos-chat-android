@@ -106,6 +106,9 @@ interface ChatState {
   conversations: Record<number, ConversationRow>;
   messages: Record<number, MessageRow[]>;
   members: Record<number, GroupMember[]>;
+  /** #210: address(lowercase) → mesh mapping, cached from the DB on refresh so any
+   * contact (even a pure 1:1) reflects its mesh identity. */
+  meshMap: Record<string, {pubkey: string; name: string | null}>;
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
   loadMessages: (convoPk: number) => Promise<void>;
@@ -133,6 +136,10 @@ interface ChatState {
   /** #168 (Phase 2): map/unmap a Logos address ↔ a MeshCore identity, then reload the group roster. */
   mapMeshIdentity: (convoPk: number, address: string, meshPubkey: string, meshName: string | null) => Promise<void>;
   unmapMeshIdentity: (convoPk: number, address: string) => Promise<void>;
+  /** #210: map/unmap a contact by address alone (no group context — e.g. from the
+   * Contacts screen or a 1:1). Refreshes the meshMap cache + rosters. */
+  setContactMeshMap: (address: string, meshPubkey: string, meshName: string | null) => Promise<void>;
+  clearContactMeshMap: (address: string) => Promise<void>;
   /**
    * #168 (Phase 2c): switch a Logos group onto a MeshCore mirror channel — create a
    * private channel, DM its key to each mapped member, route sends there. Resolves
@@ -278,6 +285,7 @@ function clearPendingInvite(convoPk: number, address: string) {
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: {},
+  meshMap: {},
   messages: {},
   members: {},
   systemLines: {},
@@ -294,7 +302,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     for (const r of rows) {
       conversations[r.convoPk] = r;
     }
-    set({conversations});
+    // #210: cache the full address→mesh mapping so any contact reflects its map
+    // (not only those seen in a group roster).
+    const meshMap: Record<string, {pubkey: string; name: string | null}> = {};
+    try {
+      const arr = JSON.parse(await LogosChat.listMeshMap());
+      if (Array.isArray(arr)) {
+        for (const m of arr) {
+          if (typeof m?.address === 'string' && typeof m?.meshPubkey === 'string') {
+            meshMap[m.address.toLowerCase()] = {
+              pubkey: m.meshPubkey,
+              name: typeof m.meshName === 'string' ? m.meshName : null,
+            };
+          }
+        }
+      }
+    } catch {
+      // keep the previous map on a transient read failure
+    }
+    set({conversations, meshMap});
   },
 
   loadMessages: async (convoPk: number) => {
@@ -431,6 +457,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   unmapMeshIdentity: async (convoPk, address) => {
     await LogosChat.clearMeshMap(address);
     await get().loadMembers(convoPk);
+  },
+
+  setContactMeshMap: async (address, meshPubkey, meshName) => {
+    await LogosChat.setMeshMap(address, meshPubkey, meshName);
+    await get().refreshConversations(); // reloads the meshMap cache
+  },
+
+  clearContactMeshMap: async address => {
+    await LogosChat.clearMeshMap(address);
+    await get().refreshConversations();
   },
 
   switchGroupToMesh: async (convoPk: number) => {

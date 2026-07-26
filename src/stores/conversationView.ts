@@ -93,6 +93,9 @@ export function knownContacts(
   conversations: Record<number, ConversationRow>,
   members: Record<number, GroupMember[]>,
   excludeAddresses: string[] = [],
+  /** #210: address(lowercase) → mesh mapping, so ANY contact reflects its map —
+   * not only those seen in a group roster. */
+  meshMap: Record<string, {pubkey: string; name: string | null}> = {},
 ): KnownContact[] {
   const exclude = new Set(excludeAddresses.map(a => a.toLowerCase()));
   const byAddr = new Map<string, KnownContact>();
@@ -137,6 +140,15 @@ export function knownContacts(
       if (!m.isSelf) {
         consider(m.address, null, false, m.meshPubkey ?? null, m.meshName ?? null);
       }
+    }
+  }
+  // #210: overlay the durable mesh_map so a contact mapped from anywhere (incl. a
+  // pure 1:1) shows its mesh identity. The explicit map wins over a roster-derived one.
+  for (const [addr, m] of Object.entries(meshMap)) {
+    const existing = byAddr.get(addr);
+    if (existing != null) {
+      existing.meshPubkey = m.pubkey;
+      existing.meshName = m.name;
     }
   }
   return Array.from(byAddr.values()).sort((x, y) => {

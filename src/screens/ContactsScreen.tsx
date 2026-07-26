@@ -13,6 +13,7 @@ import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {AddressModal} from '../components/AddressModal';
 import {LabelModal} from '../components/LabelModal';
+import {MeshMapModal} from '../components/MeshMapModal';
 import {
   OverflowMenu,
   MessageCircleIcon,
@@ -40,7 +41,10 @@ export function ContactsScreen() {
   const startConversation = useChatStore(s => s.startConversation);
   const setNickname = useChatStore(s => s.setNickname);
   const setVerified = useChatStore(s => s.setVerified);
-  const contacts = knownContacts(conversations, members);
+  const meshMap = useChatStore(s => s.meshMap); // #210
+  const setContactMeshMap = useChatStore(s => s.setContactMeshMap);
+  const clearContactMeshMap = useChatStore(s => s.clearContactMeshMap);
+  const contacts = knownContacts(conversations, members, [], meshMap);
   // #173: search field — filters the (already alpha-sorted) list by label + hex.
   const [query, setQuery] = useState('');
   const visible = useMemo(() => filterContacts(contacts, query), [contacts, query]);
@@ -50,6 +54,7 @@ export function ContactsScreen() {
 
   const [addressContact, setAddressContact] = useState<KnownContact | null>(null);
   const [labelContact, setLabelContact] = useState<KnownContact | null>(null);
+  const [mapContact, setMapContact] = useState<KnownContact | null>(null); // #210
 
   // Persist a label + verified flag for a contact: reuse the 1:1 with them, else
   // create it (#131 Edit label from the Contacts list).
@@ -129,6 +134,12 @@ export function ContactsScreen() {
               Clipboard.setString(menuContact.address);
               ToastAndroid.show('Copied', ToastAndroid.SHORT);
             },
+          },
+          {
+            key: 'map-mesh',
+            label: menuContact.meshPubkey != null ? 'Change mesh identity' : 'Map to mesh',
+            icon: <MeshIcon color={colors.textDim} />,
+            onPress: () => setMapContact(menuContact),
           },
         ];
 
@@ -264,6 +275,30 @@ export function ContactsScreen() {
         onSave={(v, ver) =>
           labelContact != null && saveContactLabel(labelContact.address, v, ver)
         }
+      />
+      {/* #210: map a contact to a mesh identity (local, offline) — from Contacts. */}
+      <MeshMapModal
+        visible={mapContact != null}
+        memberAddress={mapContact?.address ?? null}
+        memberLabel={mapContact?.label ?? null}
+        currentMeshPubkey={mapContact?.meshPubkey ?? null}
+        onClose={() => setMapContact(null)}
+        onPick={(pubkey, name) => {
+          if (mapContact != null) {
+            setContactMeshMap(mapContact.address, pubkey, name).catch(e =>
+              useNodeStore.setState({error: `mesh map failed: ${e?.message ?? e}`}),
+            );
+          }
+          setMapContact(null);
+        }}
+        onUnmap={() => {
+          if (mapContact != null) {
+            clearContactMeshMap(mapContact.address).catch(e =>
+              useNodeStore.setState({error: `unmap failed: ${e?.message ?? e}`}),
+            );
+          }
+          setMapContact(null);
+        }}
       />
     </SafeAreaView>
   );

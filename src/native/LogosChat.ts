@@ -146,6 +146,8 @@ interface LogosChatNative {
   setMeshMap(logosAddress: string, meshPubkey: string, meshName: string | null): Promise<null>;
   /** #168 (Phase 2): remove a Logos address ↔ mesh mapping. */
   clearMeshMap(logosAddress: string): Promise<null>;
+  /** #210: the whole address↔mesh mapping as JSON [{address,meshPubkey,meshName},…]. */
+  listMeshMap(): Promise<string>;
   /** #168 (Phase 2c): switch a group onto its MeshCore mirror channel. */
   setMeshMirror(convoPk: number, channelIdx: number, channelKey: string): Promise<null>;
   /** #168 (Phase 2c): switch a group back to Logos (keeps the channel binding). */

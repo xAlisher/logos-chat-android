@@ -477,6 +477,27 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
           .rawQuery("SELECT mesh_pubkey FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
           .use { if (it.moveToFirst()) it.getString(0) else null }
 
+  /**
+   * #210: the WHOLE address↔mesh mapping as JSON `[{address,meshPubkey,meshName},…]`
+   * so the Contacts list can reflect a mapping for ANY contact (not only those seen
+   * in a group roster). Local read, no BLE.
+   */
+  fun listMeshMapJson(): String {
+    val arr = JSONArray()
+    readableDatabase
+        .rawQuery("SELECT logos_address, mesh_pubkey, mesh_name FROM mesh_map", null)
+        .use {
+          while (it.moveToNext()) {
+            arr.put(
+                JSONObject()
+                    .put("address", it.getString(0))
+                    .put("meshPubkey", it.getString(1))
+                    .put("meshName", if (it.isNull(2)) JSONObject.NULL else it.getString(2)))
+          }
+        }
+    return arr.toString()
+  }
+
   // -- mesh contact roster (#172) --------------------------------------------
 
   /**
