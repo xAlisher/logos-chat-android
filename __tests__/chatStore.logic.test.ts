@@ -22,6 +22,7 @@ function row(over: Partial<ConversationRow>): ConversationRow {
     libConvoId: null,
     createdAt: 0,
     lastMessageAt: 0,
+    lastInboundAt: 0,
     unread: 0,
     lastText: '',
     lastDirection: '',

@@ -211,3 +211,24 @@ export function convoDisplayName(c: ConversationRow): string {
   }
   return `peer #${c.convoPk}`;
 }
+
+/**
+ * #212: honest "last seen" from the last INBOUND message timestamp (ms). Passive —
+ * no heartbeat, no extra traffic; it only reflects when the peer last actually sent
+ * us something. Returns '' when never (ts<=0) so callers can hide the line.
+ * Pure — pass `now` for testability.
+ */
+export function formatLastSeen(lastInboundAt: number, now: number): string {
+  if (lastInboundAt <= 0) return '';
+  const secs = Math.max(0, Math.floor((now - lastInboundAt) / 1000));
+  if (secs < 60) return 'last seen just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `last seen ${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `last seen ${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `last seen ${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `last seen ${weeks}w ago`;
+  return 'last seen a while ago';
+}

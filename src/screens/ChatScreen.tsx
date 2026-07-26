@@ -61,6 +61,7 @@ import {ForwardPicker} from '../components/ForwardPicker';
 import {MeshMapModal} from '../components/MeshMapModal';
 import ImagePickerNative from '../native/ImagePicker';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
+import {formatLastSeen} from '../stores/conversationView';
 import type {Conversation, Message, SystemNote} from '../stores/chatStore';
 
 // #188: a timeline row is either a message or an interleaved system line.
@@ -707,6 +708,18 @@ export function ChatScreen() {
                   )}
                 </>
               )}
+              {/* #212: honest last-seen (1:1 only) — from the last inbound message,
+                  no heartbeat. Hidden when we've never received from this peer. */}
+              {!isGroup &&
+                convo != null &&
+                formatLastSeen(convo.lastInboundAt, Date.now()).length > 0 && (
+                  <Text
+                    style={styles.headerLastSeen}
+                    numberOfLines={1}
+                    testID="chat-header-lastseen">
+                    {formatLastSeen(convo.lastInboundAt, Date.now())}
+                  </Text>
+                )}
             </View>
           </View>
         );
@@ -1539,6 +1552,8 @@ const styles = StyleSheet.create({
   // GroupInfo member rows use, so the header reads identically everywhere.
   headerTitleText: {...type.title, color: colors.text, lineHeight: 18},
   headerTitleSub: {...type.caption, color: colors.textDim, lineHeight: 14},
+  // #212: honest last-seen line under the 1:1 title.
+  headerLastSeen: {...type.caption, color: colors.textFaint, lineHeight: 13},
   // #168 (Phase 2b): mesh-mirror banner across the top of a group thread.
   meshBanner: {
     flexDirection: 'row',

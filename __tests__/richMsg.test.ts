@@ -74,3 +74,21 @@ describe('voice wire', () => {
     expect(formatDuration(65000)).toBe('1:05');
   });
 });
+
+import {formatLastSeen} from '../src/stores/conversationView';
+
+describe('formatLastSeen (#212)', () => {
+  const now = 1_000_000_000_000;
+  it('is empty when never received', () => {
+    expect(formatLastSeen(0, now)).toBe('');
+    expect(formatLastSeen(-5, now)).toBe('');
+  });
+  it('buckets by age', () => {
+    expect(formatLastSeen(now - 10_000, now)).toBe('last seen just now');
+    expect(formatLastSeen(now - 5 * 60_000, now)).toBe('last seen 5m ago');
+    expect(formatLastSeen(now - 3 * 3600_000, now)).toBe('last seen 3h ago');
+    expect(formatLastSeen(now - 2 * 86400_000, now)).toBe('last seen 2d ago');
+    expect(formatLastSeen(now - 3 * 7 * 86400_000, now)).toBe('last seen 3w ago');
+    expect(formatLastSeen(now - 60 * 86400_000, now)).toBe('last seen a while ago');
+  });
+});

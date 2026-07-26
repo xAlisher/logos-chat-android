@@ -829,7 +829,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),
                       c.created_by_me, c.verified, c.transport,
-                      c.mesh_mode, c.mesh_channel_idx
+                      c.mesh_mode, c.mesh_channel_idx,
+                      (SELECT MAX(m.sent_at) FROM messages m
+                         WHERE m.convo_pk=c.convo_pk AND m.direction='in')
                FROM conversations c
                ORDER BY c.last_message_at DESC""",
             null)
@@ -858,6 +860,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                   put("meshMode", cur.getInt(15) == 1)
                   if (cur.isNull(16)) put("meshChannelIdx", JSONObject.NULL)
                   else put("meshChannelIdx", cur.getInt(16))
+                  // #212: last-seen = timestamp of the most recent INBOUND message
+                  // from this peer (0/absent if we've never received one).
+                  put("lastInboundAt", if (cur.isNull(17)) 0L else cur.getLong(17))
                 })
           }
         }

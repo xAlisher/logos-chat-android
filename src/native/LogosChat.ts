@@ -41,6 +41,8 @@ export interface ConversationRow {
   libConvoId: string | null;
   createdAt: number;
   lastMessageAt: number;
+  /** #212: timestamp of the last INBOUND message from the peer (0 = never). */
+  lastInboundAt: number;
   unread: number;
   lastText: string;
   lastDirection: string;
