@@ -43,6 +43,65 @@ export function mergeOlderPage(
   return merged;
 }
 
+// #230: per-member membership-status lines. A member advances through statuses
+// (invited → hasn't joined → joined, or → left); the timeline must show exactly
+// ONE, current line per member instead of one appended row per status change.
+// These pure helpers own that upsert so the "predictable and clean" invariant is
+// unit-tested without the RN runtime; chatStore wires them to the store + KV.
+
+export type MemberStatus = 'invited' | 'not-joined' | 'joined' | 'left';
+
+/** The user-visible fields for a member's status line. `member` is the upsert key. */
+export interface MemberNoteFields {
+  text: string;
+  info?: string;
+  infoAddress?: string;
+  member: string;
+}
+
+/** Derive a member status line's text + affordance from the status. Pure. */
+export function memberStatusFields(
+  address: string,
+  status: MemberStatus,
+  peerLabel: string,
+): MemberNoteFields {
+  const member = address.toLowerCase();
+  switch (status) {
+    case 'invited':
+      return {text: `${peerLabel} invited`, info: 'invited-wait', member};
+    case 'not-joined':
+      return {
+        text: `${peerLabel} hasn't joined — they may be offline`,
+        info: 'join-failed',
+        infoAddress: member,
+        member,
+      };
+    case 'joined':
+      return {text: `${peerLabel} joined`, member};
+    case 'left':
+      return {text: `${peerLabel} left`, member};
+  }
+}
+
+/**
+ * Upsert a member-status note: drop any prior note for the same `member`, then
+ * append the new one (so it advances in place), bounded to `cap`. Non-membership
+ * notes (member == null) are untouched. Pure — never mutates the input.
+ */
+export function upsertMemberNote<T extends {member?: string}>(
+  notes: T[],
+  note: T & {member: string},
+  cap: number,
+): T[] {
+  const prior = notes.filter(n => n.member !== note.member);
+  return [...prior, note].slice(-cap);
+}
+
+/** Drop every per-member status note (keep ordinary notes). Pure. */
+export function clearMemberNotes<T extends {member?: string}>(notes: T[]): T[] {
+  return notes.filter(n => n.member == null);
+}
+
 /** A known peer address the user can add to a group (#13). */
 export interface KnownContact {
   address: string;

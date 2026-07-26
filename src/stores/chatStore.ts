@@ -46,6 +46,12 @@ export interface SystemNote {
    *  re-invite for a 'join-failed' line). Threaded so the UI can act without a
    *  side lookup. */
   infoAddress?: string;
+  /** #230: for a membership-status line (invited/hasn't-joined/joined/left), the
+   *  normalized member address it describes. There is at most ONE such line per
+   *  member per thread — `setMemberStatus` upserts by this key, so a member's line
+   *  advances in place (invited → hasn't joined → joined) instead of the statuses
+   *  stacking up. Undefined for ordinary notes (group re-created, mesh, …). */
+  member?: string;
 }
 
 /** #160: what the conversation list row shows as its preview + timestamp. */
@@ -191,6 +197,17 @@ interface ChatState {
     info?: string,
     infoAddress?: string,
   ) => void;
+  /** #230: upsert a member's membership-status line (invited/not-joined/joined/left)
+   *  IN PLACE — replaces any prior status line for that member so the timeline shows
+   *  exactly one, current line per member instead of a growing stack. */
+  setMemberStatus: (
+    convoPk: number,
+    address: string,
+    status: 'invited' | 'not-joined' | 'joined' | 'left',
+  ) => void;
+  /** #230: drop all per-member status lines for a thread (e.g. on group re-create,
+   *  so the fresh invite round starts clean). Non-membership notes are kept. */
+  clearMemberStatuses: (convoPk: number) => void;
   /** #228: load persisted system notes for a thread into memory (on thread open). */
   hydrateSystemLines: (convoPk: number) => Promise<void>;
   /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
@@ -226,7 +243,13 @@ export {
   oldestMsgPk,
   mergeOlderPage,
 } from './conversationView';
-import {oldestMsgPk, mergeOlderPage} from './conversationView';
+import {
+  oldestMsgPk,
+  mergeOlderPage,
+  memberStatusFields,
+  upsertMemberNote,
+  clearMemberNotes,
+} from './conversationView';
 export type {KnownContact} from './conversationView';
 
 const PAGE = 200;
@@ -420,7 +443,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // add actually commits (members_changed) — the two are ~a minute apart. The
     // 'invited-wait' tag adds an (i) explaining you must wait for the join before
     // sending, or those messages never reach the new member (#192).
-    get().pushSystemLine(convoPk, `${describePeer(address)} invited`, 'invited-wait');
+    get().setMemberStatus(convoPk, address, 'invited');
     const lower = address.toLowerCase();
     (pendingJoins[convoPk] ??= []).push(lower);
     // #195: an invitee whose node has no subscribed peers never gets the MLS
@@ -440,12 +463,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const j = jq.indexOf(lower);
         if (j >= 0) jq.splice(j, 1);
       }
-      get().pushSystemLine(
-        convoPk,
-        `${describePeer(address)} hasn't joined — they may be offline`,
-        'join-failed',
-        lower,
-      );
+      get().setMemberStatus(convoPk, address, 'not-joined');
     }, JOIN_TIMEOUT_MS);
     (pendingInvites[convoPk] ??= []).push({address: lower, timer});
     await get().loadMembers(convoPk);
@@ -900,6 +918,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  setMemberStatus: (convoPk, address, status) => {
+    const fields = memberStatusFields(address, status, describePeer(address));
+    // Inferred type keeps `member` required (from fields), so upsertMemberNote's
+    // `member: string` bound is satisfied.
+    const note = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      at: Date.now(),
+      ...fields,
+    };
+    set(s => {
+      // Upsert by member so the status advances in place (invited → hasn't
+      // joined → joined) with no stacking.
+      const next = upsertMemberNote(s.systemLines[convoPk] ?? [], note, SYSLINE_CAP);
+      persistSystemLines(convoPk, next);
+      return {systemLines: {...s.systemLines, [convoPk]: next}};
+    });
+  },
+
+  clearMemberStatuses: convoPk => {
+    set(s => {
+      const cur = s.systemLines[convoPk];
+      if (cur == null) return {};
+      const next = clearMemberNotes(cur);
+      persistSystemLines(convoPk, next);
+      return {systemLines: {...s.systemLines, [convoPk]: next}};
+    });
+  },
+
   hydrateSystemLines: async (convoPk: number) => {
     // Already in memory (pushed this session) → nothing to load.
     if (get().systemLines[convoPk] != null) return;
@@ -929,6 +975,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const res = JSON.parse(await LogosChat.recreateGroup(convoPk));
     // The group is operable again on the NEW lib conversation.
     set(s => ({liveness: {...s.liveness, [convoPk]: 'live'}}));
+    // #230: a fresh round — drop stale per-member status lines so the re-invite
+    // doesn't stack a new "invited/hasn't joined" under every old one.
+    get().clearMemberStatuses(convoPk);
     get().pushSystemLine(convoPk, 'Group re-created');
     // Re-invite from JS (not native) so EVERY member gets its own
     // "<label> <hex> invited" line, and later its own "joined" line.
@@ -1194,18 +1243,21 @@ addLogosChatListener(e => {
         try {
           const left: string[] = JSON.parse(e.detail).left ?? [];
           for (const addr of left) {
-            s.pushSystemLine(convoPk, `${describePeer(addr)} left`);
+            clearPendingInvite(convoPk, addr.toLowerCase());
+            s.setMemberStatus(convoPk, addr, 'left');
           }
         } catch {
           // malformed detail — ignore, the roster is still reconciled native-side.
         }
       }
-      // #228: derive "joined" from a ROSTER DIFF, not the pendingJoins FIFO. The
-      // FIFO broke across recreate (empty queue → the join committed but no line),
-      // and native members_changed carries only {"left"} — never the added member.
-      // Snapshot the roster we knew, reload, and announce whoever is newly present.
-      // Guard: only when we already had a roster (skips the first-load / the
-      // joiner's own admission, where every existing member would look "new").
+      // #228/#230: mark whoever joined. Two signals, both idempotent because
+      // setMemberStatus upserts by member (a member marked "joined" twice still
+      // shows one line):
+      //   (1) ROSTER DIFF — a member newly present in the roster (the remote
+      //       joiner's own admission, or a join the creator hadn't yet listed).
+      //   (2) FIFO FALLBACK — on the CREATOR, addMember pre-loads the invitee
+      //       into the roster at invite time, so the later join produces NO diff;
+      //       treat this members_changed as the oldest outstanding invite settling.
       const prevRoster = useChatStore.getState().members[convoPk];
       const prev = new Set((prevRoster ?? []).map(m => m.address.toLowerCase()));
       s.loadMembers(convoPk)
@@ -1213,11 +1265,28 @@ addLogosChatListener(e => {
           if (prevRoster == null) return; // first time we learned the roster — seed only
           const cur = useChatStore.getState().members[convoPk] ?? [];
           const st = useChatStore.getState();
+          let announced = false;
           for (const m of cur) {
             const a = m.address.toLowerCase();
             if (!prev.has(a)) {
               clearPendingInvite(convoPk, a); // cancel its "hasn't joined" timeout
-              st.pushSystemLine(convoPk, `${describePeer(m.address)} joined`);
+              st.setMemberStatus(convoPk, m.address, 'joined');
+              const jq = pendingJoins[convoPk];
+              if (jq != null) {
+                const j = jq.indexOf(a);
+                if (j >= 0) jq.splice(j, 1);
+              }
+              announced = true;
+            }
+          }
+          // (2) No new roster entry but an invite is outstanding → the creator's
+          // pre-added invitee just settled. Announce the oldest one FIFO.
+          if (!announced) {
+            const jq = pendingJoins[convoPk];
+            const addr = jq?.shift();
+            if (addr != null) {
+              clearPendingInvite(convoPk, addr);
+              st.setMemberStatus(convoPk, addr, 'joined');
             }
           }
         })
