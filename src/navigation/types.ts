@@ -25,6 +25,8 @@ export type RootStackParamList = {
   Contacts: undefined;
   /** App info (from the side menu, #130). */
   About: undefined;
+  /** #232: app preferences (notifications; security tracked in #232). */
+  Settings: undefined;
   /** MeshCore radio setup (Phase 0, #166). */
   MeshCore: undefined;
   /** #216: BLE-mesh nearby peers (hop pages + all/contacts/verified filters). */

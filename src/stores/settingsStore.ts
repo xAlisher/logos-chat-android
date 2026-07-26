@@ -17,6 +17,26 @@ export const KV_BLE_CONFIGURED = 'bleConfigured';
 /** KV key: opt-in to broadcasting a (rotating, contact-resolvable) BLE identity (#214). */
 export const KV_BLE_ADVERTISE_IDENTITY = 'bleAdvertiseIdentity';
 
+// #232: notification preferences. All default ON. Persisted per device.
+export const KV_NOTIF_LOCAL = 'notifLocal'; // OS notifications while backgrounded
+export const KV_NOTIF_INAPP = 'notifInApp'; // in-app banners while foregrounded
+export const KV_NOTIF_SOUND = 'notifSound';
+export const KV_NOTIF_VIBRATE = 'notifVibrate';
+
+/** #232: the four boolean notification prefs, addressed by name for a generic setter. */
+export type NotifPref =
+  | 'localNotifications'
+  | 'inAppNotifications'
+  | 'messageSound'
+  | 'vibration';
+
+const NOTIF_KV: Record<NotifPref, string> = {
+  localNotifications: KV_NOTIF_LOCAL,
+  inAppNotifications: KV_NOTIF_INAPP,
+  messageSound: KV_NOTIF_SOUND,
+  vibration: KV_NOTIF_VIBRATE,
+};
+
 interface SettingsState {
   /** Optional local label for this device — not shared with peers. */
   displayName: string;
@@ -38,8 +58,18 @@ interface SettingsState {
    * contacts can see you're nearby. Off = anonymous presence count only.
    */
   bleAdvertiseIdentity: boolean;
+  /** #232: OS notifications while the app is backgrounded. Default on. */
+  localNotifications: boolean;
+  /** #232: in-app banners for other chats while foregrounded. Default on. */
+  inAppNotifications: boolean;
+  /** #232: play a sound on a new-message notification. Default on. */
+  messageSound: boolean;
+  /** #232: vibrate on a new-message notification. Default on. */
+  vibration: boolean;
   load: () => Promise<void>;
   setDisplayName: (name: string) => Promise<void>;
+  /** #232: set a notification preference (persisted). */
+  setNotifPref: (pref: NotifPref, on: boolean) => Promise<void>;
   /** Mark MeshCore as configured (idempotent); persisted in native kv. */
   setMeshConfigured: (configured: boolean) => Promise<void>;
   /** Mark BLE-mesh as configured (idempotent); persisted in native kv. */
@@ -53,6 +83,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   meshConfigured: false,
   bleConfigured: false,
   bleAdvertiseIdentity: false,
+  localNotifications: true,
+  inAppNotifications: true,
+  messageSound: true,
+  vibration: true,
 
   load: async () => {
     try {
@@ -78,6 +112,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       if (ai === 'true') set({bleAdvertiseIdentity: true});
     } catch {
       // keep default
+    }
+    // #232: notification prefs default ON — only flip off when explicitly stored.
+    for (const pref of Object.keys(NOTIF_KV) as NotifPref[]) {
+      try {
+        const v = await LogosChat.getSetting(NOTIF_KV[pref]);
+        if (v === 'false') set({[pref]: false} as Partial<SettingsState>);
+      } catch {
+        // keep default
+      }
     }
   },
 
@@ -118,6 +161,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({bleAdvertiseIdentity: on});
     try {
       await LogosChat.setSetting(KV_BLE_ADVERTISE_IDENTITY, on ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setNotifPref: async (pref: NotifPref, on: boolean) => {
+    if ((get() as any)[pref] === on) return;
+    set({[pref]: on} as Partial<SettingsState>);
+    try {
+      await LogosChat.setSetting(NOTIF_KV[pref], on ? 'true' : 'false');
     } catch {
       // best-effort
     }

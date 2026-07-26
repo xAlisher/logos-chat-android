@@ -288,6 +288,7 @@ export function ConversationsScreen() {
         onSelectView={setView}
         onContacts={() => navigation.navigate('Contacts')}
         onAbout={() => navigation.navigate('About')}
+        onSettings={() => navigation.navigate('Settings')}
         onMyAddress={() => navigation.navigate('MyAddress')}
         onMeshCore={() => navigation.navigate('MeshCore')}
         onNearby={() => navigation.navigate('Nearby')}

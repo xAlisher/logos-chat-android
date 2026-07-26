@@ -22,6 +22,7 @@ import {GroupInfoScreen} from '../screens/GroupInfoScreen';
 import {AddMembersScreen} from '../screens/AddMembersScreen';
 import {ContactsScreen} from '../screens/ContactsScreen';
 import {AboutScreen} from '../screens/AboutScreen';
+import {SettingsScreen} from '../screens/SettingsScreen';
 import {MeshCoreScreen} from '../screens/MeshCoreScreen';
 import {NearbyScreen} from '../screens/NearbyScreen';
 
@@ -149,6 +150,11 @@ export function RootNavigator() {
           name="About"
           component={AboutScreen}
           options={{title: 'About'}}
+        />
+        <Stack.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{title: 'Settings'}}
         />
         <Stack.Screen
           name="MeshCore"
