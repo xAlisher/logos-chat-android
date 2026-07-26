@@ -51,13 +51,15 @@ export function decodePacket(s: string): FloodPacket | null {
   if (typeof s !== 'string' || !s.startsWith(WIRE_PREFIX + SEP)) {
     return null;
   }
-  // Split into exactly 7 parts; payload keeps any trailing ␟-free remainder.
-  // (payload cannot contain ␟, so a plain split with a bounded rejoin is safe.)
+  // The first 6 fields (prefix, msgId, hop, ttl, kind, senderId) never contain ␟,
+  // but the PAYLOAD may (it can itself be a ␟-using envelope, e.g. a bleFrag
+  // fragment). So take the payload as everything after the 6th separator.
   const parts = s.split(SEP);
-  if (parts.length !== 7) {
+  if (parts.length < 7) {
     return null;
   }
-  const [prefix, msgId, hopStr, ttlStr, kind, senderId, payload] = parts;
+  const [prefix, msgId, hopStr, ttlStr, kind, senderId] = parts;
+  const payload = parts.slice(6).join(SEP);
   if (prefix !== WIRE_PREFIX) {
     return null;
   }

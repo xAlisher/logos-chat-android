@@ -165,3 +165,18 @@ describe('newMsgId', () => {
     expect(newMsgId('A', 1).length).toBeGreaterThan(0);
   });
 });
+
+// #142 regression: a flood payload may itself be a ␟-using envelope (a bleFrag
+// fragment). decodePacket must keep the payload intact, not reject it.
+import {encodePacket as enc2, decodePacket as dec2} from '../src/native/bleFlood';
+describe('flood payload with embedded ␟ (nested fragment)', () => {
+  it('round-trips a fragment payload containing ␟', () => {
+    const payload = 'frg1:1u3tfqj:0:1␟ping 79572';
+    const s = enc2({msgId: 'abc', hopCount: 0, ttl: 3, kind: 'msg', senderId: '27f9de', payload});
+    const p = dec2(s);
+    expect(p).not.toBeNull();
+    expect(p!.payload).toBe(payload);
+    expect(p!.kind).toBe('msg');
+    expect(p!.senderId).toBe('27f9de');
+  });
+});
