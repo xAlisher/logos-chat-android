@@ -1,6 +1,7 @@
 package com.logoschat
 
 import android.content.Context
+import android.system.Os
 import android.util.Log
 import java.io.File
 import java.security.SecureRandom
@@ -22,6 +23,12 @@ object NodeRuntime {
   private const val TAG = "logos-chat-bridge"
 
   const val KV_AUTO_RESTART = "nodeAutoRestart"
+  // #219: multiaddr of our self-hosted delivery node to pin the Edge client to
+  // (`/dns4/<host>/tcp/<port>/p2p/<peerId>`), instead of the flaky public fleet.
+  // Empty = default fleet behaviour. Read into env before open (the Rust delivery
+  // layer reads LOGOS_DELIVERY_FILTERNODE / LOGOS_DELIVERY_LIGHTPUSHNODE, threaded.rs).
+  const val KV_DELIVERY_FILTERNODE = "deliveryFilterNode"
+  const val KV_DELIVERY_LIGHTPUSHNODE = "deliveryLightpushNode"
   private const val SECURE_PREFS = "logoschat_secure"
   private const val KEY_DB_KEY = "dbKey"
   private const val IDENTITY_FILE = "logoschat-identity.bin"
@@ -85,10 +92,35 @@ object NodeRuntime {
 
   // -- lifecycle (runs ON the node executor) ---------------------------------
 
+  /**
+   * #219: if a self-hosted delivery node is configured (KV), export its multiaddr as
+   * the static filter + lightpush service peer so the Edge client uses it instead of
+   * the public fleet. No-op when unset. Best-effort — never blocks node start.
+   */
+  private fun applyDeliveryPeerEnv() {
+    try {
+      val db = ChatRepo.requireDb()
+      db.kvGet(KV_DELIVERY_FILTERNODE)?.takeIf { it.isNotBlank() }?.let {
+        Os.setenv("LOGOS_DELIVERY_FILTERNODE", it, true)
+        Log.i(TAG, "delivery filternode pinned: $it")
+      }
+      db.kvGet(KV_DELIVERY_LIGHTPUSHNODE)?.takeIf { it.isNotBlank() }?.let {
+        Os.setenv("LOGOS_DELIVERY_LIGHTPUSHNODE", it, true)
+        Log.i(TAG, "delivery lightpushnode pinned: $it")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")
+    }
+  }
+
   private fun startBlocking(): String? {
     if (ctx != 0L) return "node already started (status=$status)"
     val context = appContext ?: return "no app context"
     setStatus("initializing")
+    // #219: pin the delivery client to our self-hosted node if configured. Set the
+    // env vars the Rust delivery layer reads BEFORE opening the node (the node thread
+    // inherits this process's env). Empty/unset KV → no-op → default fleet behaviour.
+    applyDeliveryPeerEnv()
     if (!setupDone) {
       NodeBridge.chatSetup() // stdout/stderr -> logcat pump, once per process
       setupDone = true
