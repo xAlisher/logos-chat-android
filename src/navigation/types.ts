@@ -27,4 +27,6 @@ export type RootStackParamList = {
   About: undefined;
   /** MeshCore radio setup (Phase 0, #166). */
   MeshCore: undefined;
+  /** #216: BLE-mesh nearby peers (hop pages + all/contacts/verified filters). */
+  Nearby: undefined;
 };

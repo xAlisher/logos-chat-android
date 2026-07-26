@@ -16,6 +16,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import Svg, {Path, Circle, Line, Rect} from 'react-native-svg';
+import {BleLogo} from './BleLogo';
 import {colors, type, spacing} from '../theme';
 import {HexAvatar} from './HexAvatar';
 import {QrIcon} from './QrIcon';
@@ -143,6 +144,7 @@ export function SideMenu({
   onAbout,
   onMyAddress,
   onMeshCore,
+  onNearby,
 }: {
   visible: boolean;
   myAddress: string | null;
@@ -153,6 +155,7 @@ export function SideMenu({
   onAbout: () => void;
   onMyAddress: () => void;
   onMeshCore: () => void;
+  onNearby: () => void;
 }) {
   const {width} = useWindowDimensions();
   const panelW = Math.min(320, width * 0.82);
@@ -332,6 +335,12 @@ export function SideMenu({
             label="MeshCore"
             onPress={() => pick(onMeshCore)}
             testID="menu-meshcore"
+          />
+          <Item
+            icon={c => <BleLogo color={c} size={22} />}
+            label="Nearby"
+            onPress={() => pick(onNearby)}
+            testID="menu-nearby"
           />
         </View>
 

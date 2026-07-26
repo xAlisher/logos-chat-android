@@ -23,6 +23,7 @@ import {AddMembersScreen} from '../screens/AddMembersScreen';
 import {ContactsScreen} from '../screens/ContactsScreen';
 import {AboutScreen} from '../screens/AboutScreen';
 import {MeshCoreScreen} from '../screens/MeshCoreScreen';
+import {NearbyScreen} from '../screens/NearbyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
@@ -153,6 +154,11 @@ export function RootNavigator() {
           name="MeshCore"
           component={MeshCoreScreen}
           options={{title: 'MeshCore'}}
+        />
+        <Stack.Screen
+          name="Nearby"
+          component={NearbyScreen}
+          options={{title: 'Nearby'}}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -24,5 +24,7 @@ module.exports = {
     '<rootDir>/__tests__/richMsg.test.ts',
     '<rootDir>/__tests__/meshPresence.test.ts',
     '<rootDir>/__tests__/bleIdentity.test.ts',
+    '<rootDir>/__tests__/bleFlood.test.ts',
+    '<rootDir>/__tests__/bleFrag.test.ts',
   ],
 };

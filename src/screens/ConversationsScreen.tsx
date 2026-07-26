@@ -290,6 +290,7 @@ export function ConversationsScreen() {
         onAbout={() => navigation.navigate('About')}
         onMyAddress={() => navigation.navigate('MyAddress')}
         onMeshCore={() => navigation.navigate('MeshCore')}
+        onNearby={() => navigation.navigate('Nearby')}
       />
       <OverflowMenu
         visible={rowMenu != null}
