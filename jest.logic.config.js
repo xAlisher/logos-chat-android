@@ -21,5 +21,6 @@ module.exports = {
     '<rootDir>/__tests__/inboundErrors.test.ts',
     '<rootDir>/__tests__/bleMesh.logic.test.ts',
     '<rootDir>/__tests__/imageMsg.test.ts',
+    '<rootDir>/__tests__/richMsg.test.ts',
   ],
 };

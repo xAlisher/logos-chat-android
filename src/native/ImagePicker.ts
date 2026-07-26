@@ -21,8 +21,26 @@ interface ImagePickerNative {
    * is the target JPEG size the native side compresses toward.
    */
   pickImage(maxDim: number, budgetBytes: number): Promise<string | null>;
+  /**
+   * #207: pick multiple images. Resolves a stringified JSON array of
+   * {@link PickedImage} (≤ maxCount), or null if cancelled.
+   */
+  pickImages(
+    maxDim: number,
+    budgetBytes: number,
+    maxCount: number,
+  ): Promise<string | null>;
+  /**
+   * #203: capture a photo with the camera. Resolves a stringified
+   * {@link PickedImage}, or null if cancelled. Needs the CAMERA runtime permission.
+   */
+  capturePhoto(maxDim: number, budgetBytes: number): Promise<string | null>;
   /** Persist a base64 JPEG to app storage; resolves the absolute file path. */
   saveBase64Jpeg(base64: string): Promise<string>;
+  /** #201: read a stored blob file back to base64 (to forward a media message). */
+  readFileBase64(path: string): Promise<string>;
+  /** #201 Save: copy a stored image into the device gallery; resolves its uri. */
+  saveImageToGallery(path: string): Promise<string>;
 }
 
 const native: ImagePickerNative = NativeModules.ImagePicker;
@@ -50,6 +68,20 @@ export function parsePicked(json: string | null): PickedImage | null {
     // fall through
   }
   return null;
+}
+
+/** Parse the JSON array pickImages resolves with. Returns [] on cancel/malformed. */
+export function parsePickedArray(json: string | null): PickedImage[] {
+  if (!json) return [];
+  try {
+    const arr = JSON.parse(json);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .map(o => parsePicked(JSON.stringify(o)))
+      .filter((p): p is PickedImage => p != null);
+  } catch {
+    return [];
+  }
 }
 
 export default native;

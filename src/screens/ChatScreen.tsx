@@ -9,13 +9,17 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
+  DeviceEventEmitter,
   Image,
+  Linking,
   Text,
   TextInput,
   View,
   Pressable,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
+  PermissionsAndroid,
   Platform,
   ToastAndroid,
   ActivityIndicator,
@@ -53,6 +57,8 @@ import {InfoIcon} from '../components/InfoIcon';
 import {InfoModal, InfoSection} from '../components/InfoModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
+import {ForwardPicker} from '../components/ForwardPicker';
+import ImagePickerNative from '../native/ImagePicker';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {Conversation, Message, SystemNote} from '../stores/chatStore';
 
@@ -61,6 +67,11 @@ type Row = {kind: 'msg'; msg: Message} | {kind: 'sys'; sys: SystemNote};
 import {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
 import {parseImageLocal} from '../native/imageMsg';
+import {parseVoiceLocal} from '../native/voiceMsg';
+import {parseLocation, formatLatLng, geoUri} from '../native/locMsg';
+import {VoiceBubble} from '../components/VoiceBubble';
+import {CameraIcon, LocationIcon, MicIcon} from '../components/MediaIcons';
+import AudioRecorder, {parseRecording, MAX_RECORDING_MS} from '../native/Audio';
 import {deriveComposerState} from '../stores/groupState';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -71,8 +82,18 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 // #167: MeshCore packet text cap. Payload is single-shot (~133–160 chars,
 // no fragmentation exposed); 140 keeps a safe margin under the datagram cap.
 const MESH_MAX_CHARS = 140;
-/** #197: on-screen width of an image bubble (height scales to the image ratio). */
-const IMG_BUBBLE_W = 220;
+/** #199: an image bubble fits inside this box (aspect-preserved), so a tall
+ * screenshot doesn't clog the thread. */
+const IMG_MAX_W = 230;
+const IMG_MAX_H = 300;
+
+/** Fit (w×h) inside the IMG_MAX box preserving aspect ratio. */
+function fitImage(w: number, h: number): {width: number; height: number} {
+  const sw = w > 0 ? w : 1;
+  const sh = h > 0 ? h : 1;
+  const scale = Math.min(IMG_MAX_W / sw, IMG_MAX_H / sh, 1);
+  return {width: Math.round(sw * scale), height: Math.round(sh * scale)};
+}
 // Mesh transport accent — theme has no green token (brand is orange), so the
 // literal lives here per the mesh-transport design (docs/mesh-transport.md).
 const MESH_GREEN = '#22C55E';
@@ -157,11 +178,15 @@ function Bubble({
   attribution,
   onRetry,
   onLongPress,
+  onOpenImage,
+  onOpenLocation,
 }: {
   msg: Message;
   attribution: Attribution | null;
   onRetry: () => void;
   onLongPress: (pageY: number) => void;
+  onOpenImage: (path: string) => void;
+  onOpenLocation: (loc: {lat: number; lng: number}) => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
@@ -179,9 +204,11 @@ function Bubble({
   // msg.senderAccount for a Logos-arrived relay) describes them — reuse its
   // label ?? hex. MessageRow carries no mesh sender-name, so a mesh-arrived relay
   // (attribution == null) falls back to a plain 'bridge'.
-  // #197: an image message stores a local marker `img1v:<mime>:<w>:<h>␟<path>`;
-  // render the file inline (aspect-fit within a max width) instead of text.
-  const image = parseImageLocal(msg.text);
+  // Media messages store a compact local marker; render each kind specially.
+  const image = parseImageLocal(msg.text); // #197
+  const voice = parseVoiceLocal(msg.text); // #205
+  const location = parseLocation(msg.text); // #204
+  const imgDims = image != null ? fitImage(image.meta.width, image.meta.height) : null;
   const relay = parseRelay(msg.text);
   const displayText = relay?.text ?? msg.text;
   const bridgeName =
@@ -222,7 +249,15 @@ function Bubble({
       {/* Short tap = retry (failed only); long press = the action menu. The
           Pressable must stay ENABLED or `disabled` would kill onLongPress too. */}
       <Pressable
-        onPress={failed ? onRetry : undefined}
+        onPress={
+          failed
+            ? onRetry
+            : image != null
+            ? () => onOpenImage(image.path)
+            : location != null
+            ? () => onOpenLocation(location)
+            : undefined
+        }
         onLongPress={e => onLongPress(e.nativeEvent.pageY)}
         delayLongPress={350}
         testID={`bubble-${msg.msgPk}`}
@@ -234,18 +269,35 @@ function Bubble({
           failed && styles.bubbleFailed,
           image != null && styles.bubbleImage,
         ]}>
-        {image != null ? (
+        {image != null && imgDims != null ? (
           <Image
             source={{uri: `file://${image.path}`}}
             style={{
-              width: IMG_BUBBLE_W,
-              height: Math.round(
-                (IMG_BUBBLE_W * image.meta.height) / Math.max(1, image.meta.width),
-              ),
-              borderRadius: radii.card,
+              width: imgDims.width,
+              height: imgDims.height,
+              borderRadius: radii.card - 2,
             }}
             resizeMode="cover"
           />
+        ) : voice != null ? (
+          <VoiceBubble
+            path={voice.path}
+            meta={voice.meta}
+            tint={own ? colors.onAccent : colors.text}
+          />
+        ) : location != null ? (
+          <View style={styles.locRow}>
+            <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
+              📍 {formatLatLng(location)}
+            </Text>
+            <Text
+              style={[
+                type.caption,
+                {color: own ? colors.onAccent : colors.textDim, opacity: 0.8},
+              ]}>
+              Tap to open in maps
+            </Text>
+          </View>
         ) : (
           <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
             {displayText}
@@ -285,6 +337,10 @@ export function ChatScreen() {
   const addMember = useChatStore(s => s.addMember);
   const send = useChatStore(s => s.send);
   const sendImage = useChatStore(s => s.sendImage);
+  const sendImages = useChatStore(s => s.sendImages); // #207
+  const sendCameraPhoto = useChatStore(s => s.sendCameraPhoto); // #203
+  const sendLocation = useChatStore(s => s.sendLocation); // #204
+  const sendVoice = useChatStore(s => s.sendVoice); // #205
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
   const setNickname = useChatStore(s => s.setNickname);
@@ -303,6 +359,8 @@ export function ChatScreen() {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [recording, setRecording] = useState(false); // #205 voice
+  const [recElapsed, setRecElapsed] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
   // The contact the label editor is for: the thread peer (header menu) OR the
@@ -314,6 +372,9 @@ export function ChatScreen() {
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
   const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
+  const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
+  const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
+  const forwardMessage = useChatStore(s => s.forwardMessage);
   // #112: set after a successful re-create so the thread can report what happened.
   const [reviving, setReviving] = useState(false);
   // #168: the "About mesh mirroring" explainer (banner (i) + ⋮ menu).
@@ -677,6 +738,8 @@ export function ChatScreen() {
       : cs.sendColorKind === 'connecting'
       ? colors.nodeConnecting
       : colors.nodeOffline;
+  // #206: the send button is only active when there's text to send; gray otherwise.
+  const canSendText = text.trim().length > 0;
 
   // #168 (Phase 2b): mesh-mirror banner state. Shown on a Logos group when a radio
   // is connected and the group is either already mirrored or has mapped members.
@@ -797,23 +860,82 @@ export function ChatScreen() {
     }
   };
 
-  const onAttach = async () => {
-    // #197: images are Logos-only. Need the node up (a pure-mesh thread can't
-    // carry one). The store also guards, but fail fast with a clear message here.
-    if (isMesh) {
-      ToastAndroid.show('Images are not supported on mesh', ToastAndroid.SHORT);
-      return;
-    }
-    if (!running) {
-      useNodeStore.setState({error: 'start the node to send an image'});
-      return;
-    }
-    if (attaching) return;
+  // #206/#207: the image action picks MULTIPLE photos (album). Guards live in the
+  // store; keep a busy flag so a double-tap can't open two pickers.
+  const withAttaching = async (fn: () => Promise<void>) => {
+    if (attaching || recording) return;
     setAttaching(true);
     try {
-      await sendImage(convoPk);
+      await fn();
     } finally {
       setAttaching(false);
+    }
+  };
+  const onPickImages = () => withAttaching(() => sendImages(convoPk));
+  const onCamera = () => withAttaching(() => sendCameraPhoto(convoPk));
+  const onLocation = () => withAttaching(() => sendLocation(convoPk));
+
+  // #205: tick the elapsed timer + auto-finalize when the 120s cap is hit.
+  useEffect(() => {
+    if (!recording) return undefined;
+    const t = setInterval(() => setRecElapsed(e => e + 1), 1000);
+    const sub = DeviceEventEmitter.addListener('AudioRecorderEvent', (e: any) => {
+      if (e?.eventType === 'maxDuration') finishRecord(true);
+    });
+    return () => {
+      clearInterval(t);
+      sub.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
+
+  const requestRecordPerm = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
+    try {
+      const res = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+      );
+      return res === PermissionsAndroid.RESULTS.GRANTED;
+    } catch {
+      return false;
+    }
+  };
+
+  const onStartRecord = async () => {
+    if (attaching || recording) return;
+    if (!running) {
+      useNodeStore.setState({error: 'start the node to record a voice note'});
+      return;
+    }
+    const granted = await requestRecordPerm();
+    if (!granted) {
+      ToastAndroid.show('Microphone permission denied', ToastAndroid.SHORT);
+      return;
+    }
+    try {
+      await AudioRecorder.startRecording();
+      setRecElapsed(0);
+      setRecording(true);
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+    }
+  };
+  const finishRecord = async (sendIt: boolean) => {
+    if (!recording) return;
+    setRecording(false);
+    try {
+      if (sendIt) {
+        const rec = parseRecording(await AudioRecorder.stopRecording());
+        if (rec != null && rec.durationMs >= 800) {
+          await sendVoice(convoPk, rec);
+        } else {
+          ToastAndroid.show('Too short', ToastAndroid.SHORT);
+        }
+      } else {
+        await AudioRecorder.cancelRecording();
+      }
+    } catch (e: any) {
+      // stopRecording rejects "empty"/"too short" on a tap — treat as cancel.
     }
   };
 
@@ -960,6 +1082,12 @@ export function ChatScreen() {
               msg={m}
               attribution={attribution}
               onRetry={() => retry(convoPk, m.msgPk)}
+              onOpenImage={path => setFullscreen(path)}
+              onOpenLocation={loc =>
+                Linking.openURL(geoUri(loc)).catch(() =>
+                  ToastAndroid.show('No maps app', ToastAndroid.SHORT),
+                )
+              }
               onLongPress={pageY => {
                 setBubbleY(pageY);
                 setBubbleTarget({
@@ -1040,55 +1168,100 @@ export function ChatScreen() {
             </Pressable>
           </View>
         </View>
-      ) : (
-      <View style={styles.composer}>
-        {/* #197: attach an image — Logos-only, so hidden on pure-mesh threads. */}
-        {!isMesh && (
+      ) : recording ? (
+        // #205: recording a voice note — replace the composer with a rec bar.
+        <View style={styles.composer}>
+          <View style={styles.recDot} />
+          <Text style={styles.recTime} testID="rec-timer">
+            {Math.floor(recElapsed / 60)}:{(recElapsed % 60).toString().padStart(2, '0')}
+            <Text style={styles.recCap}>
+              {' '}/ {Math.floor(MAX_RECORDING_MS / 60000)}:00
+            </Text>
+          </Text>
+          <View style={{flex: 1}} />
           <Pressable
-            style={styles.attach}
-            onPress={onAttach}
-            disabled={attaching}
-            hitSlop={8}
-            testID="composer-attach">
-            {attaching ? (
-              <ActivityIndicator size="small" color={colors.textDim} />
-            ) : (
-              <ImageIcon size={24} color={colors.textDim} />
-            )}
+            style={styles.recCancel}
+            onPress={() => finishRecord(false)}
+            testID="rec-cancel">
+            <Text style={{color: colors.textDim}}>Cancel</Text>
           </Pressable>
-        )}
-        <TextInput
-          style={styles.input}
-          value={text}
-          onChangeText={setText}
-          // Always editable (#17): browse + draft while the node connects/offline.
-          placeholder="Message…"
-          placeholderTextColor={colors.textFaint}
-          multiline
-          // #167: MeshCore text is single-shot (~133–160 chars/packet, no
-          // fragmentation), so a mesh composer is hard-capped. Non-mesh unchanged.
-          maxLength={isMesh ? MESH_MAX_CHARS : undefined}
-          testID="composer-input"
-        />
-        <View style={styles.sendCol}>
-          {isMesh && (
+          <Pressable
+            style={[styles.send, {backgroundColor: sendColor}]}
+            onPress={() => finishRecord(true)}
+            testID="rec-send">
+            <SendIcon mesh={false} color={colors.onAccent} />
+          </Pressable>
+        </View>
+      ) : isMesh ? (
+        // Mesh: single-line, char-capped, text only.
+        <View style={styles.composer}>
+          <TextInput
+            style={styles.input}
+            value={text}
+            onChangeText={setText}
+            placeholder="Message…"
+            placeholderTextColor={colors.textFaint}
+            multiline
+            maxLength={MESH_MAX_CHARS}
+            testID="composer-input"
+          />
+          <View style={styles.sendCol}>
             <Text style={styles.charCount} testID="composer-charcount">
               {text.length}/{MESH_MAX_CHARS}
             </Text>
-          )}
-          <Pressable
-            style={[styles.send, {backgroundColor: sendColor}]}
-            onPress={onSubmit}
-            testID="composer-send">
-            {busy ? (
-              <Text style={[type.title, {color: colors.onAccent}]}>…</Text>
-            ) : (
-              // #171: paper-plane for Logos, mesh (waypoints) glyph over the mesh.
-              <SendIcon mesh={isMesh} color={colors.onAccent} />
-            )}
-          </Pressable>
+            <Pressable
+              style={[styles.send, {backgroundColor: canSendText ? sendColor : colors.border}]}
+              onPress={onSubmit}
+              disabled={!canSendText}
+              testID="composer-send">
+              <SendIcon mesh color={colors.onAccent} />
+            </Pressable>
+          </View>
         </View>
-      </View>
+      ) : (
+        // #206: 2-line composer — a growing text row + an action-icon row.
+        <View style={styles.composerV}>
+          <View style={styles.composerRow1}>
+            <TextInput
+              style={styles.input}
+              value={text}
+              onChangeText={setText}
+              placeholder="Message…"
+              placeholderTextColor={colors.textFaint}
+              multiline
+              testID="composer-input"
+            />
+            <Pressable
+              style={[
+                styles.send,
+                {backgroundColor: canSendText ? sendColor : colors.border},
+              ]}
+              onPress={onSubmit}
+              disabled={!canSendText}
+              testID="composer-send">
+              {busy ? (
+                <Text style={[type.title, {color: colors.onAccent}]}>…</Text>
+              ) : (
+                <SendIcon mesh={false} color={colors.onAccent} />
+              )}
+            </Pressable>
+          </View>
+          <View style={styles.actionRow}>
+            <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} testID="composer-image">
+              <ImageIcon size={22} color={colors.textDim} />
+            </Pressable>
+            <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} testID="composer-camera">
+              <CameraIcon size={22} color={colors.textDim} />
+            </Pressable>
+            <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} testID="composer-location">
+              <LocationIcon size={22} color={colors.textDim} />
+            </Pressable>
+            <Pressable style={styles.actionBtn} onPress={onStartRecord} disabled={attaching} hitSlop={6} testID="composer-mic">
+              <MicIcon size={22} color={colors.textDim} />
+            </Pressable>
+            {attaching && <ActivityIndicator size="small" color={colors.textDim} />}
+          </View>
+        </View>
       )}
       <OverflowMenu
         visible={menuOpen}
@@ -1111,7 +1284,49 @@ export function ChatScreen() {
           })
         }
         onSendMessage={openDirectWith}
+        onForward={content => {
+          setBubbleTarget(null);
+          setForwardContent(content);
+        }}
+        onSaveImage={async path => {
+          setBubbleTarget(null);
+          try {
+            await ImagePickerNative.saveImageToGallery(path);
+            ToastAndroid.show('Saved to gallery', ToastAndroid.SHORT);
+          } catch {
+            ToastAndroid.show('Save failed', ToastAndroid.SHORT);
+          }
+        }}
       />
+      <ForwardPicker
+        visible={forwardContent != null}
+        onClose={() => setForwardContent(null)}
+        onPick={pk => {
+          const c = forwardContent;
+          setForwardContent(null);
+          if (c != null) {
+            forwardMessage(c, pk);
+            ToastAndroid.show('Forwarded', ToastAndroid.SHORT);
+          }
+        }}
+      />
+      {/* #200: full-screen image viewer — tap anywhere to dismiss. */}
+      <Modal
+        visible={fullscreen != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFullscreen(null)}
+        statusBarTranslucent>
+        <Pressable style={styles.fsBackdrop} onPress={() => setFullscreen(null)}>
+          {fullscreen != null && (
+            <Image
+              source={{uri: `file://${fullscreen}`}}
+              style={styles.fsImage}
+              resizeMode="contain"
+            />
+          )}
+        </Pressable>
+      </Modal>
       <AddressModal
         visible={addressOpen}
         address={convo?.peerAddress ?? null}
@@ -1203,8 +1418,17 @@ const styles = StyleSheet.create({
   bubbleOwn: {backgroundColor: colors.accent},
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
-  // #197: an image fills the bubble — drop the text padding so it sits flush.
-  bubbleImage: {padding: 3, overflow: 'hidden'},
+  // #202: an image bubble is a thin 2px frame around the (rounded) image.
+  bubbleImage: {padding: 2, overflow: 'hidden'},
+  locRow: {gap: 2},
+  // #200: full-screen image viewer.
+  fsBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  fsImage: {width: '100%', height: '100%'},
   // #167: subtle green edge marking a message that rode the mesh (not MLS). A
   // thin border on the "outside" edge of each side + a faint green tint.
   bubbleMeshPeer: {
@@ -1339,6 +1563,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendCol: {alignItems: 'center', gap: spacing.xs},
+  // #206: two-line composer.
+  composerV: {
+    backgroundColor: colors.pane,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  composerRow1: {flexDirection: 'row', alignItems: 'flex-end', gap: spacing.md},
+  actionRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingLeft: spacing.xs},
+  actionBtn: {padding: spacing.xs},
+  // #205: recording bar.
+  recDot: {width: 12, height: 12, borderRadius: 6, backgroundColor: colors.unread},
+  recTime: {...type.body, color: colors.text, marginLeft: spacing.sm},
+  recCap: {...type.caption, color: colors.textFaint},
+  recCancel: {paddingHorizontal: spacing.md, justifyContent: 'center'},
   // #167: live char counter shown only for a mesh composer.
   charCount: {...type.caption, color: colors.textFaint},
   send: {

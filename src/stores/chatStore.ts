@@ -9,8 +9,14 @@ import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
 import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
-import {isImageContent} from '../native/imageMsg';
-import ImagePicker, {parsePicked} from '../native/ImagePicker';
+import {isImageContent, parseImageLocal} from '../native/imageMsg';
+import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
+import {isLocationContent} from '../native/locMsg';
+import ImagePicker, {parsePicked, parsePickedArray} from '../native/ImagePicker';
+import LocationNative, {parseLocation as parseNativeLocation} from '../native/Location';
+import {buildLocation} from '../native/locMsg';
+import AudioRecorder, {parseRecording} from '../native/Audio';
+import {PermissionsAndroid, Platform} from 'react-native';
 import {useNodeStore} from './nodeStore';
 import {useMeshStore} from './meshStore';
 import {convoDisplayName} from './conversationView';
@@ -59,6 +65,20 @@ export interface ConvoPreview {
  * Pure/derived — reads both sources, mutates nothing. `systemLines` are appended
  * in time order (pushSystemLine stamps `Date.now()`), so the last one is latest.
  */
+/** #207: max photos per album send (matches common apps + our 1-msg-per-image model). */
+export const MAX_ALBUM = 10;
+
+/** Request a single Android runtime permission; true if granted (or non-Android). */
+async function ensurePerm(perm: any): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const res = await PermissionsAndroid.request(perm);
+    return res === PermissionsAndroid.RESULTS.GRANTED;
+  } catch {
+    return false;
+  }
+}
+
 export function conversationPreview(
   convo: ConversationRow,
   systemLines: SystemNote[] | undefined,
@@ -70,8 +90,15 @@ export function conversationPreview(
   if (latest != null && latest.at > convo.lastMessageAt) {
     return {text: latest.text, at: latest.at, isSystem: true};
   }
-  // #197: an image's last-message is a marker, not readable text — preview it as a photo.
-  const text = isImageContent(convo.lastText) ? '📷 Photo' : convo.lastText;
+  // Media last-messages are markers, not readable text — preview with a label.
+  const lt = convo.lastText;
+  const text = isImageContent(lt)
+    ? '📷 Photo'
+    : isVoiceContent(lt)
+    ? '🎤 Voice message'
+    : isLocationContent(lt)
+    ? '📍 Location'
+    : lt;
   return {text, at: convo.lastMessageAt, isSystem: false};
 }
 
@@ -122,6 +149,19 @@ interface ChatState {
    * No-op if the user cancels the picker.
    */
   sendImage: (convoPk: number) => Promise<void>;
+  /** #207: pick up to {@link MAX_ALBUM} images and send them (each its own message). */
+  sendImages: (convoPk: number) => Promise<void>;
+  /** #203: capture a photo with the camera and send it. */
+  sendCameraPhoto: (convoPk: number) => Promise<void>;
+  /** #204: share the current location as clickable coordinates. */
+  sendLocation: (convoPk: number) => Promise<void>;
+  /** #205: send an already-recorded voice note. */
+  sendVoice: (
+    convoPk: number,
+    rec: {mime: string; durationMs: number; waveform: number[]; base64: string},
+  ) => Promise<void>;
+  /** #201: forward any message content (text/image/voice/location, incl. own) to another convo. */
+  forwardMessage: (content: string, toConvoPk: number) => Promise<void>;
   /** Re-send a failed outbound message. */
   retry: (convoPk: number, msgPk: number) => Promise<void>;
   setActive: (convoPk: number | null) => void;
@@ -497,6 +537,163 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // The own bubble + status land native-side; refresh from the DB.
     await get().loadMessages(convoPk);
     get().refreshConversations();
+  },
+
+  sendImages: async (convoPk: number) => {
+    const convo = get().conversations[convoPk];
+    if ((convo?.transport ?? 'logos') === 'mesh') {
+      useNodeStore.setState({error: 'images are not supported on mesh'});
+      return;
+    }
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'start the node to send images'});
+      return;
+    }
+    let arr;
+    try {
+      arr = parsePickedArray(
+        await ImagePicker.pickImages(1280, 120_000, MAX_ALBUM),
+      );
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return;
+    }
+    if (arr.length === 0) return; // cancelled
+    for (const p of arr) {
+      try {
+        await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64);
+      } catch (e: any) {
+        useNodeStore.setState({error: String(e?.message ?? e)});
+      }
+    }
+    await get().loadMessages(convoPk);
+    get().refreshConversations();
+  },
+
+  sendCameraPhoto: async (convoPk: number) => {
+    const convo = get().conversations[convoPk];
+    if ((convo?.transport ?? 'logos') === 'mesh') {
+      useNodeStore.setState({error: 'images are not supported on mesh'});
+      return;
+    }
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'start the node to send a photo'});
+      return;
+    }
+    if (!(await ensurePerm(PermissionsAndroid.PERMISSIONS.CAMERA))) {
+      useNodeStore.setState({error: 'camera permission denied'});
+      return;
+    }
+    let p;
+    try {
+      p = parsePicked(await ImagePicker.capturePhoto(1280, 120_000));
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return;
+    }
+    if (p == null) return; // cancelled
+    try {
+      const res = JSON.parse(
+        await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64),
+      );
+      if (res.status === 'failed') {
+        useNodeStore.setState({error: 'photo send failed — tap to retry'});
+      }
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+    }
+    await get().loadMessages(convoPk);
+    get().refreshConversations();
+  },
+
+  sendLocation: async (convoPk: number) => {
+    if (
+      !(await ensurePerm(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION))
+    ) {
+      useNodeStore.setState({error: 'location permission denied'});
+      return;
+    }
+    let loc;
+    try {
+      loc = parseNativeLocation(await LocationNative.getCurrent());
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return;
+    }
+    if (loc == null) {
+      useNodeStore.setState({error: 'could not get location'});
+      return;
+    }
+    // Location is tiny text — route through the normal send (works on any transport).
+    await get().send(convoPk, buildLocation(loc));
+  },
+
+  sendVoice: async (convoPk, rec) => {
+    const convo = get().conversations[convoPk];
+    if ((convo?.transport ?? 'logos') === 'mesh') {
+      useNodeStore.setState({error: 'voice notes are not supported on mesh'});
+      return;
+    }
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'start the node to send a voice note'});
+      return;
+    }
+    try {
+      const res = JSON.parse(
+        await LogosChat.sendVoiceTo(
+          convoPk,
+          rec.mime,
+          rec.durationMs,
+          rec.waveform.join(','),
+          rec.base64,
+        ),
+      );
+      if (res.status === 'failed') {
+        useNodeStore.setState({error: 'voice send failed — tap to retry'});
+      }
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+    }
+    await get().loadMessages(convoPk);
+    get().refreshConversations();
+  },
+
+  forwardMessage: async (content, toConvoPk) => {
+    const target = get().conversations[toConvoPk];
+    const targetMesh = (target?.transport ?? 'logos') === 'mesh';
+    const img = parseImageLocal(content);
+    const voc = parseVoiceLocal(content);
+    const isMedia = img != null || voc != null;
+    if (isMedia && targetMesh) {
+      useNodeStore.setState({error: 'media cannot be forwarded to a mesh chat'});
+      return;
+    }
+    try {
+      if (img != null) {
+        const base64 = await ImagePicker.readFileBase64(img.path);
+        await LogosChat.sendImageTo(
+          toConvoPk,
+          img.meta.mime,
+          img.meta.width,
+          img.meta.height,
+          base64,
+        );
+      } else if (voc != null) {
+        const base64 = await ImagePicker.readFileBase64(voc.path);
+        await LogosChat.sendVoiceTo(
+          toConvoPk,
+          voc.meta.mime,
+          voc.meta.durationMs,
+          voc.meta.waveform.join(','),
+          base64,
+        );
+      } else {
+        // Text or location — re-send the raw content through the normal path.
+        await get().send(toConvoPk, content);
+      }
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+    }
   },
 
   send: async (convoPk: number, text: string) => {

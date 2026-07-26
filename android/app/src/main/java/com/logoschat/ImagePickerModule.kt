@@ -7,14 +7,19 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
+import androidx.core.content.FileProvider
 import com.facebook.react.bridge.ActivityEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import java.io.ByteArrayOutputStream
+import java.io.File
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -36,6 +41,8 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
   companion object {
     private const val TAG = "image-picker"
     private const val REQ_PICK = 0xC0DE
+    private const val REQ_MULTI = 0xC0DF
+    private const val REQ_CAPTURE = 0xC0E0
   }
 
   init {
@@ -47,6 +54,8 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
   @Volatile private var pending: Promise? = null
   @Volatile private var pendingMaxDim = 1280
   @Volatile private var pendingBudget = 120_000
+  @Volatile private var pendingMaxCount = 10
+  @Volatile private var pendingCaptureUri: Uri? = null
 
   /**
    * Open the system image picker. Resolves a stringified JSON
@@ -83,28 +92,198 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #207: pick MULTIPLE images (an album). Resolves a stringified JSON ARRAY of
+   * {mime,width,height,base64,byteLength}, capped to [maxCount], or null if
+   * cancelled. Each is downscaled to [budgetBytes] like {@link pickImage}.
+   */
+  @ReactMethod
+  fun pickImages(maxDim: Int, budgetBytes: Int, maxCount: Int, promise: Promise) {
+    val activity = reactApplicationContext.currentActivity
+    if (activity == null) {
+      promise.reject("no_activity", "no foreground activity")
+      return
+    }
+    if (pending != null) {
+      promise.reject("busy", "a pick is already in progress")
+      return
+    }
+    pending = promise
+    pendingMaxDim = if (maxDim > 0) maxDim else 1280
+    pendingBudget = if (budgetBytes > 0) budgetBytes else 120_000
+    pendingMaxCount = if (maxCount > 0) maxCount else 10
+    try {
+      val intent =
+          Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+          }
+      activity.startActivityForResult(
+          Intent.createChooser(intent, "Choose images"), REQ_MULTI)
+    } catch (t: Throwable) {
+      pending = null
+      promise.reject("launch_failed", t.message ?: "could not open picker")
+    }
+  }
+
+  /**
+   * #203: capture a photo with the camera and return it downscaled, same shape as
+   * {@link pickImage}. Requires the CAMERA runtime permission (requested JS-side).
+   */
+  @ReactMethod
+  fun capturePhoto(maxDim: Int, budgetBytes: Int, promise: Promise) {
+    val activity = reactApplicationContext.currentActivity
+    if (activity == null) {
+      promise.reject("no_activity", "no foreground activity")
+      return
+    }
+    if (pending != null) {
+      promise.reject("busy", "a capture is already in progress")
+      return
+    }
+    try {
+      val dir = File(reactApplicationContext.cacheDir, "cam").apply { mkdirs() }
+      val f = File(dir, "capture_${System.nanoTime()}.jpg")
+      val uri =
+          FileProvider.getUriForFile(
+              reactApplicationContext,
+              "${reactApplicationContext.packageName}.fileprovider",
+              f)
+      pending = promise
+      pendingMaxDim = if (maxDim > 0) maxDim else 1280
+      pendingBudget = if (budgetBytes > 0) budgetBytes else 120_000
+      pendingCaptureUri = uri
+      val intent =
+          Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+          }
+      if (intent.resolveActivity(reactApplicationContext.packageManager) == null) {
+        pending = null
+        promise.reject("no_camera", "no camera app available")
+        return
+      }
+      activity.startActivityForResult(intent, REQ_CAPTURE)
+    } catch (t: Throwable) {
+      pending = null
+      promise.reject("launch_failed", t.message ?: "could not open camera")
+    }
+  }
+
   override fun onActivityResult(
       activity: Activity,
       requestCode: Int,
       resultCode: Int,
       data: Intent?,
   ) {
-    if (requestCode != REQ_PICK) return
+    when (requestCode) {
+      REQ_PICK -> handleSingle(data?.data, resultCode)
+      REQ_CAPTURE -> handleSingle(pendingCaptureUri.also { pendingCaptureUri = null }, resultCode)
+      REQ_MULTI -> handleMulti(data, resultCode)
+      else -> return
+    }
+  }
+
+  private fun handleSingle(uri: Uri?, resultCode: Int) {
     val promise = pending ?: return
     pending = null
-    if (resultCode != Activity.RESULT_OK || data?.data == null) {
+    if (resultCode != Activity.RESULT_OK || uri == null) {
       promise.resolve(null) // cancelled
       return
     }
-    val uri = data.data!!
-    // Decode + compress off the main thread — a large bitmap decode can stall it.
     Thread {
           try {
-            val json = decodeResizeEncode(uri, pendingMaxDim, pendingBudget)
-            promise.resolve(json)
+            promise.resolve(decodeResizeEncode(uri, pendingMaxDim, pendingBudget))
           } catch (t: Throwable) {
             Log.w(TAG, "decode failed", t)
             promise.reject("decode_failed", t.message ?: "could not read image")
+          }
+        }
+        .start()
+  }
+
+  private fun handleMulti(data: Intent?, resultCode: Int) {
+    val promise = pending ?: return
+    pending = null
+    if (resultCode != Activity.RESULT_OK || data == null) {
+      promise.resolve(null)
+      return
+    }
+    val uris = ArrayList<Uri>()
+    val clip = data.clipData
+    if (clip != null) {
+      for (i in 0 until clip.itemCount) {
+        if (uris.size >= pendingMaxCount) break
+        clip.getItemAt(i).uri?.let { uris.add(it) }
+      }
+    } else {
+      data.data?.let { uris.add(it) }
+    }
+    if (uris.isEmpty()) {
+      promise.resolve(null)
+      return
+    }
+    Thread {
+          val arr = JSONArray()
+          for (u in uris) {
+            try {
+              arr.put(JSONObject(decodeResizeEncode(u, pendingMaxDim, pendingBudget)))
+            } catch (t: Throwable) {
+              Log.w(TAG, "skip undecodable image: ${t.message}")
+            }
+          }
+          promise.resolve(arr.toString())
+        }
+        .start()
+  }
+
+  /**
+   * #201 Save: copy a stored image file into the device gallery (MediaStore →
+   * Pictures/LogosChat). Scoped-storage friendly (no permission on Android 10+).
+   */
+  @ReactMethod
+  fun saveImageToGallery(path: String, promise: Promise) {
+    Thread {
+          try {
+            val src = File(path)
+            val cv =
+                android.content.ContentValues().apply {
+                  put(MediaStore.Images.Media.DISPLAY_NAME, src.name)
+                  put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(
+                        MediaStore.Images.Media.RELATIVE_PATH,
+                        android.os.Environment.DIRECTORY_PICTURES + "/LogosChat")
+                  }
+                }
+            val resolver = reactApplicationContext.contentResolver
+            val uri =
+                resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cv)
+                    ?: throw IllegalStateException("MediaStore insert failed")
+            resolver.openOutputStream(uri).use { out ->
+              src.inputStream().use { it.copyTo(out!!) }
+            }
+            promise.resolve(uri.toString())
+          } catch (t: Throwable) {
+            promise.reject("save_failed", t.message ?: "could not save to gallery")
+          }
+        }
+        .start()
+  }
+
+  /**
+   * #201: read a stored blob file back to base64 (NO_WRAP) — used to FORWARD a
+   * media message (its DB row holds only a local path; re-transmitting needs bytes).
+   */
+  @ReactMethod
+  fun readFileBase64(path: String, promise: Promise) {
+    Thread {
+          try {
+            val bytes = File(path).readBytes()
+            promise.resolve(Base64.encodeToString(bytes, Base64.NO_WRAP))
+          } catch (t: Throwable) {
+            promise.reject("read_failed", t.message ?: "could not read file")
           }
         }
         .start()

@@ -3,4 +3,6 @@
      cacheDir/exports and shared via the ${applicationId}.fileprovider authority. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="exports" path="exports/" />
+    <!-- #203: camera capture writes a temp full-res photo here before downscale. -->
+    <cache-path name="cam" path="cam/" />
 </paths>

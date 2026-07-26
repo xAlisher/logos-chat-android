@@ -21,5 +21,7 @@ class LogosChatPackage : ReactPackage {
           MeshCoreModule(reactContext),
           BleMeshModule(reactContext),
           ImagePickerModule(reactContext),
+          LocationModule(reactContext),
+          AudioModule(reactContext),
       )
 }

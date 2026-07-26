@@ -120,8 +120,15 @@ class EventCallbackManager {
           } catch (_: Throwable) {
             null
           }
-      // #197: image messages carry a marker, not readable text — show "📷 Photo".
-      val body = if (outcome.text.startsWith("img1")) "📷 Photo" else outcome.text
+      // Media messages carry a marker, not readable text — show a friendly label.
+      val t = outcome.text
+      val body =
+          when {
+            t.startsWith("img1") -> "📷 Photo"
+            t.startsWith("voc1") -> "🎤 Voice message"
+            t.startsWith("loc1:") -> "📍 Location"
+            else -> t
+          }
       MessageNotifier.notifyMessage(ctx, outcome.convoPk, name, body)
     }
 
@@ -394,6 +401,61 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       val ok = rc == 0
       ChatRepo.finalizeOutgoing(msgPk, ok)
       if (!ok) Log.w("logos-chat-bridge", "send image failed: ${NodeBridge.chatLastError()}")
+      promise.resolve("""{"msgPk":$msgPk,"status":"${if (ok) "sent" else "failed"}"}""")
+    }
+  }
+
+  /**
+   * #205: send a voice note. Mirrors [sendImageTo]: saves the base64 .m4a locally,
+   * records a `voc1v:<mime>:<durMs>:<waveformCsv>␟<path>` marker, and transmits one
+   * `voc1:…␟<base64>` message. Resolves '{"msgPk":n,"status":…}'.
+   */
+  @ReactMethod
+  fun sendVoiceTo(
+      convoPk: Double,
+      mime: String,
+      durationMs: Int,
+      waveformCsv: String,
+      base64: String,
+      promise: Promise,
+  ) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("send_voice", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      var libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        val addr = d.peerAddressOf(pk)
+        if (addr == null) {
+          promise.reject("no_route", "conversation has no peer address to send to")
+          return@execute
+        }
+        libConvoId = NodeBridge.chatCreateConversation(c, addr)
+        if (libConvoId == null) {
+          promise.reject("create_conversation", NodeBridge.chatLastError())
+          return@execute
+        }
+        d.setLibConvoId(pk, libConvoId)
+      }
+      val header = "$mime:$durationMs:$waveformCsv"
+      val sep = "␟"
+      val localPath = BlobFiles.save(reactApplicationContext, base64, "chat-audio", "m4a")
+      val marker = "voc1v:$header$sep$localPath"
+      val msgPk = ChatRepo.recordOutgoing(pk, marker)
+      val wire = "voc1:$header$sep$base64"
+      val bytes = wire.toByteArray(Charsets.UTF_8)
+      var rc = NodeBridge.chatSendMessage(c, libConvoId, bytes)
+      if (rc != 0 && isStaleConvoError(NodeBridge.chatLastError())) {
+        val fresh = rebindStaleConversation(c, pk)
+        if (fresh != null) rc = NodeBridge.chatSendMessage(c, fresh, bytes)
+      }
+      val ok = rc == 0
+      ChatRepo.finalizeOutgoing(msgPk, ok)
+      if (!ok) Log.w("logos-chat-bridge", "send voice failed: ${NodeBridge.chatLastError()}")
       promise.resolve("""{"msgPk":$msgPk,"status":"${if (ok) "sent" else "failed"}"}""")
     }
   }

@@ -119,6 +119,14 @@ interface LogosChatNative {
     height: number,
     base64: string,
   ): Promise<string>;
+  /** #205: send a voice note (records a local voc1v: bubble, transmits voc1:). */
+  sendVoiceTo(
+    convoPk: number,
+    mime: string,
+    durationMs: number,
+    waveformCsv: string,
+    base64: string,
+  ): Promise<string>;
   /**
    * #168 bridge: transmit `content` into a Logos group WITHOUT recording a local
    * bubble (the mesh→logos re-forward — B already holds the origin mesh message).

@@ -10,7 +10,7 @@
 // no-op there). Copy actions are handled here; label/send are lifted to the
 // screen because they touch the store and the navigator.
 import React from 'react';
-import {ToastAndroid} from 'react-native';
+import {Linking, ToastAndroid} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors} from '../theme';
 import {
@@ -21,6 +21,14 @@ import {
   MessageCircleIcon,
   type MenuItem,
 } from './OverflowMenu';
+import {parseImageLocal, isImageContent} from '../native/imageMsg';
+import {isVoiceContent} from '../native/voiceMsg';
+import {
+  parseLocation,
+  formatLatLng,
+  geoUri,
+  isLocationContent,
+} from '../native/locMsg';
 
 /** The bubble the menu was opened on. */
 export interface BubbleTarget {
@@ -47,6 +55,8 @@ export function BubbleActionMenu({
   onClose,
   onAddLabel,
   onSendMessage,
+  onForward,
+  onSaveImage,
 }: {
   target: BubbleTarget | null;
   /** #157: screen Y of the long-pressed bubble, to anchor the menu near it. */
@@ -56,12 +66,19 @@ export function BubbleActionMenu({
   onAddLabel: (target: BubbleTarget) => void;
   /** Resolve-or-create the 1:1 with this address and open it. */
   onSendMessage: (address: string) => void;
+  /** #201: forward this message's content to another conversation. */
+  onForward: (content: string) => void;
+  /** #201: save an image message to the gallery (path from the local marker). */
+  onSaveImage: (path: string) => void;
 }) {
   const items: MenuItem[] = [];
   if (target != null) {
     const t = target; // local const so the narrowing survives into the closures
     const address = t.address;
     const body = t.text;
+    const isImage = isImageContent(body);
+    const isVoice = isVoiceContent(body);
+    const isLoc = isLocationContent(body);
     if (!t.own && address != null) {
       items.push({
         key: 'label',
@@ -76,12 +93,55 @@ export function BubbleActionMenu({
         onPress: () => copy(address),
       });
     }
+    // #201: Forward works on ANY message (text/image/voice/location, incl. own).
     items.push({
-      key: 'copy-message',
-      label: 'Copy message',
-      icon: <ClipboardIcon color={colors.textDim} />,
-      onPress: () => copy(body),
+      key: 'forward',
+      label: 'Forward',
+      icon: <MessageCircleIcon color={colors.textDim} />,
+      onPress: () => onForward(body),
     });
+    // #201 Save: image only.
+    if (isImage) {
+      const img = parseImageLocal(body);
+      if (img != null) {
+        items.push({
+          key: 'save-image',
+          label: 'Save to gallery',
+          icon: <CopyIcon color={colors.textDim} />,
+          onPress: () => onSaveImage(img.path),
+        });
+      }
+    }
+    // #204: a location offers "Open in maps".
+    if (isLoc) {
+      const l = parseLocation(body);
+      if (l != null) {
+        items.push({
+          key: 'open-maps',
+          label: 'Open in maps',
+          icon: <MessageCircleIcon color={colors.textDim} />,
+          onPress: () =>
+            Linking.openURL(geoUri(l)).catch(() =>
+              ToastAndroid.show('No maps app', ToastAndroid.SHORT),
+            ),
+        });
+      }
+    }
+    // Copy: readable content only — text or location coordinates (not media markers).
+    if (!isImage && !isVoice) {
+      const copyText = isLoc
+        ? (() => {
+            const l = parseLocation(body);
+            return l != null ? formatLatLng(l) : body;
+          })()
+        : body;
+      items.push({
+        key: 'copy-message',
+        label: isLoc ? 'Copy coordinates' : 'Copy message',
+        icon: <ClipboardIcon color={colors.textDim} />,
+        onPress: () => copy(copyText),
+      });
+    }
     if (!t.own && t.isGroup && address != null) {
       items.push({
         key: 'send-message',

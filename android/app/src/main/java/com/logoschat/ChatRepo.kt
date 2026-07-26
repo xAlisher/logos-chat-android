@@ -291,24 +291,32 @@ object ChatRepo {
   }
 
   /**
-   * #197: if [raw] is an inbound image wire message (`img1:<mime>:<w>:<h>␟<base64>`),
-   * persist the JPEG and return the local marker (`img1v:<mime>:<w>:<h>␟<path>`).
-   * Otherwise return [raw] unchanged. Any decode/save failure falls back to [raw]
-   * so a malformed image can never sink message delivery.
+   * #197/#205: if [raw] is an inbound blob wire message — an image
+   * (`img1:<meta>␟<base64>`) or voice note (`voc1:<meta>␟<base64>`) — persist the
+   * bytes and return the small local marker (`img1v:`/`voc1v:` + path). Otherwise
+   * return [raw] unchanged. Any decode/save failure falls back to [raw] so a
+   * malformed blob can never sink message delivery.
    */
   private fun maybeStoreInboundImage(raw: String): String {
-    if (!raw.startsWith("img1:")) return raw
+    val kind =
+        when {
+          raw.startsWith("img1:") -> Triple("img1:", "img1v:", "img")
+          raw.startsWith("voc1:") -> Triple("voc1:", "voc1v:", "voc")
+          else -> return raw
+        }
     val sep = raw.indexOf('␟')
     if (sep < 0) return raw
-    val header = raw.substring("img1:".length, sep) // "<mime>:<w>:<h>"
+    val header = raw.substring(kind.first.length, sep)
     val base64 = raw.substring(sep + 1)
     if (base64.isEmpty()) return raw
     val ctx = appContext ?: return raw
     return try {
-      val path = ImageFiles.saveBase64(ctx, base64)
-      "img1v:$header␟$path"
+      val path =
+          if (kind.third == "img") ImageFiles.saveBase64(ctx, base64)
+          else BlobFiles.save(ctx, base64, "chat-audio", "m4a")
+      "${kind.second}$header␟$path"
     } catch (t: Throwable) {
-      Log.w(TAG, "inbound image save failed: ${t.message}")
+      Log.w(TAG, "inbound blob save failed: ${t.message}")
       raw
     }
   }
