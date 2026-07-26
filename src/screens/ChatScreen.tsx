@@ -1419,7 +1419,9 @@ const styles = StyleSheet.create({
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
   // #202: an image bubble is a thin 2px frame around the (rounded) image.
-  bubbleImage: {padding: 2, overflow: 'hidden'},
+  // Must set the SPECIFIC padding keys — RN specificity makes the base bubble's
+  // paddingHorizontal/paddingVertical win over a general `padding`.
+  bubbleImage: {paddingHorizontal: 2, paddingVertical: 2, overflow: 'hidden'},
   locRow: {gap: 2},
   // #200: full-screen image viewer.
   fsBackdrop: {
