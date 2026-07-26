@@ -68,6 +68,8 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     private const val PEER_TTL_MS = 20_000L
     /** How often to prune stale peers (ms). */
     private const val PRUNE_INTERVAL_MS = 5_000L
+    /** #214: advertised rotating-id length in bytes. */
+    private const val ID_LEN = 6
   }
 
   override fun getName() = "BleMesh"
@@ -83,9 +85,14 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
   private var advertiseCallback: AdvertiseCallback? = null
   private var scanCallback: ScanCallback? = null
 
-  /** address -> last-seen elapsedRealtime; guarded by [peers] itself. */
-  private val peers = HashMap<String, Long>()
+  /** #214: advertised service-data payload = idBytes(6) + flags(1). id all-zero
+   *  when advertising anonymously (presence only, no identity). */
+  @Volatile private var advPayload: ByteArray = ByteArray(ID_LEN + 1)
+
+  /** address -> [lastSeenElapsed, heardIdHex('' if anonymous)]; guarded by [peers]. */
+  private val peers = HashMap<String, Pair<Long, String>>()
   private var lastEmittedCount = -1
+  private var lastEmittedIds: Set<String> = emptySet()
 
   // -- capability query -------------------------------------------------------
 
@@ -115,11 +122,12 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
   // -- engage / disengage -----------------------------------------------------
 
   @ReactMethod
-  fun engage(promise: Promise) {
+  fun engage(advertiseIdHex: String?, flags: Int, promise: Promise) {
     if (status != "off") {
       promise.resolve(null) // idempotent: already engaging/engaged
       return
     }
+    advPayload = buildPayload(advertiseIdHex, flags)
     val missing = missingPermission()
     if (missing != null) {
       promise.reject("permission", "missing runtime permission: $missing")
@@ -177,9 +185,44 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
       stopAllLocked()
       synchronized(peers) { peers.clear() }
       lastEmittedCount = -1
+      lastEmittedIds = emptySet()
       setStatus("off")
       promise.resolve(null)
     }
+  }
+
+  /**
+   * #214: swap the advertised rotating id (+flags) without a full restart — called
+   * by JS on epoch rollover or when the identity toggle changes. No-op when off.
+   */
+  @ReactMethod
+  fun updateAdvertiseId(advertiseIdHex: String?, flags: Int, promise: Promise) {
+    advPayload = buildPayload(advertiseIdHex, flags)
+    handler.post {
+      val adv = advertiser
+      val cb = advertiseCallback
+      if (status == "on" && adv != null && cb != null) {
+        try {
+          stopAdvertOnly(adv, cb)
+          startAdvertiseLocked(adv, onOk = {}, onFail = {})
+        } catch (t: Throwable) {
+          Log.w(TAG, "re-advertise failed: ${t.message}")
+        }
+      }
+      promise.resolve(null)
+    }
+  }
+
+  /** payload = idBytes(6) + flags(1); id all-zero when advertising anonymously. */
+  private fun buildPayload(idHex: String?, flags: Int): ByteArray {
+    val out = ByteArray(ID_LEN + 1)
+    if (idHex != null && idHex.length >= ID_LEN * 2) {
+      for (i in 0 until ID_LEN) {
+        out[i] = idHex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+      }
+    }
+    out[ID_LEN] = flags.toByte()
+    return out
   }
 
   // -- BLE plumbing (all on the handler thread) -------------------------------
@@ -197,13 +240,14 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
             .setConnectable(false) // presence only; no GATT connection yet
             .setTimeout(0)
             .build()
-    // Device name would overflow the 31-byte payload; a bare service UUID is enough
-    // for peers to recognise a Logos-mesh node.
+    // #214: advertise SERVICE DATA (UUID + idBytes(6) + flags(1)) — carries the
+    // rotating identity + flags AND self-identifies as a Logos-mesh node, in one
+    // legacy 31-byte PDU (16B UUID + 7B data + overhead). Device name omitted.
     val data =
         AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
-            .addServiceUuid(SERVICE_PARCEL)
+            .addServiceData(SERVICE_PARCEL, advPayload)
             .build()
     val cb =
         object : AdvertiseCallback() {
@@ -222,7 +266,9 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
 
   @SuppressLint("MissingPermission") // permission verified in engage() via missingPermission()
   private fun startScanLocked(scan: BluetoothLeScanner) {
-    val filters = listOf(ScanFilter.Builder().setServiceUuid(SERVICE_PARCEL).build())
+    // #214: match on our SERVICE DATA (any payload) so we read the identity bytes.
+    val filters =
+        listOf(ScanFilter.Builder().setServiceData(SERVICE_PARCEL, ByteArray(0)).build())
     val settings =
         ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
@@ -231,10 +277,10 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     val cb =
         object : ScanCallback() {
           override fun onScanResult(callbackType: Int, result: ScanResult?) {
-            result?.device?.address?.let(::notePeer)
+            handleResult(result)
           }
           override fun onBatchScanResults(results: MutableList<ScanResult>?) {
-            results?.forEach { it.device?.address?.let(::notePeer) }
+            results?.forEach { handleResult(it) }
           }
           override fun onScanFailed(errorCode: Int) {
             Log.w(TAG, "scan failed: $errorCode")
@@ -242,6 +288,33 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
         }
     scanCallback = cb
     scan.startScan(filters, settings, cb)
+  }
+
+  /** Extract the heard id from a result's service data ('' when anonymous). */
+  private fun handleResult(result: ScanResult?) {
+    val address = result?.device?.address ?: return
+    val data = result.scanRecord?.getServiceData(SERVICE_PARCEL)
+    var idHex = ""
+    if (data != null && data.size >= ID_LEN) {
+      val sb = StringBuilder(ID_LEN * 2)
+      var anyNonZero = false
+      for (i in 0 until ID_LEN) {
+        val b = data[i].toInt() and 0xFF
+        if (b != 0) anyNonZero = true
+        sb.append("%02x".format(b))
+      }
+      if (anyNonZero) idHex = sb.toString()
+    }
+    notePeer(address, idHex)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun stopAdvertOnly(adv: BluetoothLeAdvertiser, cb: AdvertiseCallback) {
+    try {
+      adv.stopAdvertising(cb)
+    } catch (t: Throwable) {
+      Log.w(TAG, "stopAdvertOnly: ${t.message}")
+    }
   }
 
   @SuppressLint("MissingPermission")
@@ -261,34 +334,32 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     handler.removeCallbacks(pruneRunnable)
   }
 
-  private fun notePeer(address: String) {
+  private fun notePeer(address: String, idHex: String) {
     val changed: Boolean
-    val count: Int
     synchronized(peers) {
-      val isNew = !peers.containsKey(address)
-      peers[address] = SystemClock.elapsedRealtime()
-      count = peers.size
-      changed = isNew
+      val prev = peers[address]
+      // "changed" when a new device, or its heard id changed (rotation/resolve).
+      changed = prev == null || prev.second != idHex
+      peers[address] = Pair(SystemClock.elapsedRealtime(), idHex)
     }
-    if (changed) emitPeers(count)
+    if (changed) emitPeers()
   }
 
   private val pruneRunnable =
       object : Runnable {
         override fun run() {
           val now = SystemClock.elapsedRealtime()
-          val count: Int
-          val changed: Boolean
+          var changed = false
           synchronized(peers) {
-            val before = peers.size
             val it = peers.entries.iterator()
             while (it.hasNext()) {
-              if (now - it.next().value > PEER_TTL_MS) it.remove()
+              if (now - it.next().value.first > PEER_TTL_MS) {
+                it.remove()
+                changed = true
+              }
             }
-            count = peers.size
-            changed = count != before
           }
-          if (changed) emitPeers(count)
+          if (changed) emitPeers()
           if (status == "on") handler.postDelayed(this, PRUNE_INTERVAL_MS)
         }
       }
@@ -304,12 +375,23 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     emitToJs(params)
   }
 
-  private fun emitPeers(count: Int) {
-    if (count == lastEmittedCount) return
+  private fun emitPeers() {
+    val count: Int
+    val ids: Set<String>
+    synchronized(peers) {
+      count = peers.size
+      ids = peers.values.mapNotNull { it.second.ifEmpty { null } }.toSet()
+    }
+    if (count == lastEmittedCount && ids == lastEmittedIds) return
     lastEmittedCount = count
+    lastEmittedIds = ids
+    val idArr = Arguments.createArray()
+    ids.forEach { idArr.pushString(it) }
     val params = Arguments.createMap().apply {
       putString("eventType", "peers")
       putInt("count", count)
+      // #214: distinct non-anonymous ids currently heard — JS resolves to contacts.
+      putArray("ids", idArr)
     }
     emitToJs(params)
   }

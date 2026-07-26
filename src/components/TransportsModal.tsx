@@ -65,6 +65,9 @@ export function TransportsModal({
   const bleEngage = useBleStore(s => s.engage);
   const bleDisengage = useBleStore(s => s.disengage);
   const bleRefresh = useBleStore(s => s.refreshAvailability);
+  const bleRefreshAdvertiseId = useBleStore(s => s.refreshAdvertiseId);
+  const bleAdvertiseIdentity = useSettingsStore(s => s.bleAdvertiseIdentity); // #214
+  const setBleAdvertiseIdentity = useSettingsStore(s => s.setBleAdvertiseIdentity);
 
   const logosState = logosTri(nodeStatus);
   const meshState = meshTri(meshStatus);
@@ -97,6 +100,12 @@ export function TransportsModal({
   const onToggleBle = (next: boolean) => {
     if (next) bleEngage();
     else bleDisengage();
+  };
+
+  const onToggleBleIdentity = async (next: boolean) => {
+    await setBleAdvertiseIdentity(next);
+    // Apply immediately if BLE is live (else it takes effect on next engage).
+    bleRefreshAdvertiseId();
   };
 
   return (
@@ -178,6 +187,28 @@ export function TransportsModal({
               thumbColor={colors.text}
             />
           </View>
+
+          {/* #214: opt-in — broadcast a rotating, contact-resolvable identity so
+              contacts can see you're nearby. Off = anonymous presence count. */}
+          {bleAvailability.supported && (
+            <View style={styles.subRow}>
+              <View style={styles.rowText}>
+                <Text style={styles.subName}>Broadcast identity</Text>
+                <Text style={styles.status}>
+                  {bleAdvertiseIdentity
+                    ? 'Contacts can see you’re nearby (rotating, private)'
+                    : 'Anonymous — nearby count only'}
+                </Text>
+              </View>
+              <Switch
+                testID="ble-identity-switch"
+                value={bleAdvertiseIdentity}
+                onValueChange={onToggleBleIdentity}
+                trackColor={{false: colors.border, true: colors.accent}}
+                thumbColor={colors.text}
+              />
+            </View>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -208,6 +239,14 @@ const styles = StyleSheet.create({
   rowDim: {opacity: 0.55},
   rowText: {flex: 1, gap: 2},
   name: {...type.title, color: colors.text},
+  // #214: the identity sub-toggle under the BLE row.
+  subRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingLeft: spacing.xl,
+  },
+  subName: {...type.body, color: colors.text},
   status: {...type.label},
   setupBtn: {
     backgroundColor: colors.accent,

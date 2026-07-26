@@ -28,6 +28,9 @@ export interface BleMeshEvent {
   status?: BleStatus;
   /** Present when eventType === 'peers': current count of nearby Logos-mesh peers. */
   count?: number;
+  /** #214: distinct non-anonymous rotating ids currently heard (hex) — JS resolves
+   *  each against known contacts to name the nearby peer. */
+  ids?: string[];
 }
 
 interface BleMeshNative {
@@ -37,13 +40,14 @@ interface BleMeshNative {
    */
   getAvailability(): Promise<string>;
   /**
-   * Start the BLE-mesh presence engine: advertise the Logos-mesh service and scan
-   * for nearby peers advertising it. Emits a 'status' event ('starting' → 'on')
-   * and 'peers' events as the nearby count changes. Rejects if BLE is
-   * unsupported, the adapter is off, or the runtime permissions
-   * (BLUETOOTH_ADVERTISE / BLUETOOTH_SCAN) are not granted.
+   * Start the BLE-mesh presence engine: advertise our service-data (idBytes(6) +
+   * flags) and scan for peers. [advertiseIdHex] = the rotating id to broadcast, or
+   * null for anonymous (presence count only). Emits 'status' + 'peers' (with ids).
+   * Rejects on unsupported / adapter off / missing permission.
    */
-  engage(): Promise<null>;
+  engage(advertiseIdHex: string | null, flags: number): Promise<null>;
+  /** #214: swap the advertised rotating id (+flags) live (epoch rollover / toggle). */
+  updateAdvertiseId(advertiseIdHex: string | null, flags: number): Promise<null>;
   /** Stop advertising + scanning. Emits status 'off'. Always resolves. */
   disengage(): Promise<null>;
   getStatus(): Promise<BleStatus>;

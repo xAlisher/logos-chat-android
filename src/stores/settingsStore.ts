@@ -14,6 +14,9 @@ export const KV_MESH_CONFIGURED = 'meshConfigured';
 /** KV key: has the user ever engaged the BLE-mesh transport on this device? (#133) */
 export const KV_BLE_CONFIGURED = 'bleConfigured';
 
+/** KV key: opt-in to broadcasting a (rotating, contact-resolvable) BLE identity (#214). */
+export const KV_BLE_ADVERTISE_IDENTITY = 'bleAdvertiseIdentity';
+
 interface SettingsState {
   /** Optional local label for this device — not shared with peers. */
   displayName: string;
@@ -30,18 +33,26 @@ interface SettingsState {
    * first-run action rather than a live toggle.
    */
   bleConfigured: boolean;
+  /**
+   * #214: opt-in — broadcast a rotating, contact-resolvable BLE identity so
+   * contacts can see you're nearby. Off = anonymous presence count only.
+   */
+  bleAdvertiseIdentity: boolean;
   load: () => Promise<void>;
   setDisplayName: (name: string) => Promise<void>;
   /** Mark MeshCore as configured (idempotent); persisted in native kv. */
   setMeshConfigured: (configured: boolean) => Promise<void>;
   /** Mark BLE-mesh as configured (idempotent); persisted in native kv. */
   setBleConfigured: (configured: boolean) => Promise<void>;
+  /** #214: toggle broadcasting a contact-resolvable BLE identity; persisted. */
+  setBleAdvertiseIdentity: (on: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   displayName: DEFAULT_DISPLAY_NAME,
   meshConfigured: false,
   bleConfigured: false,
+  bleAdvertiseIdentity: false,
 
   load: async () => {
     try {
@@ -59,6 +70,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const b = await LogosChat.getSetting(KV_BLE_CONFIGURED);
       if (b === 'true') set({bleConfigured: true});
+    } catch {
+      // keep default
+    }
+    try {
+      const ai = await LogosChat.getSetting(KV_BLE_ADVERTISE_IDENTITY);
+      if (ai === 'true') set({bleAdvertiseIdentity: true});
     } catch {
       // keep default
     }
@@ -91,6 +108,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({bleConfigured: configured});
     try {
       await LogosChat.setSetting(KV_BLE_CONFIGURED, configured ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setBleAdvertiseIdentity: async (on: boolean) => {
+    if (get().bleAdvertiseIdentity === on) return;
+    set({bleAdvertiseIdentity: on});
+    try {
+      await LogosChat.setSetting(KV_BLE_ADVERTISE_IDENTITY, on ? 'true' : 'false');
     } catch {
       // best-effort
     }
