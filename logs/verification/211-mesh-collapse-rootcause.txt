@@ -62,3 +62,27 @@ IMPLEMENTATION: thread mode=Edge into logosdelivery_create_node's config JSON, v
 logos-chat LogosConfig/P2pConfig -> EmbeddedLogosDelivery::start. The app's
 logoschat_open_persistent passes no node config today -> needs the native change +
 liblogoschat.so arm64 rebuild. Then re-test Samsung->Pixel delivery.
+
+========================================================================
+EDGE FIX WORKS END-TO-END — phone-to-phone, unique marker (2026-07-26)
+========================================================================
+Two phones, Edge-mode liblogosdelivery, live shard-7 topic
+/kym/1/d3795c1d4f3306850dd1f422a3c962d2/proto. Sender warmed 60s so lightpush
+peers were selected (= the 3 UP delivery nodes 16Uiu2HAm8Yoki / 16Uiu2HAkvwhG /
+16Uiu2HAmMK7P), then sent 3 UNIQUE markers.
+
+  send_diag (Samsung): LIGHTPUSH_PEERS = 3 (all UP delivery nodes)
+                       SEND#0/#1/#2 ret=0
+  recv_diag (Pixel):   our-marker matches = 3  (of 441 total received)
+
+=> Edge lightpush->fleet->filter delivers our OWN message across two phones on a
+   live shard. Earlier 0-delivery runs were (a) dead-shard topics (fleet outage,
+   see docs/fleet-outage-2026-07-26.md) and (b) <=20s warmup (no lightpush peer yet).
+
+FIX SUMMARY
+- Root cause 1 (always-broken on mobile): Core/relay node can't hold a gossipsub
+  mesh (In=0 inbound -> pruned; mesh 3->0). FIX = mode=Edge (filter+lightpush).
+  Receive proven (441-538 msgs); send proven (unique marker 3/3).
+- Root cause 2 (today's regression): 3/6 logos.dev delivery nodes down -> shards
+  with no serving node silently drop. FLEET-SIDE (outage report filed).
+- Client caveat: Edge send needs ~60s warmup for lightpush peer selection.
