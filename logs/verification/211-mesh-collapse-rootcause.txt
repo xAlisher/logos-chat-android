@@ -39,3 +39,26 @@ CONSEQUENCE FOR THE FIX
   fleet accepts non-RLN relays, or run as a proper contributing relay / Edge-filter
   client that doesn't depend on relay mesh). BLE mesh (#142) remains the fleet-
   independent fallback.
+
+========================================================================
+FIX PROVEN (2026-07-26) — mode=Edge holds stable filter peers
+========================================================================
+scripts/edge_diag.c, fresh node on logos.dev, Pixel 10:
+
+  Core mode:  num_connected=3, mesh(rs/2/7) = 3 -> 0 within 30s (pruned)
+  Edge mode:  "WakuRelay not mounted"; filter_service_peers = 2-3 STABLE for 75s
+              (16Uiu2HAm8Yoki… 16Uiu2HAkvwhG… 16Uiu2HAmMK7P… = delivery fleet)
+
+Metrics corroboration (Core): waku_connected_peers relay In=0, Out=3 — ALL relay
+peers OUTBOUND, zero inbound. A mobile node behind NAT can't be dialed back, so it
+can't hold a gossipsub mesh slot -> pruned -> mesh collapses -> no message forwarding.
+No RLN membership imported (waku_rln_membership_credentials_import = 0).
+
+CONCLUSION: the app creates the embedded node in default Core/relay mode, which is
+wrong for a mobile client. FIX = create with {"mode":"Edge"} (filter client): stable
+filter subscriptions to service nodes, no gossipsub-mesh dependency.
+
+IMPLEMENTATION: thread mode=Edge into logosdelivery_create_node's config JSON, via
+logos-chat LogosConfig/P2pConfig -> EmbeddedLogosDelivery::start. The app's
+logoschat_open_persistent passes no node config today -> needs the native change +
+liblogoschat.so arm64 rebuild. Then re-test Samsung->Pixel delivery.
