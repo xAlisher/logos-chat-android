@@ -27,8 +27,7 @@ object NodeRuntime {
   // (`/dns4/<host>/tcp/<port>/p2p/<peerId>`), instead of the flaky public fleet.
   // Empty = default fleet behaviour. Read into env before open (the Rust delivery
   // layer reads LOGOS_DELIVERY_FILTERNODE / LOGOS_DELIVERY_LIGHTPUSHNODE, threaded.rs).
-  const val KV_DELIVERY_FILTERNODE = "deliveryFilterNode"
-  const val KV_DELIVERY_LIGHTPUSHNODE = "deliveryLightpushNode"
+  const val KV_DELIVERY_SERVICE_NODE = "deliveryServiceNode"
   private const val SECURE_PREFS = "logoschat_secure"
   private const val KEY_DB_KEY = "dbKey"
   private const val IDENTITY_FILE = "logoschat-identity.bin"
@@ -100,13 +99,11 @@ object NodeRuntime {
   private fun applyDeliveryPeerEnv() {
     try {
       val db = ChatRepo.requireDb()
-      db.kvGet(KV_DELIVERY_FILTERNODE)?.takeIf { it.isNotBlank() }?.let {
-        Os.setenv("LOGOS_DELIVERY_FILTERNODE", it, true)
-        Log.i(TAG, "delivery filternode pinned: $it")
-      }
-      db.kvGet(KV_DELIVERY_LIGHTPUSHNODE)?.takeIf { it.isNotBlank() }?.let {
-        Os.setenv("LOGOS_DELIVERY_LIGHTPUSHNODE", it, true)
-        Log.i(TAG, "delivery lightpushnode pinned: $it")
+      // Override the baked-in self-hosted node (threaded.rs DEFAULT_SERVICE_NODE).
+      // Empty string forces the old preset/fleet behaviour.
+      db.kvGet(KV_DELIVERY_SERVICE_NODE)?.let {
+        Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", it, true)
+        Log.i(TAG, "delivery service node override: '${it}'")
       }
     } catch (t: Throwable) {
       Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")
