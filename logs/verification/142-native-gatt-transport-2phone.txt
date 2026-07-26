@@ -1,0 +1,22 @@
+#142 native GATT dual-role transport — on-device 2-phone proof (Samsung → Pixel, v0.7.0)
+
+Both phones: BLE mesh ON. GATT links formed over real BLE (logcat, tag ble-mesh):
+  [samsung] GATT client linked to <peer MAC>
+  [pixel]   GATT server open + GATT client linked to <peer MAC>
+
+Samsung Nearby → "Ping mesh (test)" → sendBleTest fragments "ping 89769" + wraps it in a
+flood packet + sendMeshPacket broadcasts over every GATT link.
+
+Pixel received over GATT (raw packet event):
+  [BleMeshEvent] {"data":"bf1␟…␟0␟3␟msg␟27f9dee9…80cb␟frg1:…:0:1␟ping 89769","eventType":"packet"}
+Pixel decoded + deduped (bleFlood) + reassembled (bleFrag):
+  [BLE-RX msg] 27f9dee9e003b7deb96d3de911080318057aa51934111bc8fa68d0f8f4ed80cb → ping 89769
+
+=> Native GATT dual-role (server + central) carries a flood packet A→B over real BLE;
+   JS decodes → dedups → reassembles the fragment → recovers the message + its sender.
+   Fragment→flood→GATT→decode→dedup→reassemble proven end-to-end, 2 devices.
+   Bug caught + fixed on-device: decodePacket dropped ␟-containing payloads (nested
+   fragment) — first Pixel run received the GATT packet but couldn't decode it.
+
+Gated next: hop-2 relay needs 3 devices with a pair OUT OF BLE RANGE (all co-located here
+= all hop-1); E2E chat CONTENT over the flood is gated on link crypto (#136).
