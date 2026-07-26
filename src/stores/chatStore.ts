@@ -1239,9 +1239,11 @@ addLogosChatListener(e => {
     if (e.kind === 'members_changed' && e.convoPk != null) {
       const convoPk = e.convoPk;
       // #116: anyone the lib roster diff found missing → "<x> left".
+      let hadLeft = false;
       if (e.detail != null && e.detail.length > 0) {
         try {
           const left: string[] = JSON.parse(e.detail).left ?? [];
+          hadLeft = left.length > 0;
           for (const addr of left) {
             clearPendingInvite(convoPk, addr.toLowerCase());
             s.setMemberStatus(convoPk, addr, 'left');
@@ -1280,8 +1282,10 @@ addLogosChatListener(e => {
             }
           }
           // (2) No new roster entry but an invite is outstanding → the creator's
-          // pre-added invitee just settled. Announce the oldest one FIFO.
-          if (!announced) {
+          // pre-added invitee just settled. Announce the oldest one FIFO. Skip
+          // when this event was a "left" — that shrinks the roster, and must not
+          // be mis-read as a pending invite joining.
+          if (!announced && !hadLeft) {
             const jq = pendingJoins[convoPk];
             const addr = jq?.shift();
             if (addr != null) {
