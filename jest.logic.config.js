@@ -23,5 +23,6 @@ module.exports = {
     '<rootDir>/__tests__/imageMsg.test.ts',
     '<rootDir>/__tests__/richMsg.test.ts',
     '<rootDir>/__tests__/meshPresence.test.ts',
+    '<rootDir>/__tests__/bleIdentity.test.ts',
   ],
 };
