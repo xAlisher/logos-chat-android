@@ -1,0 +1,19 @@
+#214 rotating contact-resolvable BLE identity — on-device 2-phone verification (Samsung ↔ Pixel, v0.7.0)
+
+Both phones: BLE mesh ON + "Broadcast identity" ON. Each shows "1 peer nearby" (cross-discovery).
+
+Pixel scanned + emitted (logcat):
+  [BleMeshEvent] {"count":1,"ids":["02a16f6969ae"],"eventType":"peers"}
+
+Samsung account pubkey (advertiser):
+  27f9dee9e003b7deb96d3de911080318057aa51934111bc8fa68d0f8f4ed80cb
+
+Cross-check (Node crypto, HMAC-SHA256(pubkey, epochBE8)[:6]), current epoch 1983393:
+  deriveEpochId(Samsung, 1983393) = 02a16f6969ae   <<< MATCHES the heard id
+  deriveEpochId(Samsung, 1983392) = b47dd2c25f05   (prev epoch — different, unlinkable)
+  deriveEpochId(Samsung, 1983394) = ac93e965db72   (next epoch — different)
+
+=> The heard rotating id resolves to the Samsung contact for the CURRENT epoch only.
+   A contact (holds the pubkey) resolves it; a stranger cannot; it rotates per epoch.
+   Confirms deriveEpochId / advertise / scan / resolveEpochId end-to-end across 2 devices.
+   (Visible nearby-peer UI is #216; this proves the identity mechanism.)
