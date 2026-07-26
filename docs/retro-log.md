@@ -109,3 +109,45 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   backfill path** (Waku Store absent from the binary) + the `channel_*` FFI contract;
   map-to-mesh is local/offline (hydrate the persisted roster).
 - Process → fieldcraft: **verify-delivery-not-just-send** (+ bisect-the-layer-for-delivery).
+
+## Week of 2026-07-26 — delivery root cause (#211) + Edge-mode fix + fleet outage (#4064)
+
+### Wins
+- **[process] Black-box dlopen diagnosis found the root cause without guessing.** A tiny
+  arm64 C binary dlopen'd liblogosdelivery.so (holds the ctx) and called the exported
+  waku_* verbs → measured `num_peers_in_mesh` collapsing 3→0 while connected stayed 3.
+  That single measurement located the layer (gossipsub mesh) no amount of theorizing had.
+  Tooling committed (conn/mesh/metrics/edge/send/recv_diag) → reusable. → §10c.
+- **[process] verify-before-claiming caught two near-misses.** (a) Almost shipped an
+  NSP-keyed "degraded" banner — NSP is benign; deleted it. (b) Almost concluded "Edge
+  doesn't deliver" — the wire test used a dead shard; the known-live-shard retest flipped
+  it to a proven WIN (538 msgs + marker 3/3). Never trusted one test.
+- **[project] Root cause proven + fix proven on phones.** Core/relay mesh collapse on
+  mobile (In=0/Out=3 → pruned) → Edge/filter mode. Unique marker 3/3 delivered 2-phone.
+
+### Fails
+- **[process] Over-trusted a research subagent's upstream-HEAD read.** Moment: agent said
+  "NSP benign / node receives fine over relay"; I nearly re-pointed the diagnosis + almost
+  shipped a banner on it. Root cause: the agent read nwaku HEAD, but we ship an OLDER
+  prebuilt .so — its conclusion was about HEAD, not our binary. My on-device e2e test
+  contradicted it. Lesson → new fieldcraft protocol `subagent-research-vs-shipped-artifact`.
+- **[process] Wasted a wire-test cycle on a random topic (dead shard).** Moment: 2-phone
+  Edge test on `/diag/wiretest7` → 0 received → almost concluded "Edge/fleet broken." Root
+  cause: didn't control the shard variable; an arbitrary topic autosharded to a dead shard.
+  Lesson → `verify-delivery-not-send.md` addendum: test on a KNOWN-LIVE shard.
+- **[process] Corrected a prior WRONG belief that had been repeated as advice.** "Bounce
+  the nodes to re-establish filter peers" (#195) — tested: bounce does NOT recover; fresh
+  boot re-collapses in 30s. Root cause: prior advice was theorized, never tested. → §7.6.
+- **[project] First Edge send failed on <20s warmup.** Root cause: lightpush peer not yet
+  selected → send returns ret=0 but drops. Lesson: Edge send needs ~60s warmup. → §10c.
+- **[project] UI-automated a send to a sleeping/locked screen** (12:04 send never
+  registered) → wasted a test cycle. Root cause: didn't confirm screen awake+unlocked
+  before driving input. Lesson: wake+unlock+screenshot-verify before UI automation.
+
+### Skills / doc updates from this batch
+- PROJECT_KNOWLEDGE **§10c** (delivery root cause + Edge fix + dlopen diag technique),
+  **§7.6/§7.7** (bounce-doesn't-recover; NSP-is-benign corrections).
+- Process → fieldcraft: **subagent-research-vs-shipped-artifact.md** (new);
+  **verify-delivery-not-send.md** addendum (known-live-shard).
+- Filed: logos-messaging/logos-delivery#4064 (fleet outage) + docs/fleet-outage-2026-07-26.md.
+- Shipped fix: Edge mode (liblogoschat.so rebuilt) — lib ce2c945, app 49e650f.

@@ -192,6 +192,16 @@ Recorded deliberately; these are the traps a future reader will fall into.
 5. **"`Cannot decrypt own messages` is a delivery error."** ❌ It is the relay
    echoing our own message back; MLS correctly refuses to decrypt it. Benign,
    emitted on **every** send — must never surface as a user-facing error.
+6. **"Bounce the nodes to re-establish filter peers."** ❌ Wrong (prior #195
+   advice). Tested on-device 2026-07-26: a full node bounce does NOT clear the
+   non-delivery condition — a fresh boot re-collapses the gossipsub mesh within
+   ~30 s. The node re-boots in the same (Core) mode; nothing resets. → #211
+7. **"`no subscribed peers found` means we can't receive."** ❌ Wrong. It is
+   benign filter-**server** noise (the relay→filter bridge on a node that mounts a
+   filter server with no clients), fired once per relay-received message — if
+   anything it proves the node IS receiving relay traffic. The real non-delivery
+   signal is `waku_relay_get_num_peers_in_mesh(shard) == 0`, NOT this log and NOT
+   the connected-peer count (which stays 3 the whole time). → #211
 
 ## 8. Build & verify playbook
 
@@ -339,6 +349,61 @@ delivery-reliability investigation.
    advertises a fixed service UUID + central scans → TTL-pruned nearby-peer count),
    surfaced as a 3rd header pill glyph + 3rd Transports-modal row. Pure Kotlin BLE, no
    FFI. Flood routing / GATT data channels are later children of #133.
+
+## 10c. Delivery root cause + Edge-mode fix + on-device diagnosis (2026-07-26 batch)
+
+**ROOT CAUSE of silent non-delivery (#211/#195/#209): the mobile node ran in
+Core/relay mode, and a mobile node cannot hold a gossipsub mesh.** Behind NAT it
+has **zero inbound** relay connections (`waku_connected_peers` relay `In=0/Out=3`);
+gossipsub prunes outbound-only peers, so its **mesh peers collapse 3→0 within ~30 s**
+on every shard (`waku_relay_get_num_peers_in_mesh`). gossipsub forwards real messages
+ONLY to MESH peers → nothing is delivered, even though `num_connected_peers` stays 3.
+No RLN membership is imported (`waku_rln_membership_credentials_import=0`), which may
+also contribute to the prune.
+
+**FIX (shipped): create the node in Edge/filter mode.** `{"mode":"Edge"}` →
+`logosdelivery_create_node`, threaded through `logos-delivery-rust` `threaded.rs`
+(the hardcoded `"mode":"Core"`), env override `LOGOS_DELIVERY_MODE=Core`. Edge mounts
+the filter client + lightpush instead of relay: it holds **2-3 stable filter service
+peers** (steady 75 s) and sends via lightpush. **PROVEN end-to-end, 2 phones:** a
+unique marker delivered **3/3** on a live shard. ⚠️ **Edge send needs ~60 s
+lightpush-peer warmup** before the first send actually lands (a send <20 s after boot
+returns `ret=0` but no peer selected → dropped). The app already filter-subscribes per
+conversation (`EmbeddedLogosDelivery::subscribe → inner.subscribe(content_topic_for)`),
+so Edge receive works without extra plumbing.
+
+**Concurrent, separate problem — fleet partial outage (per-shard).** Waku autoshards
+each content topic across 8 shards; `content_topic_for = /kym/1/<delivery_addr>/proto`
+→ a **deterministic** shard per conversation. When the fleet nodes serving a shard go
+down, every conversation on that shard **silently stops** while others keep working
+(looks intermittent/per-conversation). 2026-07-26: 3/6 `logos.dev` delivery nodes
+REFUSED :30303; shards **0/2/4/7 live, 1/3/5/6 silent**. You can't move an existing
+chat's shard (deterministic hash); a new chat gets a hash-random shard (~50 % live).
+Fleet-side, not client-fixable → filed **logos-messaging/logos-delivery#4064** +
+`docs/fleet-outage-2026-07-26.md`. Kernel API has explicit-shard verbs
+(`waku_relay_subscribe(pubSubTopic)`, `waku_relay_add_protected_shard`) so a
+shard-pin stopgap is *possible* but fragile (breaks interop mid-rollout, obsolete on
+fleet recovery).
+
+**On-device black-box diagnosis technique (reusable, no app/Rust rebuild).** A tiny
+arm64 C binary `dlopen`s `liblogosdelivery.so` and, because it calls
+`logosdelivery_create_node` itself, **holds the delivery `ctx`** — so it can call the
+EXPORTED `waku_*` verbs directly. This is how the root cause was found without guessing.
+Tools in `logos-libchat-mls-android/scripts/`:
+- `conn_diag.c` — libp2p_peers (is it connected at all?)
+- `mesh_diag.c` — `num_peers_in_mesh` per shard (the honest delivery signal)
+- `metrics_diag.c` — per-shard traffic + RLN + relay In/Out gauges
+- `edge_diag.c` — Core vs Edge peer stability (proves the fix)
+- `send_diag.c` / `recv_diag.c` — two-phone wire test (send/receive isolation)
+
+Build: `aarch64-linux-android24-clang -O2 x.c -ldl`; run:
+`LD_LIBRARY_PATH=<dir> ./x ./liblogosdelivery.so`. Exported peer/health verbs live in
+the prebuilt already (`waku_relay_get_num_connected_peers`,
+`waku_relay_get_num_peers_in_mesh`, `waku_get_peerids_by_protocol`,
+`waku_filter_subscribe`, …) — the MLS façade `liblogoschat.h` just doesn't surface
+them.
+
+**Proof:** `logs/verification/211-mesh-collapse-rootcause.txt`.
 
 ## 10. Issue map
 
