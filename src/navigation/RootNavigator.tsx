@@ -158,7 +158,7 @@ export function RootNavigator() {
         <Stack.Screen
           name="Nearby"
           component={NearbyScreen}
-          options={{title: 'Nearby'}}
+          options={{title: 'Discovery'}}
         />
       </Stack.Navigator>
     </NavigationContainer>

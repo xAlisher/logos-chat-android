@@ -18,7 +18,6 @@ import {shortAddress} from '../native/LogosChat';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-type Hop = 1 | 2 | 3;
 type Filter = 'all' | 'contacts' | 'verified';
 
 export function NearbyScreen() {
@@ -27,13 +26,10 @@ export function NearbyScreen() {
   const peerCount = useBleStore(s => s.peerCount);
   const nearbyContacts = useBleStore(s => s.nearbyContacts);
   const engage = useBleStore(s => s.engage);
-  const sendBleTest = useBleStore(s => s.sendBleTest); // #142 transport proof
-  const lastBleRx = useBleStore(s => s.lastBleRx);
   const conversations = useChatStore(s => s.conversations);
   const members = useChatStore(s => s.members);
   const meshMap = useChatStore(s => s.meshMap);
 
-  const [hop, setHop] = useState<Hop>(1);
   const [filter, setFilter] = useState<Filter>('all');
 
   // Resolve the heard contact addresses → full contacts (label + verified).
@@ -61,19 +57,9 @@ export function NearbyScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <View style={styles.tabs}>
-        {([1, 2, 3] as Hop[]).map(h => (
-          <Pressable
-            key={h}
-            style={[styles.tab, hop === h && styles.tabActive]}
-            onPress={() => setHop(h)}
-            testID={`nearby-hop-${h}`}>
-            <Text style={[styles.tabText, hop === h && styles.tabTextActive]}>
-              Hop {h}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      {/* #231: one page, all visible peers. Each row shows its hop distance on
+          the right (like the group member count). Multi-hop relay (#142) fills
+          hops 2–3 in; directly-heard peers are 1 hop. */}
       <View style={styles.filters}>
         {(['all', 'contacts', 'verified'] as Filter[]).map(f => (
           <Pressable
@@ -88,37 +74,19 @@ export function NearbyScreen() {
         ))}
       </View>
 
-      {/* #142: transport proof — ping the flood; the receiver logs [BLE-RX] +
-          shows it below. Temporary dev affordance while messaging is wired. */}
       {status === 'on' && (
-        <View style={styles.pingRow}>
-          <Pressable
-            style={styles.pingBtn}
-            onPress={() => sendBleTest(`ping ${Date.now() % 100000}`)}
-            testID="nearby-ping">
-            <Text style={[type.label, {color: colors.onAccent}]}>Ping mesh (test)</Text>
-          </Pressable>
-          {lastBleRx != null && (
-            <Text style={styles.rx} numberOfLines={1} testID="nearby-lastrx">
-              rx: {lastBleRx}
-            </Text>
-          )}
-        </View>
+        <Text style={styles.encNote} testID="nearby-enc-note">
+          Chats over Bluetooth mesh are end-to-end encrypted (MLS).
+        </Text>
       )}
 
       {status !== 'on' ? (
         <View style={styles.empty}>
           <BleLogo size={40} color={colors.textFaint} />
-          <Text style={styles.emptyText}>BLE mesh is off.</Text>
+          <Text style={styles.emptyText}>Bluetooth mesh is off.</Text>
           <Pressable style={styles.engageBtn} onPress={() => engage()} testID="nearby-engage">
-            <Text style={[type.label, {color: colors.onAccent}]}>Turn on BLE mesh</Text>
+            <Text style={[type.label, {color: colors.onAccent}]}>Turn on Bluetooth mesh</Text>
           </Pressable>
-        </View>
-      ) : hop !== 1 ? (
-        <View style={styles.empty}>
-          <Text style={styles.emptyText}>
-            Hop {hop} needs the multi-hop relay (#142) — coming next.
-          </Text>
         </View>
       ) : (
         <FlatList
@@ -162,7 +130,12 @@ export function NearbyScreen() {
                   {shortAddress(item.address)} · nearby
                 </Text>
               </View>
-              <View style={styles.dot} />
+              {/* #231: hop distance, right-aligned (like the group member count).
+                  Directly-heard peers are 1 hop; multi-hop (#142) will fill more. */}
+              <View style={styles.hopBadge}>
+                <View style={styles.dot} />
+                <Text style={styles.hopText}>1 hop</Text>
+              </View>
             </Pressable>
           )}
         />
@@ -174,11 +147,9 @@ export function NearbyScreen() {
 const GREEN = '#22C55E';
 const styles = StyleSheet.create({
   safe: {flex: 1, backgroundColor: colors.canvas},
-  tabs: {flexDirection: 'row', borderBottomColor: colors.border, borderBottomWidth: 1},
-  tab: {flex: 1, paddingVertical: spacing.md, alignItems: 'center'},
-  tabActive: {borderBottomColor: colors.accent, borderBottomWidth: 2},
-  tabText: {...type.label, color: colors.textDim},
-  tabTextActive: {color: colors.text},
+  encNote: {...type.caption, color: colors.textFaint, paddingHorizontal: spacing.lg, paddingBottom: spacing.xs},
+  hopBadge: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  hopText: {...type.label, color: colors.textDim},
   filters: {flexDirection: 'row', gap: spacing.sm, padding: spacing.md},
   chip: {
     paddingHorizontal: spacing.md,
@@ -205,7 +176,4 @@ const styles = StyleSheet.create({
   hex: {...type.label, color: GREEN, lineHeight: 14},
   dot: {width: 10, height: 10, borderRadius: 5, backgroundColor: GREEN},
   anon: {...type.caption, color: colors.textFaint, padding: spacing.lg, textAlign: 'center'},
-  pingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingBottom: spacing.sm},
-  pingBtn: {backgroundColor: colors.accent, borderRadius: radii.card, paddingHorizontal: spacing.md, paddingVertical: spacing.xs},
-  rx: {...type.caption, color: GREEN, flexShrink: 1},
 });

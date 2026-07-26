@@ -339,9 +339,17 @@ export function SideMenu({
             onPress={() => pick(onMeshCore)}
             testID="menu-meshcore"
           />
+        </View>
+
+        <View style={styles.divider} />
+
+        {/* #231: Bluetooth mesh is its own transport block, separate from
+            MeshCore (LoRa). Its page is "Discovery". */}
+        <Text style={styles.sectionLabel}>Bluetooth mesh</Text>
+        <View style={styles.group}>
           <Item
             icon={c => <BleLogo color={c} size={22} />}
-            label="Nearby"
+            label="Discovery"
             onPress={() => pick(onNearby)}
             testID="menu-nearby"
           />
