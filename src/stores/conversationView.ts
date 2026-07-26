@@ -68,7 +68,13 @@ export function memberStatusFields(
   const member = address.toLowerCase();
   switch (status) {
     case 'invited':
-      return {text: `${peerLabel} invited`, info: 'invited-wait', member};
+      // #230: set the expectation inline — admitting a member is a de-mls
+      // consensus round that takes ~90s to settle even when they're online.
+      return {
+        text: `${peerLabel} invited · joining takes ~90s if they're online`,
+        info: 'invited-wait',
+        member,
+      };
     case 'not-joined':
       return {
         text: `${peerLabel} hasn't joined — they may be offline`,

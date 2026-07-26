@@ -26,7 +26,7 @@ describe('memberStatusFields', () => {
   });
   it('tags invited with the wait explainer', () => {
     const f = memberStatusFields('a', 'invited', 'Al ab…cd');
-    expect(f.text).toBe('Al ab…cd invited');
+    expect(f.text).toMatch(/^Al ab…cd invited/);
     expect(f.info).toBe('invited-wait');
   });
   it('tags not-joined with the re-invite affordance targeting the member', () => {
@@ -57,7 +57,9 @@ describe('upsertMemberNote — one line per member', () => {
     notes = upsertMemberNote(notes, note('bob', 'invited', 'Bob'), CAP);
     notes = upsertMemberNote(notes, note('alice', 'joined', 'Alice'), CAP);
     expect(notes).toHaveLength(2);
-    expect(notes.map(x => x.text).sort()).toEqual(['Alice joined', 'Bob invited']);
+    const texts = notes.map(x => x.text).sort();
+    expect(texts[0]).toBe('Alice joined');
+    expect(texts[1]).toMatch(/^Bob invited/);
   });
 
   it('matches the upsert key case-insensitively (no duplicate on case change)', () => {
@@ -82,7 +84,7 @@ describe('upsertMemberNote — one line per member', () => {
     // re-invite the same member
     notes = upsertMemberNote(notes, note('alice', 'invited', 'Alice'), CAP);
     expect(notes).toHaveLength(1);
-    expect(notes[0].text).toBe('Alice invited');
+    expect(notes[0].text).toMatch(/^Alice invited/);
   });
 });
 

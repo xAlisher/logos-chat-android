@@ -72,6 +72,15 @@ export function TransportPill() {
   const bleConfigured = useSettingsStore(s => s.bleConfigured);
   const [open, setOpen] = useState(false);
 
+  // #233: the Logos node is the PRIMARY transport — always shown, red/failed when
+  // offline. Secondary transports (MeshCore, BLE) are only shown while they're
+  // doing something (online or connecting); an offline secondary is hidden
+  // entirely rather than sitting there gray (supersedes the gray treatment #227).
+  const mesh = meshTri(meshStatus);
+  const ble = bleTri(bleStatus);
+  const showMesh = meshConfigured && mesh !== 'offline';
+  const showBle = bleConfigured && ble !== 'offline';
+
   return (
     <>
       <Pressable
@@ -80,12 +89,8 @@ export function TransportPill() {
         onPress={() => setOpen(true)}
         style={styles.pill}>
         <TransportGlyph tri={logosTri(nodeStatus)} kind="logos" />
-        {meshConfigured && (
-          <TransportGlyph tri={meshTri(meshStatus)} kind="mesh" />
-        )}
-        {bleConfigured && (
-          <TransportGlyph tri={bleTri(bleStatus)} kind="ble" />
-        )}
+        {showMesh && <TransportGlyph tri={mesh} kind="mesh" />}
+        {showBle && <TransportGlyph tri={ble} kind="ble" />}
       </Pressable>
       <TransportsModal visible={open} onClose={() => setOpen(false)} />
     </>

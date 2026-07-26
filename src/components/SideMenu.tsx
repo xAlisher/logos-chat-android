@@ -191,6 +191,9 @@ export function SideMenu({
     if (visible) {
       setMounted(true);
     } else {
+      // #234: leave edit mode when the drawer closes, so it never reopens with
+      // the label input focused (a blinking cursor on every open).
+      setEditingName(false);
       const t = setTimeout(() => setMounted(false), 220);
       return () => clearTimeout(t);
     }
@@ -241,7 +244,7 @@ export function SideMenu({
                 onChangeText={setNameDraft}
                 onBlur={commitName}
                 onSubmitEditing={commitName}
-                placeholder="Your name…"
+                placeholder="Add label (optional)"
                 placeholderTextColor={colors.textFaint}
                 autoFocus
                 returnKeyType="done"
@@ -256,7 +259,7 @@ export function SideMenu({
                 hitSlop={6}
                 testID="menu-name">
                 <Text style={styles.headerName} numberOfLines={1}>
-                  {displayName.length > 0 ? displayName : 'Add your name'}
+                  {displayName.length > 0 ? displayName : 'Add label (optional)'}
                 </Text>
               </Pressable>
             )}
