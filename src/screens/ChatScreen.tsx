@@ -9,6 +9,7 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
+  Image,
   Text,
   TextInput,
   View,
@@ -32,6 +33,7 @@ import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
 import {QrIcon} from '../components/QrIcon';
 import {SendIcon} from '../components/SendIcon';
+import {ImageIcon} from '../components/ImageIcon';
 import {
   OverflowMenu,
   EllipsisIcon,
@@ -58,6 +60,7 @@ import type {Conversation, Message, SystemNote} from '../stores/chatStore';
 type Row = {kind: 'msg'; msg: Message} | {kind: 'sys'; sys: SystemNote};
 import {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
+import {parseImageLocal} from '../native/imageMsg';
 import {deriveComposerState} from '../stores/groupState';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -68,6 +71,8 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 // #167: MeshCore packet text cap. Payload is single-shot (~133–160 chars,
 // no fragmentation exposed); 140 keeps a safe margin under the datagram cap.
 const MESH_MAX_CHARS = 140;
+/** #197: on-screen width of an image bubble (height scales to the image ratio). */
+const IMG_BUBBLE_W = 220;
 // Mesh transport accent — theme has no green token (brand is orange), so the
 // literal lives here per the mesh-transport design (docs/mesh-transport.md).
 const MESH_GREEN = '#22C55E';
@@ -174,6 +179,9 @@ function Bubble({
   // msg.senderAccount for a Logos-arrived relay) describes them — reuse its
   // label ?? hex. MessageRow carries no mesh sender-name, so a mesh-arrived relay
   // (attribution == null) falls back to a plain 'bridge'.
+  // #197: an image message stores a local marker `img1v:<mime>:<w>:<h>␟<path>`;
+  // render the file inline (aspect-fit within a max width) instead of text.
+  const image = parseImageLocal(msg.text);
   const relay = parseRelay(msg.text);
   const displayText = relay?.text ?? msg.text;
   const bridgeName =
@@ -224,10 +232,25 @@ function Bubble({
           msg.status === 'pending' && styles.bubblePending,
           viaMesh && (own ? styles.bubbleMeshOwn : styles.bubbleMeshPeer),
           failed && styles.bubbleFailed,
+          image != null && styles.bubbleImage,
         ]}>
-        <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
-          {displayText}
-        </Text>
+        {image != null ? (
+          <Image
+            source={{uri: `file://${image.path}`}}
+            style={{
+              width: IMG_BUBBLE_W,
+              height: Math.round(
+                (IMG_BUBBLE_W * image.meta.height) / Math.max(1, image.meta.width),
+              ),
+              borderRadius: radii.card,
+            }}
+            resizeMode="cover"
+          />
+        ) : (
+          <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
+            {displayText}
+          </Text>
+        )}
       </Pressable>
       <View style={styles.timeRow}>
         {viaMesh && <Text style={styles.viaMesh}>{viaLabel}</Text>}
@@ -261,6 +284,7 @@ export function ChatScreen() {
   const loadingMore = useChatStore(s => s.loadingMore[convoPk]) ?? false;
   const addMember = useChatStore(s => s.addMember);
   const send = useChatStore(s => s.send);
+  const sendImage = useChatStore(s => s.sendImage);
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
   const setNickname = useChatStore(s => s.setNickname);
@@ -278,6 +302,7 @@ export function ChatScreen() {
   const clearError = useNodeStore(s => s.clearError);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [addressOpen, setAddressOpen] = useState(false);
   // The contact the label editor is for: the thread peer (header menu) OR the
@@ -772,6 +797,26 @@ export function ChatScreen() {
     }
   };
 
+  const onAttach = async () => {
+    // #197: images are Logos-only. Need the node up (a pure-mesh thread can't
+    // carry one). The store also guards, but fail fast with a clear message here.
+    if (isMesh) {
+      ToastAndroid.show('Images are not supported on mesh', ToastAndroid.SHORT);
+      return;
+    }
+    if (!running) {
+      useNodeStore.setState({error: 'start the node to send an image'});
+      return;
+    }
+    if (attaching) return;
+    setAttaching(true);
+    try {
+      await sendImage(convoPk);
+    } finally {
+      setAttaching(false);
+    }
+  };
+
   const onSubmit = () => {
     // A send goes through if the mesh radio is live (mesh path) OR the Logos node
     // is running (a mesh-mirrored group falls back to Logos when the radio is
@@ -997,6 +1042,21 @@ export function ChatScreen() {
         </View>
       ) : (
       <View style={styles.composer}>
+        {/* #197: attach an image — Logos-only, so hidden on pure-mesh threads. */}
+        {!isMesh && (
+          <Pressable
+            style={styles.attach}
+            onPress={onAttach}
+            disabled={attaching}
+            hitSlop={8}
+            testID="composer-attach">
+            {attaching ? (
+              <ActivityIndicator size="small" color={colors.textDim} />
+            ) : (
+              <ImageIcon size={24} color={colors.textDim} />
+            )}
+          </Pressable>
+        )}
         <TextInput
           style={styles.input}
           value={text}
@@ -1143,6 +1203,8 @@ const styles = StyleSheet.create({
   bubbleOwn: {backgroundColor: colors.accent},
   bubblePending: {opacity: 0.55},
   bubbleFailed: {borderColor: colors.unread, borderWidth: 1},
+  // #197: an image fills the bubble — drop the text padding so it sits flush.
+  bubbleImage: {padding: 3, overflow: 'hidden'},
   // #167: subtle green edge marking a message that rode the mesh (not MLS). A
   // thin border on the "outside" edge of each side + a faint green tint.
   bubbleMeshPeer: {
@@ -1267,6 +1329,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     maxHeight: 120,
+  },
+  // #197: attach-image button, sized to match the send target and stay bottom-aligned.
+  attach: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.card,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendCol: {alignItems: 'center', gap: spacing.xs},
   // #167: live char counter shown only for a mesh composer.

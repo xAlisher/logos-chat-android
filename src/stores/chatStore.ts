@@ -9,6 +9,8 @@ import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
 import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
+import {isImageContent} from '../native/imageMsg';
+import ImagePicker, {parsePicked} from '../native/ImagePicker';
 import {useNodeStore} from './nodeStore';
 import {useMeshStore} from './meshStore';
 import {convoDisplayName} from './conversationView';
@@ -68,7 +70,9 @@ export function conversationPreview(
   if (latest != null && latest.at > convo.lastMessageAt) {
     return {text: latest.text, at: latest.at, isSystem: true};
   }
-  return {text: convo.lastText, at: convo.lastMessageAt, isSystem: false};
+  // #197: an image's last-message is a marker, not readable text — preview it as a photo.
+  const text = isImageContent(convo.lastText) ? '📷 Photo' : convo.lastText;
+  return {text, at: convo.lastMessageAt, isSystem: false};
 }
 
 interface ChatState {
@@ -112,6 +116,12 @@ interface ChatState {
   switchGroupToLogos: (convoPk: number) => Promise<void>;
   /** Send a message into a conversation (1:1 or group). */
   send: (convoPk: number, text: string) => Promise<void>;
+  /**
+   * #197: pick an image from the gallery and send it over Logos (1:1 or group).
+   * Images are Logos-only — never mirrored to the mesh (LoRa can't carry them).
+   * No-op if the user cancels the picker.
+   */
+  sendImage: (convoPk: number) => Promise<void>;
   /** Re-send a failed outbound message. */
   retry: (convoPk: number, msgPk: number) => Promise<void>;
   setActive: (convoPk: number | null) => void;
@@ -445,6 +455,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await LogosChat.clearMeshMirror(convoPk);
     await get().refreshConversations();
     get().pushSystemLine(convoPk, 'Stopped MeshCore bridging — Logos only');
+  },
+
+  sendImage: async (convoPk: number) => {
+    const convo = get().conversations[convoPk];
+    const transport = convo?.transport ?? 'logos';
+    // Pure-mesh conversations (a LoRa channel/DM) can't carry an image.
+    if (transport === 'mesh') {
+      useNodeStore.setState({error: 'images are not supported on mesh'});
+      return;
+    }
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'start the node to send an image'});
+      return;
+    }
+    // Pick + downscale natively to ~120 KB so it fits one Logos message.
+    let picked;
+    try {
+      picked = parsePicked(await ImagePicker.pickImage(1280, 120_000));
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return;
+    }
+    if (picked == null) return; // cancelled
+    try {
+      const res = JSON.parse(
+        await LogosChat.sendImageTo(
+          convoPk,
+          picked.mime,
+          picked.width,
+          picked.height,
+          picked.base64,
+        ),
+      );
+      if (res.status === 'failed') {
+        useNodeStore.setState({error: 'image send failed — tap to retry'});
+      }
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+    }
+    // The own bubble + status land native-side; refresh from the DB.
+    await get().loadMessages(convoPk);
+    get().refreshConversations();
   },
 
   send: async (convoPk: number, text: string) => {
@@ -903,7 +955,9 @@ addLogosChatListener(e => {
       e.direction === 'in' &&
       e.convoPk != null &&
       e.detail != null &&
-      !isRelay(e.detail)
+      !isRelay(e.detail) &&
+      // #197: images can't fit a LoRa datagram — never mirror them to the mesh.
+      !isImageContent(e.detail)
     ) {
       const convo = s.conversations[e.convoPk];
       if (

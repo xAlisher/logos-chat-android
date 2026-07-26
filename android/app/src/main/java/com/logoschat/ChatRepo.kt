@@ -35,6 +35,8 @@ object ChatRepo {
   const val CONTINUES_PREFIX = "logos-continues:"
 
   @Volatile private var db: ChatDb? = null
+  /** App context retained for image file storage (#197); set in [init]. */
+  @Volatile private var appContext: Context? = null
   /** convoPk of the thread open in the UI (0 = none) — its inbound doesn't count unread. */
   @Volatile var activeConvoPk: Long = 0L
   /** Is the app actually on screen? [activeConvoPk] only suppresses while true. */
@@ -53,6 +55,7 @@ object ChatRepo {
     if (db != null) return
     synchronized(this) {
       if (db == null) {
+        appContext = context.applicationContext
         db = ChatDb(context.applicationContext)
         val (convos, msgs) = db!!.counts()
         Log.i(TAG, "db open: $convos conversations, $msgs messages (schema v${ChatDb.DB_VERSION})")
@@ -287,10 +290,38 @@ object ChatRepo {
     }
   }
 
-  private fun onMessageReceived(libConvoId: String, content: String, senderAccount: String?): Outcome? {
+  /**
+   * #197: if [raw] is an inbound image wire message (`img1:<mime>:<w>:<h>␟<base64>`),
+   * persist the JPEG and return the local marker (`img1v:<mime>:<w>:<h>␟<path>`).
+   * Otherwise return [raw] unchanged. Any decode/save failure falls back to [raw]
+   * so a malformed image can never sink message delivery.
+   */
+  private fun maybeStoreInboundImage(raw: String): String {
+    if (!raw.startsWith("img1:")) return raw
+    val sep = raw.indexOf('␟')
+    if (sep < 0) return raw
+    val header = raw.substring("img1:".length, sep) // "<mime>:<w>:<h>"
+    val base64 = raw.substring(sep + 1)
+    if (base64.isEmpty()) return raw
+    val ctx = appContext ?: return raw
+    return try {
+      val path = ImageFiles.saveBase64(ctx, base64)
+      "img1v:$header␟$path"
+    } catch (t: Throwable) {
+      Log.w(TAG, "inbound image save failed: ${t.message}")
+      raw
+    }
+  }
+
+  private fun onMessageReceived(libConvoId: String, rawContent: String, senderAccount: String?): Outcome? {
     if (libConvoId.isEmpty()) return null
     val d = requireDb()
     val now = System.currentTimeMillis()
+    // #197: an inbound image arrives as one `img1:<mime>:<w>:<h>␟<base64>` message.
+    // Save the JPEG to app storage and replace the content with the small local
+    // marker `img1v:…␟<path>` — so the DB row, dedup, and notification stay light
+    // and the bubble renders from a file. Non-image text passes through unchanged.
+    val content = maybeStoreInboundImage(rawContent)
     // Bind convoId -> conversation. Prefer the lib id; fall back to the peer
     // address (a 1:1 we created outbound may carry a different local id).
     var convoPk = d.convoPkByLibId(libConvoId)

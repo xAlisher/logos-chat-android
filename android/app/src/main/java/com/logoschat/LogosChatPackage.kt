@@ -20,5 +20,6 @@ class LogosChatPackage : ReactPackage {
           LogosChatModule(reactContext),
           MeshCoreModule(reactContext),
           BleMeshModule(reactContext),
+          ImagePickerModule(reactContext),
       )
 }
