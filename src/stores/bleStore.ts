@@ -13,6 +13,14 @@ import {useSettingsStore} from './settingsStore';
 import {useNodeStore} from './nodeStore';
 import {useChatStore} from './chatStore';
 import {currentEpoch, deriveEpochId, resolveEpochId} from '../native/bleIdentity';
+import {
+  encodePacket,
+  decodePacket,
+  relayDecision,
+  newMsgId,
+  SeenSet,
+} from '../native/bleFlood';
+import {fragment, Reassembler} from '../native/bleFrag';
 
 interface BleState {
   status: BleStatus;
@@ -28,6 +36,10 @@ interface BleState {
   refreshAvailability: () => Promise<void>;
   /** #214: re-derive + re-advertise the rotating id now (e.g. after toggling identity). */
   refreshAdvertiseId: () => Promise<void>;
+  /** #142: send a text over the BLE flood (transport proof — fragments + floods). */
+  sendBleTest: (text: string) => Promise<void>;
+  /** #142: last message reassembled from the BLE flood (transport proof surface). */
+  lastBleRx: string | null;
   clearError: () => void;
 }
 
@@ -78,6 +90,11 @@ function resolveNearby(ids: string[]): string[] {
 
 let rotateTimer: ReturnType<typeof setInterval> | null = null;
 let lastAdvId: string | null = null;
+// #142: flood dedup + message reassembly across the app lifetime.
+const floodSeen = new SeenSet(1024);
+const reassembler = new Reassembler();
+let floodNonce = 0;
+const CHUNK = 120; // fits one GATT write at MTU 247 after flood + frag headers
 
 export const useBleStore = create<BleState>((set, get) => ({
   status: 'off',
@@ -85,6 +102,7 @@ export const useBleStore = create<BleState>((set, get) => ({
   nearbyContacts: [],
   availability: {supported: false, advertiseSupported: false, adapterOn: false},
   error: null,
+  lastBleRx: null,
 
   engage: async () => {
     if (get().status !== 'off') return;
@@ -146,6 +164,29 @@ export const useBleStore = create<BleState>((set, get) => ({
     }
   },
 
+  sendBleTest: async (text: string) => {
+    const addr = useNodeStore.getState().myAddress ?? 'me';
+    const fragMsgId = newMsgId(addr, floodNonce++);
+    const frags = fragment(fragMsgId, text, CHUNK);
+    for (const f of frags) {
+      // Each FLOOD packet gets a UNIQUE msgId (dedup key); the bleFrag msgId inside
+      // the payload is shared across fragments for reassembly.
+      const pkt = encodePacket({
+        msgId: newMsgId(addr, floodNonce++),
+        hopCount: 0,
+        ttl: 3,
+        kind: 'msg',
+        senderId: addr,
+        payload: f,
+      });
+      try {
+        await BleMesh.sendMeshPacket(pkt);
+      } catch (e: any) {
+        set({error: String(e?.message ?? e)});
+      }
+    }
+  },
+
   clearError: () => set({error: null}),
 }));
 
@@ -160,5 +201,23 @@ addBleListener(e => {
     if (typeof e.count === 'number') patch.peerCount = e.count;
     if (Array.isArray(e.ids)) patch.nearbyContacts = resolveNearby(e.ids);
     useBleStore.setState(patch);
+  } else if (e.eventType === 'packet' && typeof e.data === 'string') {
+    // #142: a mesh packet arrived over a GATT link. Dedup + relay (flood), then
+    // reassemble the fragment (bleFrag). Delivering into the encrypted timeline is
+    // gated on link crypto (#136) — for now we surface the reassembled text so the
+    // transport is verifiable end-to-end.
+    const pkt = decodePacket(e.data);
+    if (pkt == null) return;
+    const {rebroadcast, next} = relayDecision(pkt, floodSeen);
+    if (rebroadcast && next != null) {
+      BleMesh.sendMeshPacket(encodePacket(next)).catch(() => {});
+    }
+    if (pkt.kind === 'msg') {
+      const done = reassembler.add(pkt.payload);
+      if (done.done && done.dataB64 != null) {
+        console.log('[BLE-RX msg]', pkt.senderId, '→', done.dataB64);
+        useBleStore.setState({lastBleRx: done.dataB64});
+      }
+    }
   }
 });

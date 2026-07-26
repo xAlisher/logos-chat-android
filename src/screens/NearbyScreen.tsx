@@ -27,6 +27,8 @@ export function NearbyScreen() {
   const peerCount = useBleStore(s => s.peerCount);
   const nearbyContacts = useBleStore(s => s.nearbyContacts);
   const engage = useBleStore(s => s.engage);
+  const sendBleTest = useBleStore(s => s.sendBleTest); // #142 transport proof
+  const lastBleRx = useBleStore(s => s.lastBleRx);
   const conversations = useChatStore(s => s.conversations);
   const members = useChatStore(s => s.members);
   const meshMap = useChatStore(s => s.meshMap);
@@ -85,6 +87,24 @@ export function NearbyScreen() {
           </Pressable>
         ))}
       </View>
+
+      {/* #142: transport proof — ping the flood; the receiver logs [BLE-RX] +
+          shows it below. Temporary dev affordance while messaging is wired. */}
+      {status === 'on' && (
+        <View style={styles.pingRow}>
+          <Pressable
+            style={styles.pingBtn}
+            onPress={() => sendBleTest(`ping ${Date.now() % 100000}`)}
+            testID="nearby-ping">
+            <Text style={[type.label, {color: colors.onAccent}]}>Ping mesh (test)</Text>
+          </Pressable>
+          {lastBleRx != null && (
+            <Text style={styles.rx} numberOfLines={1} testID="nearby-lastrx">
+              rx: {lastBleRx}
+            </Text>
+          )}
+        </View>
+      )}
 
       {status !== 'on' ? (
         <View style={styles.empty}>
@@ -185,4 +205,7 @@ const styles = StyleSheet.create({
   hex: {...type.label, color: GREEN, lineHeight: 14},
   dot: {width: 10, height: 10, borderRadius: 5, backgroundColor: GREEN},
   anon: {...type.caption, color: colors.textFaint, padding: spacing.lg, textAlign: 'center'},
+  pingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingHorizontal: spacing.md, paddingBottom: spacing.sm},
+  pingBtn: {backgroundColor: colors.accent, borderRadius: radii.card, paddingHorizontal: spacing.md, paddingVertical: spacing.xs},
+  rx: {...type.caption, color: GREEN, flexShrink: 1},
 });

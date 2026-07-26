@@ -3,7 +3,16 @@ package com.logoschat
 import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothGattServer
+import android.bluetooth.BluetoothGattServerCallback
+import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -63,6 +72,12 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     private val SERVICE_UUID: UUID =
         UUID.fromString("d1e5f0a0-1b2c-4d3e-9f5a-0123456789ab")
     private val SERVICE_PARCEL = ParcelUuid(SERVICE_UUID)
+    /** #142: the mesh packet characteristic (WRITE from a central, NOTIFY to it). */
+    private val MESH_CHAR_UUID: UUID =
+        UUID.fromString("d1e5f0a0-1b2c-4d3e-9f5a-0123456789ac")
+    /** Standard Client Characteristic Config Descriptor (for enabling notify). */
+    private val CCCD_UUID: UUID =
+        UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     /** Drop a peer we haven't heard from in this long (ms). */
     private const val PEER_TTL_MS = 20_000L
@@ -93,6 +108,17 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
   private val peers = HashMap<String, Pair<Long, String>>()
   private var lastEmittedCount = -1
   private var lastEmittedIds: Set<String> = emptySet()
+
+  // #142: GATT dual-role transport. Server hosts the mesh characteristic;
+  // centrals connect to it. We also connect (as central) to heard peers' servers.
+  private var gattServer: BluetoothGattServer? = null
+  private var meshChar: BluetoothGattCharacteristic? = null
+  /** centrals currently connected to OUR server (we notify them). */
+  private val serverClients = java.util.Collections.synchronizedSet(HashSet<BluetoothDevice>())
+  /** peripherals WE are connected to as a central, by address (we write to them). */
+  private val clientConns = java.util.concurrent.ConcurrentHashMap<String, BluetoothGatt>()
+  /** addresses we're mid-connect to, to avoid duplicate connectGatt. */
+  private val connecting = java.util.Collections.synchronizedSet(HashSet<String>())
 
   // -- capability query -------------------------------------------------------
 
@@ -155,6 +181,7 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     val settled = AtomicBoolean(false)
     handler.post {
       try {
+        openGattServerLocked() // #142: host the mesh characteristic for centrals
         startScanLocked(scan)
         startAdvertiseLocked(
             adv,
@@ -183,6 +210,7 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
   fun disengage(promise: Promise) {
     handler.post {
       stopAllLocked()
+      closeGattLocked()
       synchronized(peers) { peers.clear() }
       lastEmittedCount = -1
       lastEmittedIds = emptySet()
@@ -237,7 +265,7 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
         AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-            .setConnectable(false) // presence only; no GATT connection yet
+            .setConnectable(true) // #142: centrals connect to our GATT server to exchange packets
             .setTimeout(0)
             .build()
     // #214: advertise SERVICE DATA (UUID + idBytes(6) + flags(1)) — carries the
@@ -306,6 +334,10 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
       if (anyNonZero) idHex = sb.toString()
     }
     notePeer(address, idHex)
+    // #142: open a GATT link to this peer (as central) so packets can flow. Only
+    // ONE side needs to initiate — dedup by address; a lower-address tiebreak keeps
+    // both from dialling each other simultaneously.
+    result.device?.let { maybeConnect(it) }
   }
 
   @SuppressLint("MissingPermission")
@@ -363,6 +395,189 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
           if (status == "on") handler.postDelayed(this, PRUNE_INTERVAL_MS)
         }
       }
+
+  // -- GATT dual-role transport (#142) ----------------------------------------
+
+  @SuppressLint("MissingPermission")
+  private fun openGattServerLocked() {
+    if (gattServer != null) return
+    val mgr =
+        reactApplicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            ?: return
+    val server = mgr.openGattServer(reactApplicationContext, gattServerCallback) ?: return
+    val ch =
+        BluetoothGattCharacteristic(
+            MESH_CHAR_UUID,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or
+                BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE or
+                BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+            BluetoothGattCharacteristic.PERMISSION_WRITE)
+    ch.addDescriptor(
+        BluetoothGattDescriptor(
+            CCCD_UUID,
+            BluetoothGattDescriptor.PERMISSION_READ or BluetoothGattDescriptor.PERMISSION_WRITE))
+    val svc = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+    svc.addCharacteristic(ch)
+    server.addService(svc)
+    gattServer = server
+    meshChar = ch
+    Log.i(TAG, "GATT server open")
+  }
+
+  private val gattServerCallback =
+      object : BluetoothGattServerCallback() {
+        override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+          if (newState == BluetoothProfile.STATE_CONNECTED) serverClients.add(device)
+          else if (newState == BluetoothProfile.STATE_DISCONNECTED) serverClients.remove(device)
+        }
+        @SuppressLint("MissingPermission")
+        override fun onCharacteristicWriteRequest(
+            device: BluetoothDevice,
+            requestId: Int,
+            characteristic: BluetoothGattCharacteristic,
+            preparedWrite: Boolean,
+            responseNeeded: Boolean,
+            offset: Int,
+            value: ByteArray,
+        ) {
+          if (characteristic.uuid == MESH_CHAR_UUID) emitPacket(value)
+          if (responseNeeded) {
+            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+          }
+        }
+        @SuppressLint("MissingPermission")
+        override fun onDescriptorWriteRequest(
+            device: BluetoothDevice,
+            requestId: Int,
+            descriptor: BluetoothGattDescriptor,
+            preparedWrite: Boolean,
+            responseNeeded: Boolean,
+            offset: Int,
+            value: ByteArray,
+        ) {
+          if (responseNeeded) {
+            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+          }
+        }
+      }
+
+  @SuppressLint("MissingPermission")
+  private fun maybeConnect(device: BluetoothDevice) {
+    val addr = device.address
+    if (clientConns.containsKey(addr) || connecting.contains(addr)) return
+    // If they already connected to OUR server, don't dial back (avoids double links).
+    synchronized(serverClients) {
+      if (serverClients.any { it.address == addr }) return
+    }
+    connecting.add(addr)
+    device.connectGatt(
+        reactApplicationContext, false, gattClientCallback, BluetoothDevice.TRANSPORT_LE)
+  }
+
+  private val gattClientCallback =
+      object : BluetoothGattCallback() {
+        @SuppressLint("MissingPermission")
+        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+          val addr = gatt.device.address
+          if (newState == BluetoothProfile.STATE_CONNECTED) {
+            gatt.requestMtu(247) // discover after the MTU settles
+          } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            clientConns.remove(addr)
+            connecting.remove(addr)
+            try { gatt.close() } catch (_: Throwable) {}
+          }
+        }
+        @SuppressLint("MissingPermission")
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+          gatt.discoverServices()
+        }
+        @SuppressLint("MissingPermission")
+        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+          val ch = gatt.getService(SERVICE_UUID)?.getCharacteristic(MESH_CHAR_UUID)
+          if (ch == null) {
+            connecting.remove(gatt.device.address)
+            return
+          }
+          gatt.setCharacteristicNotification(ch, true)
+          ch.getDescriptor(CCCD_UUID)?.let { d ->
+            @Suppress("DEPRECATION")
+            run {
+              d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+              gatt.writeDescriptor(d)
+            }
+          }
+          clientConns[gatt.device.address] = gatt
+          connecting.remove(gatt.device.address)
+          Log.i(TAG, "GATT client linked to ${gatt.device.address}")
+        }
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicChanged(
+            gatt: BluetoothGatt,
+            characteristic: BluetoothGattCharacteristic,
+        ) {
+          if (characteristic.uuid == MESH_CHAR_UUID) emitPacket(characteristic.value ?: return)
+        }
+      }
+
+  /**
+   * #142: broadcast a packet to every GATT link — write to peripherals we're a
+   * central of, and notify centrals connected to our server. Dedup on receipt
+   * (JS bleFlood) handles a peer reachable over both directions.
+   */
+  @ReactMethod
+  @SuppressLint("MissingPermission")
+  fun sendMeshPacket(packet: String, promise: Promise) {
+    handler.post {
+      val bytes = packet.toByteArray(Charsets.UTF_8)
+      var sent = 0
+      for (gatt in clientConns.values) {
+        val ch = gatt.getService(SERVICE_UUID)?.getCharacteristic(MESH_CHAR_UUID)
+        if (ch != null) {
+          @Suppress("DEPRECATION")
+          run {
+            ch.value = bytes
+            ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            if (gatt.writeCharacteristic(ch)) sent++
+          }
+        }
+      }
+      val ch = meshChar
+      val server = gattServer
+      if (ch != null && server != null) {
+        synchronized(serverClients) {
+          for (d in serverClients) {
+            @Suppress("DEPRECATION")
+            run {
+              ch.value = bytes
+              if (server.notifyCharacteristicChanged(d, ch, false)) sent++
+            }
+          }
+        }
+      }
+      promise.resolve(sent)
+    }
+  }
+
+  private fun emitPacket(value: ByteArray) {
+    val params = Arguments.createMap().apply {
+      putString("eventType", "packet")
+      putString("data", String(value, Charsets.UTF_8))
+    }
+    emitToJs(params)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun closeGattLocked() {
+    for (gatt in clientConns.values) {
+      try { gatt.close() } catch (_: Throwable) {}
+    }
+    clientConns.clear()
+    connecting.clear()
+    serverClients.clear()
+    try { gattServer?.close() } catch (_: Throwable) {}
+    gattServer = null
+    meshChar = null
+  }
 
   // -- helpers ----------------------------------------------------------------
 

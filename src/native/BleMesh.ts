@@ -31,6 +31,9 @@ export interface BleMeshEvent {
   /** #214: distinct non-anonymous rotating ids currently heard (hex) — JS resolves
    *  each against known contacts to name the nearby peer. */
   ids?: string[];
+  /** #142: eventType === 'packet' — a mesh packet received over a GATT link,
+   *  base64. JS decodes (bleFlood), dedups, relays, and reassembles (bleFrag). */
+  data?: string;
 }
 
 interface BleMeshNative {
@@ -48,6 +51,8 @@ interface BleMeshNative {
   engage(advertiseIdHex: string | null, flags: number): Promise<null>;
   /** #214: swap the advertised rotating id (+flags) live (epoch rollover / toggle). */
   updateAdvertiseId(advertiseIdHex: string | null, flags: number): Promise<null>;
+  /** #142: broadcast a packet (base64) over every GATT link. Resolves #links written. */
+  sendMeshPacket(base64: string): Promise<number>;
   /** Stop advertising + scanning. Emits status 'off'. Always resolves. */
   disengage(): Promise<null>;
   getStatus(): Promise<BleStatus>;
