@@ -108,6 +108,18 @@ interface LogosChatNative {
   /** Send into a conversation (1:1 OR group — same verb). Resolves '{"msgPk":n,"status":…}'. */
   sendMessageTo(convoPk: number, textUtf8: string): Promise<string>;
   /**
+   * #197: send an image (1:1 OR group). Persists the base64 JPEG locally, records
+   * an own `img1v:` bubble, and transmits one `img1:` message. `base64` must be a
+   * downscaled JPEG small enough for a single message. Resolves '{"msgPk":n,"status":…}'.
+   */
+  sendImageTo(
+    convoPk: number,
+    mime: string,
+    width: number,
+    height: number,
+    base64: string,
+  ): Promise<string>;
+  /**
    * #168 bridge: transmit `content` into a Logos group WITHOUT recording a local
    * bubble (the mesh→logos re-forward — B already holds the origin mesh message).
    */

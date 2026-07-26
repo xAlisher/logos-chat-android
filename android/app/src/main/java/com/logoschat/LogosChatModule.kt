@@ -120,7 +120,9 @@ class EventCallbackManager {
           } catch (_: Throwable) {
             null
           }
-      MessageNotifier.notifyMessage(ctx, outcome.convoPk, name, outcome.text)
+      // #197: image messages carry a marker, not readable text — show "📷 Photo".
+      val body = if (outcome.text.startsWith("img1")) "📷 Photo" else outcome.text
+      MessageNotifier.notifyMessage(ctx, outcome.convoPk, name, body)
     }
 
     private fun emitToJs(params: com.facebook.react.bridge.WritableMap) {
@@ -334,6 +336,64 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       val ok = rc == 0
       ChatRepo.finalizeOutgoing(msgPk, ok)
       if (!ok) Log.w("logos-chat-bridge", "send failed: ${NodeBridge.chatLastError()}")
+      promise.resolve("""{"msgPk":$msgPk,"status":"${if (ok) "sent" else "failed"}"}""")
+    }
+  }
+
+  /**
+   * #197: send an image. Saves the base64 JPEG to app storage (own local copy),
+   * records an outgoing `img1v:<mime>:<w>:<h>␟<path>` marker so the sender's bubble
+   * renders from a file, then transmits the whole image as a single
+   * `img1:<mime>:<w>:<h>␟<base64>` message (Status's compress-to-fit, no chunking).
+   * The caller (ImagePicker) has already downscaled it to fit one message.
+   * Resolves '{"msgPk":n,"status":"sent"|"failed"}'.
+   */
+  @ReactMethod
+  fun sendImageTo(
+      convoPk: Double,
+      mime: String,
+      width: Int,
+      height: Int,
+      base64: String,
+      promise: Promise,
+  ) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("send_image", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      var libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        val addr = d.peerAddressOf(pk)
+        if (addr == null) {
+          promise.reject("no_route", "conversation has no peer address to send to")
+          return@execute
+        }
+        libConvoId = NodeBridge.chatCreateConversation(c, addr)
+        if (libConvoId == null) {
+          promise.reject("create_conversation", NodeBridge.chatLastError())
+          return@execute
+        }
+        d.setLibConvoId(pk, libConvoId)
+      }
+      val header = "$mime:$width:$height"
+      val sep = "␟"
+      val localPath = ImageFiles.saveBase64(reactApplicationContext, base64)
+      val marker = "img1v:$header$sep$localPath"
+      val msgPk = ChatRepo.recordOutgoing(pk, marker)
+      val wire = "img1:$header$sep$base64"
+      val bytes = wire.toByteArray(Charsets.UTF_8)
+      var rc = NodeBridge.chatSendMessage(c, libConvoId, bytes)
+      if (rc != 0 && isStaleConvoError(NodeBridge.chatLastError())) {
+        val fresh = rebindStaleConversation(c, pk)
+        if (fresh != null) rc = NodeBridge.chatSendMessage(c, fresh, bytes)
+      }
+      val ok = rc == 0
+      ChatRepo.finalizeOutgoing(msgPk, ok)
+      if (!ok) Log.w("logos-chat-bridge", "send image failed: ${NodeBridge.chatLastError()}")
       promise.resolve("""{"msgPk":$msgPk,"status":"${if (ok) "sent" else "failed"}"}""")
     }
   }
