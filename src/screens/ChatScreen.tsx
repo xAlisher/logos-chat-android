@@ -1221,6 +1221,14 @@ export function ChatScreen() {
               <InfoIcon size={22} color={colors.textDim} />
             </Pressable>
           </View>
+          {/* Member view: reassure them the thread isn't lost — the creator can
+              re-create the group and it continues in this same conversation. */}
+          {!canRevive && (
+            <Text style={styles.deadHint} testID="dead-member-hint">
+              The group's creator can re-create it — the conversation will continue
+              here.
+            </Text>
+          )}
         </View>
       ) : recording ? (
         // #205: recording a voice note — replace the composer with a rec bar.
@@ -1542,6 +1550,7 @@ const styles = StyleSheet.create({
   },
   deadFooterRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   deadFooterBtn: {flex: 1},
+  deadHint: {...type.caption, color: colors.textDim, textAlign: 'center', marginTop: spacing.sm},
   deadInfoBtn: {
     padding: spacing.sm,
     alignItems: 'center',

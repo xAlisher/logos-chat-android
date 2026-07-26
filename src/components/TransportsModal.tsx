@@ -19,7 +19,7 @@ import {colors, type, spacing, radii, layout} from '../theme';
 import {Logo} from './Logo';
 import {MeshLogo} from './MeshLogo';
 import {BleLogo} from './BleLogo';
-import {TRI_COLOR, logosTri, meshTri, bleTri, type Tri} from './tri';
+import {TRI_COLOR, triColorFor, logosTri, meshTri, bleTri, type Tri} from './tri';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -35,9 +35,9 @@ const TRI_LABEL: Record<Tri, string> = {
   online: 'Online',
 };
 
-function StatusLabel({tri}: {tri: Tri}) {
+function StatusLabel({tri, kind = 'logos'}: {tri: Tri; kind?: 'logos' | 'mesh' | 'ble'}) {
   return (
-    <Text style={[styles.status, {color: TRI_COLOR[tri]}]}>{TRI_LABEL[tri]}</Text>
+    <Text style={[styles.status, {color: triColorFor(tri, kind)}]}>{TRI_LABEL[tri]}</Text>
   );
 }
 
@@ -138,10 +138,10 @@ export function TransportsModal({
 
           {/* --- MeshCore row --------------------------------------------- */}
           <View style={[styles.row, !meshConfigured && styles.rowDim]}>
-            <MeshLogo size={24} color={TRI_COLOR[meshState]} strokeWidth={2} />
+            <MeshLogo size={24} color={triColorFor(meshConfigured ? meshState : 'offline', 'mesh')} strokeWidth={2} />
             <View style={styles.rowText}>
               <Text style={styles.name}>MeshCore</Text>
-              <StatusLabel tri={meshConfigured ? meshState : 'offline'} />
+              <StatusLabel tri={meshConfigured ? meshState : 'offline'} kind="mesh" />
             </View>
             {meshConfigured ? (
               <Switch
@@ -165,13 +165,13 @@ export function TransportsModal({
 
           {/* --- BLE mesh row --------------------------------------------- */}
           <View style={[styles.row, !bleAvailability.supported && styles.rowDim]}>
-            <BleLogo size={24} color={TRI_COLOR[bleState]} strokeWidth={2} />
+            <BleLogo size={24} color={triColorFor(bleState, 'ble')} strokeWidth={2} />
             <View style={styles.rowText}>
               <Text style={styles.name}>BLE mesh</Text>
               <Text
                 style={[
                   styles.status,
-                  {color: bleAvailability.supported ? TRI_COLOR[bleState] : colors.textFaint},
+                  {color: bleAvailability.supported ? triColorFor(bleState, 'ble') : colors.textFaint},
                 ]}>
                 {bleAvailability.supported
                   ? bleStatusLabel(bleStatus, blePeerCount)

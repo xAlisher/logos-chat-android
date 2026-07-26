@@ -20,6 +20,18 @@ export const TRI_COLOR: Record<Tri, string> = {
   online: '#22C55E', // green
 };
 
+/** Neutral gray for an OFFLINE secondary transport (MeshCore / BLE). Those are
+ *  optional add-on transports, so "off" should read as muted/idle, not alarming
+ *  red — red stays reserved for the primary Logos node being down. */
+export const TRI_MUTED = '#6B7280';
+
+/** Per-transport color: mesh/ble offline → gray; everything else the traffic
+ *  light. Logos keeps the full red/yellow/green. */
+export function triColorFor(tri: Tri, kind: 'logos' | 'mesh' | 'ble'): string {
+  if (kind !== 'logos' && tri === 'offline') return TRI_MUTED;
+  return TRI_COLOR[tri];
+}
+
 /** Map a Logos node status to the pill's tri-state. */
 export function logosTri(status: NodeStatus): Tri {
   switch (status) {
