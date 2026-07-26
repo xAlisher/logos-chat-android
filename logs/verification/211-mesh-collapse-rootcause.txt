@@ -1,0 +1,41 @@
+#211 ROOT CAUSE — gossipsub mesh collapse (on-device proof, 2026-07-26, Pixel 10)
+
+Tool: scripts/mesh_diag.c (logos-libchat-mls-android) — dlopens liblogosdelivery.so,
+starts a fresh Core node on the logos.dev (cluster-2) fleet, subscribes the chat
+content topic, then polls the EXPORTED waku_relay_* verbs. No app/Rust rebuild.
+
+  num_connected_peers(all)        = 3  3  3  3  3  3   (stable)
+  num_peers_in_mesh(rs/2/7 chat)  = 3  1  0  0  0  0   (collapses within 30s, stays 0)
+  num_peers_in_mesh(rs/2/0 meta)  = 3  0  0  0  0  0
+
+INTERPRETATION
+- The node IS connected to 3 fleet peers the whole time ("connectivity is fine" —
+  matches conn_diag libp2p_peers=3, and the research reading that 'no subscribed
+  peers' is benign filter-server noise).
+- But gossipsub delivers real messages ONLY to peers in the MESH. The node grafts
+  briefly (3 mesh peers at t=0) then is PRUNED out to 0 within ~30s and never
+  re-grafts. => published chat/MLS messages are never forwarded to us, and ours
+  never propagate. Delivery silently fails while everything "looks connected".
+
+CORROBORATING END-TO-END
+- Samsung -> Pixel 1:1 markers deliv-test-1785059139 (11:46) and fresh-node-1785060249
+  (12:07, both nodes freshly restarted + warmed, lambda green) NEVER arrived at the
+  Pixel over 15+ min. Reproduces the #195 "not invited" / #209 photo-loss symptom.
+- App uses PLAIN logosdelivery_send (not SDS channels) -> NOT the #4051 encrypt bug.
+
+LEADING HYPOTHESIS FOR THE PRUNE
+- gossipsub peer-scoring drops us out of the mesh. On cluster-2/logos.dev, likely
+  RLN: without a valid RLN membership our relayed messages score as invalid ->
+  score tanks -> fleet peers PRUNE us from the mesh (D_high). Connection kept for
+  gossip/IHAVE, but no full-message forwarding. (To confirm: metrics
+  nim_libp2p_gossipsub_peers_per_topic_mesh / RLN validation counters, or a wire
+  receive test.)
+
+CONSEQUENCE FOR THE FIX
+- The honest health signal is num_peers_in_mesh(shard), NOT connected-peer count and
+  NOT the 'no subscribed peers' log. Surfacing waku_relay_get_num_peers_in_mesh as an
+  FFI verb -> app makes the invisible failure observable (0 = cannot deliver).
+- Durable delivery fix is native/fleet: keep the node grafted (RLN membership, or
+  fleet accepts non-RLN relays, or run as a proper contributing relay / Edge-filter
+  client that doesn't depend on relay mesh). BLE mesh (#142) remains the fleet-
+  independent fallback.
