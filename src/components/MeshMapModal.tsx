@@ -4,8 +4,16 @@
 // This mapping is a LOCAL user assertion ("this person on Logos IS this mesh
 // pubkey"), exactly like the verified flag — never broadcast. The list is the
 // radio's heard-contact roster; a radio must be connected to populate it.
-import React from 'react';
-import {Modal, Pressable, Text, View, FlatList, StyleSheet} from 'react-native';
+import React, {useEffect, useMemo, useState} from 'react';
+import {
+  Modal,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+  FlatList,
+  StyleSheet,
+} from 'react-native';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {HexAvatar} from './HexAvatar';
 import {useMeshStore} from '../stores/meshStore';
@@ -31,8 +39,40 @@ export function MeshMapModal({
   onUnmap: () => void;
 }) {
   const contacts = useMeshStore(s => s.contacts);
+  const hydrateContacts = useMeshStore(s => s.hydrateContacts);
   const status = useMeshStore(s => s.status);
   const connected = status === 'connected';
+  const [query, setQuery] = useState('');
+
+  // #210: mapping is LOCAL + offline-capable — hydrate the DURABLE mesh roster
+  // (#172) when the modal opens so contacts show even with the radio disconnected.
+  useEffect(() => {
+    if (visible) {
+      setQuery('');
+      hydrateContacts();
+    }
+  }, [visible, hydrateContacts]);
+
+  // Filter by name/pubkey, then sort alphabetically by name (unnamed last).
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return contacts
+      .filter(
+        c =>
+          q.length === 0 ||
+          c.name.toLowerCase().includes(q) ||
+          c.pubkeyHex.toLowerCase().includes(q),
+      )
+      .slice()
+      .sort((a, b) => {
+        const an = a.name.trim();
+        const bn = b.name.trim();
+        if (!an && !bn) return a.pubkeyHex.localeCompare(b.pubkeyHex);
+        if (!an) return 1;
+        if (!bn) return -1;
+        return an.toLowerCase().localeCompare(bn.toLowerCase());
+      });
+  }, [contacts, query]);
 
   return (
     <Modal
@@ -61,17 +101,29 @@ export function MeshMapModal({
             Pick this person's MeshCore identity. Local only — never broadcast.
           </Text>
 
-          {!connected ? (
+          {contacts.length > 0 && (
+            <TextInput
+              style={styles.search}
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search mesh contacts…"
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="none"
+              testID="mesh-map-search"
+            />
+          )}
+
+          {contacts.length === 0 ? (
             <Text style={styles.empty}>
-              Connect a MeshCore radio to see heard contacts.
+              {connected
+                ? 'No mesh contacts heard yet.'
+                : 'No saved mesh contacts. Connect a radio to hear more.'}
             </Text>
-          ) : contacts.length === 0 ? (
-            <Text style={styles.empty}>
-              No mesh contacts heard yet.
-            </Text>
+          ) : rows.length === 0 ? (
+            <Text style={styles.empty}>No match.</Text>
           ) : (
             <FlatList
-              data={contacts}
+              data={rows}
               keyExtractor={c => c.pubkeyHex}
               style={styles.list}
               keyboardShouldPersistTaps="handled"
@@ -138,6 +190,16 @@ const styles = StyleSheet.create({
   headingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   heading: {...type.title, color: colors.text},
   helper: {...type.caption, color: colors.textDim},
+  search: {
+    ...type.body,
+    color: colors.text,
+    backgroundColor: colors.canvas,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   empty: {...type.body, color: colors.textDim, paddingVertical: spacing.lg},
   list: {flexGrow: 0},
   row: {

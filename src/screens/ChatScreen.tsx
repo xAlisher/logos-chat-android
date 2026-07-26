@@ -58,6 +58,7 @@ import {InfoModal, InfoSection} from '../components/InfoModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {ForwardPicker} from '../components/ForwardPicker';
+import {MeshMapModal} from '../components/MeshMapModal';
 import ImagePickerNative from '../native/ImagePicker';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {Conversation, Message, SystemNote} from '../stores/chatStore';
@@ -375,6 +376,14 @@ export function ChatScreen() {
   const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
   const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
   const forwardMessage = useChatStore(s => s.forwardMessage);
+  // #210: map-to-mesh from the bubble menu (local, works offline).
+  const [mapTarget, setMapTarget] = useState<{address: string; label: string | null} | null>(null);
+  const mapMeshIdentity = useChatStore(s => s.mapMeshIdentity);
+  const unmapMeshIdentity = useChatStore(s => s.unmapMeshIdentity);
+  const meshMemberPubkey = (address: string): string | null =>
+    (groupMembers ?? []).find(
+      m => m.address.toLowerCase() === address.toLowerCase(),
+    )?.meshPubkey ?? null;
   // #112: set after a successful re-create so the thread can report what happened.
   const [reviving, setReviving] = useState(false);
   // #168: the "About mesh mirroring" explainer (banner (i) + ⋮ menu).
@@ -1284,6 +1293,11 @@ export function ChatScreen() {
           })
         }
         onSendMessage={openDirectWith}
+        onMapMesh={(address, label) => {
+          setBubbleTarget(null);
+          setMapTarget({address, label});
+        }}
+        isMeshMapped={address => meshMemberPubkey(address) != null}
         onForward={content => {
           setBubbleTarget(null);
           setForwardContent(content);
@@ -1308,6 +1322,32 @@ export function ChatScreen() {
             forwardMessage(c, pk);
             ToastAndroid.show('Forwarded', ToastAndroid.SHORT);
           }
+        }}
+      />
+      {/* #210: map a peer to a mesh identity from the chat (local, offline-ok). */}
+      <MeshMapModal
+        visible={mapTarget != null}
+        memberAddress={mapTarget?.address ?? null}
+        memberLabel={mapTarget?.label ?? null}
+        currentMeshPubkey={
+          mapTarget != null ? meshMemberPubkey(mapTarget.address) : null
+        }
+        onClose={() => setMapTarget(null)}
+        onPick={(pubkey, name) => {
+          if (mapTarget != null) {
+            mapMeshIdentity(convoPk, mapTarget.address, pubkey, name).catch(e =>
+              useNodeStore.setState({error: `mesh map failed: ${e?.message ?? e}`}),
+            );
+          }
+          setMapTarget(null);
+        }}
+        onUnmap={() => {
+          if (mapTarget != null) {
+            unmapMeshIdentity(convoPk, mapTarget.address).catch(e =>
+              useNodeStore.setState({error: `unmap failed: ${e?.message ?? e}`}),
+            );
+          }
+          setMapTarget(null);
         }}
       />
       {/* #200: full-screen image viewer — tap anywhere to dismiss. */}

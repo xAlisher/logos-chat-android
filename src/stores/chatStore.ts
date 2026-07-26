@@ -512,7 +512,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Pick + downscale natively to ~120 KB so it fits one Logos message.
     let picked;
     try {
-      picked = parsePicked(await ImagePicker.pickImage(1280, 120_000));
+      picked = parsePicked(await ImagePicker.pickImage(1024, 60_000));
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
       return;
@@ -552,7 +552,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     let arr;
     try {
       arr = parsePickedArray(
-        await ImagePicker.pickImages(1280, 120_000, MAX_ALBUM),
+        await ImagePicker.pickImages(1024, 60_000, MAX_ALBUM),
       );
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
@@ -586,7 +586,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     let p;
     try {
-      p = parsePicked(await ImagePicker.capturePhoto(1280, 120_000));
+      p = parsePicked(await ImagePicker.capturePhoto(1024, 60_000));
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
       return;

@@ -19,6 +19,7 @@ import {
   CopyIcon,
   ClipboardIcon,
   MessageCircleIcon,
+  MeshIcon,
   type MenuItem,
 } from './OverflowMenu';
 import {parseImageLocal, isImageContent} from '../native/imageMsg';
@@ -57,6 +58,8 @@ export function BubbleActionMenu({
   onSendMessage,
   onForward,
   onSaveImage,
+  onMapMesh,
+  isMeshMapped,
 }: {
   target: BubbleTarget | null;
   /** #157: screen Y of the long-pressed bubble, to anchor the menu near it. */
@@ -70,6 +73,10 @@ export function BubbleActionMenu({
   onForward: (content: string) => void;
   /** #201: save an image message to the gallery (path from the local marker). */
   onSaveImage: (path: string) => void;
+  /** #210: map this sender to a mesh identity (local, works offline). */
+  onMapMesh?: (address: string, label: string | null) => void;
+  /** #210: whether this address is already mesh-mapped (label wording). */
+  isMeshMapped?: (address: string) => boolean;
 }) {
   const items: MenuItem[] = [];
   if (target != null) {
@@ -148,6 +155,16 @@ export function BubbleActionMenu({
         label: 'Send message',
         icon: <MessageCircleIcon color={colors.textDim} />,
         onPress: () => onSendMessage(address),
+      });
+    }
+    // #210: map the sender to a mesh identity — local, works offline. Any peer
+    // with a known address, 1:1 or group.
+    if (!t.own && address != null && onMapMesh != null) {
+      items.push({
+        key: 'map-mesh',
+        label: isMeshMapped?.(address) ? 'Change mesh identity' : 'Map to mesh',
+        icon: <MeshIcon color={colors.textDim} />,
+        onPress: () => onMapMesh(address, t.label),
       });
     }
   }
