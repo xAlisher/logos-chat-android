@@ -1,24 +1,30 @@
 // TransportsModal (#146) — opened from the header TransportPill. One row per
-// transport: Logos (the MLS node) and MeshCore (the paired LoRa radio). Each row
-// shows the transport's mark, its name, a tri-state status label, and a control:
+// transport: Logos (the MLS node), MeshCore (the paired LoRa radio), and BLE mesh
+// (nearby-peer presence). Each row shows the transport's mark, its name, a status
+// label, and a control:
 //   - Logos: a Switch — ON = node running; toggling starts/stops the node.
 //   - MeshCore, once configured: a Switch — ON = radio connected; toggle
 //     connects/disconnects.
 //   - MeshCore, not yet configured: the row is dimmed and offers a "Set up
 //     MeshCore" button that jumps to the MeshCore screen and closes the modal.
+//   - BLE mesh: a Switch — ON = advertising + scanning; the sublabel shows the
+//     live nearby-peer count. Dimmed + disabled when BLE is unsupported.
 //
 // Themed to match LabelModal (backdrop / card / actions).
-import React from 'react';
+import React, {useEffect} from 'react';
 import {Modal, Pressable, StyleSheet, Switch, Text, View} from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {Logo} from './Logo';
 import {MeshLogo} from './MeshLogo';
-import {TRI_COLOR, logosTri, meshTri, type Tri} from './TransportPill';
+import {BleLogo} from './BleLogo';
+import {TRI_COLOR, logosTri, meshTri, bleTri, type Tri} from './tri';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
+import {useBleStore} from '../stores/bleStore';
 import {useSettingsStore} from '../stores/settingsStore';
+import {bleStatusLabel} from '../stores/bleState';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -53,10 +59,25 @@ export function TransportsModal({
   const meshDisconnect = useMeshStore(s => s.disconnect);
   const meshConfigured = useSettingsStore(s => s.meshConfigured);
 
+  const bleStatus = useBleStore(s => s.status);
+  const blePeerCount = useBleStore(s => s.peerCount);
+  const bleAvailability = useBleStore(s => s.availability);
+  const bleEngage = useBleStore(s => s.engage);
+  const bleDisengage = useBleStore(s => s.disengage);
+  const bleRefresh = useBleStore(s => s.refreshAvailability);
+
   const logosState = logosTri(nodeStatus);
   const meshState = meshTri(meshStatus);
+  const bleState = bleTri(bleStatus);
   const logosOn = nodeStatus === 'running';
   const meshOn = meshStatus === 'connected';
+  const bleOn = bleStatus !== 'off';
+
+  // Re-query BLE capability whenever the modal opens (adapter may have been
+  // toggled since last time) so the row shows an honest supported/unsupported state.
+  useEffect(() => {
+    if (visible) bleRefresh();
+  }, [visible, bleRefresh]);
 
   const onToggleLogos = (next: boolean) => {
     if (next) startNode();
@@ -71,6 +92,11 @@ export function TransportsModal({
   const onSetupMesh = () => {
     onClose();
     navigation.navigate('MeshCore');
+  };
+
+  const onToggleBle = (next: boolean) => {
+    if (next) bleEngage();
+    else bleDisengage();
   };
 
   return (
@@ -126,6 +152,31 @@ export function TransportsModal({
                 </Text>
               </Pressable>
             )}
+          </View>
+
+          {/* --- BLE mesh row --------------------------------------------- */}
+          <View style={[styles.row, !bleAvailability.supported && styles.rowDim]}>
+            <BleLogo size={24} color={TRI_COLOR[bleState]} strokeWidth={2} />
+            <View style={styles.rowText}>
+              <Text style={styles.name}>BLE mesh</Text>
+              <Text
+                style={[
+                  styles.status,
+                  {color: bleAvailability.supported ? TRI_COLOR[bleState] : colors.textFaint},
+                ]}>
+                {bleAvailability.supported
+                  ? bleStatusLabel(bleStatus, blePeerCount)
+                  : 'Not supported'}
+              </Text>
+            </View>
+            <Switch
+              testID="ble-switch"
+              value={bleOn}
+              disabled={!bleAvailability.supported}
+              onValueChange={onToggleBle}
+              trackColor={{false: colors.border, true: colors.accent}}
+              thumbColor={colors.text}
+            />
           </View>
         </Pressable>
       </Pressable>

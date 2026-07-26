@@ -11,6 +11,9 @@ export const DEFAULT_DISPLAY_NAME = '';
 /** KV key: has the user ever completed a MeshCore connect on this device? (#146) */
 export const KV_MESH_CONFIGURED = 'meshConfigured';
 
+/** KV key: has the user ever engaged the BLE-mesh transport on this device? (#133) */
+export const KV_BLE_CONFIGURED = 'bleConfigured';
+
 interface SettingsState {
   /** Optional local label for this device — not shared with peers. */
   displayName: string;
@@ -20,15 +23,25 @@ interface SettingsState {
    * the transports modal offers "Set up MeshCore" instead of a live toggle.
    */
   meshConfigured: boolean;
+  /**
+   * True once the BLE-mesh transport has been engaged at least once on this
+   * device. Gates the BLE transport indicator: until it's set the pill shows only
+   * the configured transports, and the transports modal offers "Turn on" as a
+   * first-run action rather than a live toggle.
+   */
+  bleConfigured: boolean;
   load: () => Promise<void>;
   setDisplayName: (name: string) => Promise<void>;
   /** Mark MeshCore as configured (idempotent); persisted in native kv. */
   setMeshConfigured: (configured: boolean) => Promise<void>;
+  /** Mark BLE-mesh as configured (idempotent); persisted in native kv. */
+  setBleConfigured: (configured: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   displayName: DEFAULT_DISPLAY_NAME,
   meshConfigured: false,
+  bleConfigured: false,
 
   load: async () => {
     try {
@@ -40,6 +53,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const m = await LogosChat.getSetting(KV_MESH_CONFIGURED);
       if (m === 'true') set({meshConfigured: true});
+    } catch {
+      // keep default
+    }
+    try {
+      const b = await LogosChat.getSetting(KV_BLE_CONFIGURED);
+      if (b === 'true') set({bleConfigured: true});
     } catch {
       // keep default
     }
@@ -61,6 +80,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({meshConfigured: configured});
     try {
       await LogosChat.setSetting(KV_MESH_CONFIGURED, configured ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setBleConfigured: async (configured: boolean) => {
+    // Idempotent — skip the redundant native write if the flag is unchanged.
+    if (get().bleConfigured === configured) return;
+    set({bleConfigured: configured});
+    try {
+      await LogosChat.setSetting(KV_BLE_CONFIGURED, configured ? 'true' : 'false');
     } catch {
       // best-effort
     }

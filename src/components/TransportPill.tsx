@@ -1,58 +1,26 @@
-// TransportPill (#146) — the header control showing the live state of both
-// transports. Always renders the Logos mark, tinted by the node's tri-state; once
+// TransportPill (#146) — the header control showing the live state of every
+// transport. Always renders the Logos mark, tinted by the node's tri-state; once
 // MeshCore has been set up (settingsStore.meshConfigured) it also renders the
-// MeshCore mark beside it, tinted by the radio's tri-state. Whichever transport is
+// MeshCore mark, and once BLE mesh has been engaged (settingsStore.bleConfigured)
+// the Bluetooth mark, each tinted by its own tri-state. Whichever transport is
 // mid-connect breathes (opacity pulse, matching NodeStatusIcon). Tapping the pill
 // opens the TransportsModal.
 //
-// Tri-state is a TRAFFIC LIGHT (red/yellow/green) — deliberately NOT the app's
-// orange brand tint (nodeStatusColor), so "offline/connecting/online" reads at a
-// glance without being confused for the accent.
+// The tri-state model (Tri / TRI_COLOR / logosTri / meshTri / bleTri) lives in
+// ./tri (pure, RN-free) and is re-exported here for existing call sites.
 import React, {useEffect, useRef, useState} from 'react';
 import {Animated, Pressable, StyleSheet} from 'react-native';
 import {Logo} from './Logo';
 import {MeshLogo} from './MeshLogo';
+import {BleLogo} from './BleLogo';
 import {TransportsModal} from './TransportsModal';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
+import {useBleStore} from '../stores/bleStore';
 import {useSettingsStore} from '../stores/settingsStore';
-import type {NodeStatus} from '../native/LogosChat';
-import type {MeshStatus} from '../native/MeshCore';
+import {type Tri, TRI_COLOR, logosTri, meshTri, bleTri} from './tri';
 
-/** The three transport states the pill distinguishes. */
-export type Tri = 'offline' | 'connecting' | 'online';
-
-/** Tri-state → traffic-light color (user spec — NOT the orange brand accent). */
-export const TRI_COLOR: Record<Tri, string> = {
-  offline: '#EF4444', // red
-  connecting: '#EAB308', // yellow (breathing)
-  online: '#22C55E', // green
-};
-
-/** Map a Logos node status to the pill's tri-state. */
-export function logosTri(status: NodeStatus): Tri {
-  switch (status) {
-    case 'running':
-      return 'online';
-    case 'initializing':
-    case 'starting':
-      return 'connecting';
-    default: // stopped | error
-      return 'offline';
-  }
-}
-
-/** Map a MeshCore radio status to the pill's tri-state. */
-export function meshTri(status: MeshStatus): Tri {
-  switch (status) {
-    case 'connected':
-      return 'online';
-    case 'connecting':
-      return 'connecting';
-    default: // disconnected
-      return 'offline';
-  }
-}
+export {type Tri, TRI_COLOR, logosTri, meshTri, bleTri} from './tri';
 
 const GLYPH = 22;
 
@@ -62,7 +30,7 @@ function TransportGlyph({
   kind,
 }: {
   tri: Tri;
-  kind: 'logos' | 'mesh';
+  kind: 'logos' | 'mesh' | 'ble';
 }) {
   const breathing = tri === 'connecting';
   const opacity = useRef(new Animated.Value(1)).current;
@@ -87,8 +55,10 @@ function TransportGlyph({
     <Animated.View style={{opacity}}>
       {kind === 'logos' ? (
         <Logo size={GLYPH} color={color} strokeWidth={2} />
-      ) : (
+      ) : kind === 'mesh' ? (
         <MeshLogo size={GLYPH} color={color} strokeWidth={2} />
+      ) : (
+        <BleLogo size={GLYPH} color={color} strokeWidth={2} />
       )}
     </Animated.View>
   );
@@ -97,7 +67,9 @@ function TransportGlyph({
 export function TransportPill() {
   const nodeStatus = useNodeStore(s => s.status);
   const meshStatus = useMeshStore(s => s.status);
+  const bleStatus = useBleStore(s => s.status);
   const meshConfigured = useSettingsStore(s => s.meshConfigured);
+  const bleConfigured = useSettingsStore(s => s.bleConfigured);
   const [open, setOpen] = useState(false);
 
   return (
@@ -110,6 +82,9 @@ export function TransportPill() {
         <TransportGlyph tri={logosTri(nodeStatus)} kind="logos" />
         {meshConfigured && (
           <TransportGlyph tri={meshTri(meshStatus)} kind="mesh" />
+        )}
+        {bleConfigured && (
+          <TransportGlyph tri={bleTri(bleStatus)} kind="ble" />
         )}
       </Pressable>
       <TransportsModal visible={open} onClose={() => setOpen(false)} />

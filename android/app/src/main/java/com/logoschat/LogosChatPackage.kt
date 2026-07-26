@@ -16,5 +16,9 @@ class LogosChatPackage : ReactPackage {
   override fun createNativeModules(
       reactContext: ReactApplicationContext
   ): MutableList<NativeModule> =
-      mutableListOf(LogosChatModule(reactContext), MeshCoreModule(reactContext))
+      mutableListOf(
+          LogosChatModule(reactContext),
+          MeshCoreModule(reactContext),
+          BleMeshModule(reactContext),
+      )
 }
