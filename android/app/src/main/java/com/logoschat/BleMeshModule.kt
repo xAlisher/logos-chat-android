@@ -1,0 +1,356 @@
+package com.logoschat
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.AdvertiseCallback
+import android.bluetooth.le.AdvertiseData
+import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.BluetoothLeAdvertiser
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.ParcelUuid
+import android.os.SystemClock
+import android.util.Log
+import androidx.core.content.ContextCompat
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.bridge.ReactContextBaseJavaModule
+import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONObject
+
+/**
+ * BleMesh — the BLE-mesh transport (epic #133), the THIRD transport beside the
+ * Logos MLS node (LogosChatModule / NodeBridge) and the paired MeshCore LoRa
+ * radio (MeshCoreModule). Like MeshCore it is pure Kotlin BLE + JS + UI — no
+ * Rust / FFI / bridge involvement.
+ *
+ * This first increment is a **presence** layer, not yet the full flood mesh:
+ *   - Peripheral role: advertise a fixed Logos-mesh service UUID so nearby
+ *     devices running this app can see us.
+ *   - Central role: scan for that same service UUID and maintain a live count of
+ *     nearby peers (pruned by a TTL so the count reflects who is actually here).
+ *
+ * It emits on the single 'BleMeshEvent' channel:
+ *   - {eventType:'status', status:'off'|'starting'|'on'}
+ *   - {eventType:'peers', count:Int}
+ *
+ * Data GATT channels, flood routing, and MLS-over-sub-MTU fragmentation are
+ * deliberately out of scope here — they are later children (#142/#139/#136).
+ */
+class BleMeshModule(reactContext: ReactApplicationContext) :
+    ReactContextBaseJavaModule(reactContext) {
+
+  companion object {
+    private const val TAG = "ble-mesh"
+    private const val JS_EVENT = "BleMeshEvent"
+
+    /** Our fixed presence service UUID — devices advertising it are Logos-mesh peers. */
+    private val SERVICE_UUID: UUID =
+        UUID.fromString("d1e5f0a0-1b2c-4d3e-9f5a-0123456789ab")
+    private val SERVICE_PARCEL = ParcelUuid(SERVICE_UUID)
+
+    /** Drop a peer we haven't heard from in this long (ms). */
+    private const val PEER_TTL_MS = 20_000L
+    /** How often to prune stale peers (ms). */
+    private const val PRUNE_INTERVAL_MS = 5_000L
+  }
+
+  override fun getName() = "BleMesh"
+
+  // All BLE start/stop + bookkeeping runs on a dedicated thread so callbacks and
+  // the peers map are only ever touched off the JS/main thread.
+  private val handlerThread = HandlerThread("ble-mesh").apply { start() }
+  private val handler = Handler(handlerThread.looper)
+
+  @Volatile private var status: String = "off"
+  private var advertiser: BluetoothLeAdvertiser? = null
+  private var scanner: BluetoothLeScanner? = null
+  private var advertiseCallback: AdvertiseCallback? = null
+  private var scanCallback: ScanCallback? = null
+
+  /** address -> last-seen elapsedRealtime; guarded by [peers] itself. */
+  private val peers = HashMap<String, Long>()
+  private var lastEmittedCount = -1
+
+  // -- capability query -------------------------------------------------------
+
+  @ReactMethod
+  fun getAvailability(promise: Promise) {
+    val supported =
+        reactApplicationContext.packageManager.hasSystemFeature(
+            PackageManager.FEATURE_BLUETOOTH_LE)
+    val adapter = bluetoothAdapter()
+    val adapterOn = adapter?.isEnabled == true
+    val advertiseSupported =
+        adapterOn && adapter?.isMultipleAdvertisementSupported == true
+    val json =
+        JSONObject()
+            .put("supported", supported)
+            .put("advertiseSupported", advertiseSupported)
+            .put("adapterOn", adapterOn)
+            .toString()
+    promise.resolve(json)
+  }
+
+  @ReactMethod
+  fun getStatus(promise: Promise) {
+    promise.resolve(status)
+  }
+
+  // -- engage / disengage -----------------------------------------------------
+
+  @ReactMethod
+  fun engage(promise: Promise) {
+    if (status != "off") {
+      promise.resolve(null) // idempotent: already engaging/engaged
+      return
+    }
+    val missing = missingPermission()
+    if (missing != null) {
+      promise.reject("permission", "missing runtime permission: $missing")
+      return
+    }
+    val adapter = bluetoothAdapter()
+    if (adapter == null || !adapter.isEnabled) {
+      promise.reject("bt_off", "Bluetooth is off or unavailable")
+      return
+    }
+    val adv = adapter.bluetoothLeAdvertiser
+    if (adv == null) {
+      promise.reject("no_advertiser", "BLE advertising unavailable on this device")
+      return
+    }
+    val scan = adapter.bluetoothLeScanner
+    if (scan == null) {
+      promise.reject("no_scanner", "BLE scanner unavailable")
+      return
+    }
+    advertiser = adv
+    scanner = scan
+    setStatus("starting")
+
+    val settled = AtomicBoolean(false)
+    handler.post {
+      try {
+        startScanLocked(scan)
+        startAdvertiseLocked(
+            adv,
+            onOk = {
+              setStatus("on")
+              handler.postDelayed(pruneRunnable, PRUNE_INTERVAL_MS)
+              if (settled.compareAndSet(false, true)) promise.resolve(null)
+            },
+            onFail = { msg ->
+              stopAllLocked()
+              setStatus("off")
+              if (settled.compareAndSet(false, true)) promise.reject("advertise_failed", msg)
+            },
+        )
+      } catch (t: Throwable) {
+        stopAllLocked()
+        setStatus("off")
+        if (settled.compareAndSet(false, true)) {
+          promise.reject("engage_failed", t.message ?: "unknown error")
+        }
+      }
+    }
+  }
+
+  @ReactMethod
+  fun disengage(promise: Promise) {
+    handler.post {
+      stopAllLocked()
+      synchronized(peers) { peers.clear() }
+      lastEmittedCount = -1
+      setStatus("off")
+      promise.resolve(null)
+    }
+  }
+
+  // -- BLE plumbing (all on the handler thread) -------------------------------
+
+  @SuppressLint("MissingPermission") // permission verified in engage() via missingPermission()
+  private fun startAdvertiseLocked(
+      adv: BluetoothLeAdvertiser,
+      onOk: () -> Unit,
+      onFail: (String) -> Unit,
+  ) {
+    val settings =
+        AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setConnectable(false) // presence only; no GATT connection yet
+            .setTimeout(0)
+            .build()
+    // Device name would overflow the 31-byte payload; a bare service UUID is enough
+    // for peers to recognise a Logos-mesh node.
+    val data =
+        AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
+            .addServiceUuid(SERVICE_PARCEL)
+            .build()
+    val cb =
+        object : AdvertiseCallback() {
+          override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+            Log.i(TAG, "advertising started")
+            onOk()
+          }
+          override fun onStartFailure(errorCode: Int) {
+            Log.w(TAG, "advertising failed: $errorCode")
+            onFail("advertise error code $errorCode")
+          }
+        }
+    advertiseCallback = cb
+    adv.startAdvertising(settings, data, cb)
+  }
+
+  @SuppressLint("MissingPermission") // permission verified in engage() via missingPermission()
+  private fun startScanLocked(scan: BluetoothLeScanner) {
+    val filters = listOf(ScanFilter.Builder().setServiceUuid(SERVICE_PARCEL).build())
+    val settings =
+        ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+            .setReportDelay(0)
+            .build()
+    val cb =
+        object : ScanCallback() {
+          override fun onScanResult(callbackType: Int, result: ScanResult?) {
+            result?.device?.address?.let(::notePeer)
+          }
+          override fun onBatchScanResults(results: MutableList<ScanResult>?) {
+            results?.forEach { it.device?.address?.let(::notePeer) }
+          }
+          override fun onScanFailed(errorCode: Int) {
+            Log.w(TAG, "scan failed: $errorCode")
+          }
+        }
+    scanCallback = cb
+    scan.startScan(filters, settings, cb)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun stopAllLocked() {
+    try {
+      advertiseCallback?.let { advertiser?.stopAdvertising(it) }
+    } catch (t: Throwable) {
+      Log.w(TAG, "stopAdvertising: ${t.message}")
+    }
+    try {
+      scanCallback?.let { scanner?.stopScan(it) }
+    } catch (t: Throwable) {
+      Log.w(TAG, "stopScan: ${t.message}")
+    }
+    advertiseCallback = null
+    scanCallback = null
+    handler.removeCallbacks(pruneRunnable)
+  }
+
+  private fun notePeer(address: String) {
+    val changed: Boolean
+    val count: Int
+    synchronized(peers) {
+      val isNew = !peers.containsKey(address)
+      peers[address] = SystemClock.elapsedRealtime()
+      count = peers.size
+      changed = isNew
+    }
+    if (changed) emitPeers(count)
+  }
+
+  private val pruneRunnable =
+      object : Runnable {
+        override fun run() {
+          val now = SystemClock.elapsedRealtime()
+          val count: Int
+          val changed: Boolean
+          synchronized(peers) {
+            val before = peers.size
+            val it = peers.entries.iterator()
+            while (it.hasNext()) {
+              if (now - it.next().value > PEER_TTL_MS) it.remove()
+            }
+            count = peers.size
+            changed = count != before
+          }
+          if (changed) emitPeers(count)
+          if (status == "on") handler.postDelayed(this, PRUNE_INTERVAL_MS)
+        }
+      }
+
+  // -- helpers ----------------------------------------------------------------
+
+  private fun setStatus(next: String) {
+    status = next
+    val params = Arguments.createMap().apply {
+      putString("eventType", "status")
+      putString("status", next)
+    }
+    emitToJs(params)
+  }
+
+  private fun emitPeers(count: Int) {
+    if (count == lastEmittedCount) return
+    lastEmittedCount = count
+    val params = Arguments.createMap().apply {
+      putString("eventType", "peers")
+      putInt("count", count)
+    }
+    emitToJs(params)
+  }
+
+  private fun emitToJs(params: WritableMap) {
+    val ctx = reactApplicationContext
+    if (!ctx.hasActiveReactInstance()) {
+      Log.w(TAG, "JS not alive; event dropped")
+      return
+    }
+    ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(JS_EVENT, params)
+  }
+
+  private fun missingPermission(): String? {
+    val ctx = reactApplicationContext
+    fun granted(p: String) =
+        ContextCompat.checkSelfPermission(ctx, p) == PackageManager.PERMISSION_GRANTED
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      when {
+        !granted(Manifest.permission.BLUETOOTH_ADVERTISE) -> "BLUETOOTH_ADVERTISE"
+        !granted(Manifest.permission.BLUETOOTH_SCAN) -> "BLUETOOTH_SCAN"
+        !granted(Manifest.permission.BLUETOOTH_CONNECT) -> "BLUETOOTH_CONNECT"
+        else -> null
+      }
+    } else {
+      // Pre-12: a BLE scan yields nothing without a location permission; advertising
+      // is covered by the legacy BLUETOOTH_ADMIN manifest grant.
+      if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) "ACCESS_FINE_LOCATION" else null
+    }
+  }
+
+  private fun bluetoothAdapter(): BluetoothAdapter? {
+    val mgr =
+        reactApplicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    return mgr?.adapter
+  }
+
+  override fun onCatalystInstanceDestroy() {
+    super.onCatalystInstanceDestroy()
+    handler.post { stopAllLocked() }
+    handlerThread.quitSafely()
+  }
+}
