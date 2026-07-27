@@ -1596,10 +1596,9 @@ const styles = StyleSheet.create({
     borderLeftWidth: 2,
     backgroundColor: 'rgba(34,197,94,0.08)',
   },
-  bubbleMeshOwn: {
-    borderRightColor: MESH_GREEN,
-    borderRightWidth: 2,
-  },
+  // Own mesh bubbles fill green (matching the blue BLE fill) — "I sent this over
+  // the mesh" reads at a glance; peer bubbles keep the green edge + tint.
+  bubbleMeshOwn: {backgroundColor: MESH_GREEN},
   // #243: a message that rode the BLE mesh. Own bubbles fill blue (the user's
   // sent-over-Bluetooth cue); peer bubbles get the mesh-style blue edge + tint.
   bubbleBleOwn: {backgroundColor: BLE_BLUE},
