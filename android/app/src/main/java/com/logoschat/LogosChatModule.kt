@@ -488,6 +488,9 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
             promise.reject("ingest_ciphertext", "bad base64: ${t.message}")
             return@execute
           }
+      // #250: mark that the message_received about to be emitted by this decrypt
+      // arrived over BLE, so its 1:1 bubble renders blue (#243).
+      ChatRepo.lastBleIngestAtMs = System.currentTimeMillis()
       val rc = NodeBridge.chatIngestCiphertext(c, bytes)
       if (rc == 0) promise.resolve(null)
       else promise.reject("ingest_ciphertext", NodeBridge.chatLastError())

@@ -41,6 +41,13 @@ object ChatRepo {
   @Volatile var activeConvoPk: Long = 0L
   /** Is the app actually on screen? [activeConvoPk] only suppresses while true. */
   @Volatile var appForeground: Boolean = true
+  /** #250: stamped by [LogosChatModule.ingestCiphertext] right before decrypting a
+   *  BLE-arrived ciphertext. The decrypt emits message_received shortly after (on
+   *  the events thread), so a 1:1 inbound within this window is tagged sentVia='ble'
+   *  (blue bubble) and the marker is consumed. Safe in the BLE-only case (Logos off →
+   *  no Logos inbound to race with). */
+  @Volatile var lastBleIngestAtMs: Long = 0L
+  private const val BLE_INGEST_WINDOW_MS = 2500L
 
   /** What a persisted lib event means for the app — forwarded to JS AFTER the write. */
   class Outcome(
@@ -396,11 +403,25 @@ object ChatRepo {
         d.setPeerAddress(convoPk, senderAccount)
       }
     }
+    // #250: tag a 1:1 message that just arrived over BLE (a BLE ingest stamped the
+    // marker moments ago) so its bubble renders blue (#243), matching the outgoing
+    // side. Consume the marker so it tags exactly one inbound.
+    val via =
+        if (!d.isGroup(convoPk) &&
+            lastBleIngestAtMs != 0L &&
+            now - lastBleIngestAtMs in 0 until BLE_INGEST_WINDOW_MS) {
+          lastBleIngestAtMs = 0L
+          "ble"
+        } else {
+          "logos"
+        }
     // #168: dual-send dedup. A mirrored group's message can arrive via BOTH
     // transports; if the mesh copy already landed, merge (mark 'both') and don't
     // insert a second bubble.
     val dup = if (d.isMeshMode(convoPk)) d.dedupInbound(convoPk, content, now, "logos") else -1L
-    val msgPk = if (dup >= 0) dup else d.insertMessage(convoPk, "in", content, now, "received", senderAccount)
+    val msgPk =
+        if (dup >= 0) dup
+        else d.insertMessage(convoPk, "in", content, now, "received", senderAccount, via)
     d.touchConversation(convoPk, now)
     // #95: joiner-side roster fill-in. On a GROUP, a verified inbound sender that
     // isn't us and isn't already on the roster is recorded (idempotent). This is
