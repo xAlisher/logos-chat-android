@@ -78,6 +78,16 @@ const AboutIcon = ({color = colors.text}: {color?: string}) => (
     <Rect x="11.1" y="7.3" width="1.8" height="1.8" rx="0.9" fill={color} />
   </Icon>
 );
+// gear glyph for Settings (#232).
+const SettingsIcon = ({color = colors.text}: {color?: string}) => (
+  <Icon>
+    <Circle cx="12" cy="12" r="3" {...stroke(color)} />
+    <Path
+      d="M12 2.5v2M12 19.5v2M4.5 12h-2M21.5 12h-2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4"
+      {...stroke(color)}
+    />
+  </Icon>
+);
 // radio/antenna glyph for the MeshCore transport (#166).
 const MeshIcon = ({color = colors.text}: {color?: string}) => (
   <Icon>
@@ -141,6 +151,7 @@ export function SideMenu({
   onSelectView,
   onContacts,
   onAbout,
+  onSettings,
   onMyAddress,
   onMeshCore,
 }: {
@@ -151,6 +162,7 @@ export function SideMenu({
   onSelectView: (v: MenuView) => void;
   onContacts: () => void;
   onAbout: () => void;
+  onSettings: () => void;
   onMyAddress: () => void;
   onMeshCore: () => void;
 }) {
@@ -338,6 +350,12 @@ export function SideMenu({
         <View style={styles.divider} />
 
         <View style={styles.group}>
+          <Item
+            icon={c => <SettingsIcon color={c} />}
+            label="Settings"
+            onPress={() => pick(onSettings)}
+            testID="menu-settings"
+          />
           <Item
             icon={c => <AboutIcon color={c} />}
             label="About"

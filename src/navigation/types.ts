@@ -25,6 +25,8 @@ export type RootStackParamList = {
   Contacts: undefined;
   /** App info (from the side menu, #130). */
   About: undefined;
+  /** Settings — security (PIN / duress / reset) and more (#232). */
+  Settings: undefined;
   /** MeshCore radio setup (Phase 0, #166). */
   MeshCore: undefined;
 };
