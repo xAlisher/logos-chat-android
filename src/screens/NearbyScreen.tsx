@@ -222,7 +222,9 @@ export function NearbyScreen() {
                   style={[styles.hex, item.kind === 'new' && styles.hexNew]}
                   numberOfLines={1}>
                   {shortAddress(item.address)}
-                  {item.kind === 'new' ? ' · new — tap to add' : ' · nearby'}
+                  {/* A known contact's "· nearby" is redundant — the "1 hop"
+                      badge already says it. Keep the CTA for new peers. */}
+                  {item.kind === 'new' ? ' · new — tap to add' : ''}
                 </Text>
               </View>
               <View style={styles.hopBadge}>
