@@ -1,7 +1,7 @@
 // About (#130) — app info reachable from the side menu: the Chat mark, name,
 // version, a one-line description, and this device's own short address. Static;
 // reads only the (cached) address from the node store.
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   Text,
   View,
@@ -18,14 +18,22 @@ import {HexAvatar} from '../components/HexAvatar';
 import {useNodeStore} from '../stores/nodeStore';
 import LogosChat, {shortAddress} from '../native/LogosChat';
 
-// Kept in sync with android/app/build.gradle (versionName / versionCode).
-const APP_VERSION = '0.7.19';
-const APP_BUILD = 31;
 const REPO_URL = 'https://github.com/xAlisher/logos-chat-android';
 
 export function AboutScreen() {
   const myAddress = useNodeStore(s => s.myAddress);
   const [exporting, setExporting] = useState(false);
+  // #244: read the REAL installed version from the build (PackageManager) so it
+  // can never drift from build.gradle the way the old hardcoded constants did.
+  const [version, setVersion] = useState<{name: string; code: number} | null>(null);
+  useEffect(() => {
+    LogosChat.getAppVersion()
+      .then(j => {
+        const v = JSON.parse(j);
+        setVersion({name: v.versionName, code: v.versionCode});
+      })
+      .catch(() => {});
+  }, []);
 
   // #38: dump the app-side store to a JSON backup and open the share sheet. The
   // native side writes the file and launches ACTION_SEND; we only toast the result.
@@ -49,7 +57,7 @@ export function AboutScreen() {
           <Logo size={56} color={colors.accent} strokeWidth={2} />
           <Text style={styles.name}>peers</Text>
           <Text style={styles.version}>
-            v{APP_VERSION} ({APP_BUILD})
+            {version != null ? `v${version.name} (${version.code})` : '…'}
           </Text>
         </View>
 

@@ -210,6 +210,25 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     promise.resolve(NodeRuntime.status)
   }
 
+  /** #244: the real installed app version, so the About screen can't drift from
+   *  build.gradle. Returns {"versionName","versionCode"} as JSON. */
+  @ReactMethod
+  fun getAppVersion(promise: Promise) {
+    try {
+      val ctx = reactApplicationContext
+      val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+      val code =
+          if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode
+          else @Suppress("DEPRECATION") info.versionCode.toLong()
+      val obj = org.json.JSONObject()
+      obj.put("versionName", info.versionName ?: "")
+      obj.put("versionCode", code)
+      promise.resolve(obj.toString())
+    } catch (t: Throwable) {
+      promise.reject("app_version", t.message)
+    }
+  }
+
   /** The client's own stable hex address (the QR/paste peers use to reach us). */
   @ReactMethod
   fun getMyAddress(promise: Promise) {

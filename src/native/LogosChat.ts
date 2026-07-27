@@ -102,6 +102,8 @@ interface LogosChatNative {
   startNode(): Promise<null>;
   stopNode(): Promise<null>;
   getNodeStatus(): Promise<NodeStatus>;
+  /** #244: the real installed version — JSON {"versionName","versionCode"}. */
+  getAppVersion(): Promise<string>;
   /** This client's own stable hex address (the QR/paste peers use to reach us). */
   getMyAddress(): Promise<string>;
   getInstallationName(): Promise<string>;
