@@ -151,3 +151,45 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   **verify-delivery-not-send.md** addendum (known-live-shard).
 - Filed: logos-messaging/logos-delivery#4064 (fleet outage) + docs/fleet-outage-2026-07-26.md.
 - Shipped fix: Edge mode (liblogoschat.so rebuilt) — lib ce2c945, app 49e650f.
+
+## Week of 2026-07-27 — fix #3, node lightpush, #230 rendering, #218, UI batch
+
+### Wins
+- **[project] Fix #3 (store-query catch-up) shipped + device-proven.** Offline invitee
+  catches its MLS welcome via `store_catch_up` on subscribe → joins the group. Working
+  query form = contentTopics-only + time window (pubsubTopic silently returns 0). → §10d.
+- **[project] Found + fixed the REAL delivery outage: the self-hosted node had
+  `--lightpush=false`** (RLN-gated in run_node.sh; node runs --rln-relay=false). Phones
+  connected but couldn't send at all. Forced --lightpush=true; proven (lightpush served +
+  store populated). Made permanent (VPS commit + `~/infra/msg.logos.live/` runbook). → §10d.
+- **[project] #230 invite/join rendering fixed + device-proven.** Per-member status upsert
+  (one line advancing invited→joined in place, no spam) + FIFO fallback that finally makes
+  "joined" show on the creator. 10 unit tests. → §10d.
+- **[process] Shipped a wide UI batch + closed a stale issue** — #231/#233/#234/#232-settings
+  + scrollable side menu + Discovery-tap-opens-real-chat; closed #218 as a dup of
+  logos-libdelivery-android#1 (bg agent assessed; note preserved on delivery#1).
+
+### Fails
+- **[process] Chased a PHANTOM "delivery broken" for a long stretch.** Moment: "no
+  /logos-chat in the store for an hour → delivery is dead." Root cause: android-MCP `Type`
+  silently no-op'd the RN composer, so the test messages were **never sent** — the empty
+  input was the confound. Lesson: VERIFY the input landed (composer shows text + send
+  enabled) before interpreting store/logs/receiver. → android-skills
+  `mcp-type-noop-rn-textinput` + `isolate-the-confound`.
+- **[project] Shipped fix #3's first build without the once-per-topic guard** → runaway
+  1226 store queries (replay → re-subscribe → catch-up feedback loop). Caught via the
+  node's store-query logs during the on-device test. Lesson: catch-up-on-subscribe must be
+  once-per-topic-per-session. → §10d.
+- **[project] "joined" never showed on the creator.** Root cause: `addMember` pre-loads the
+  invitee into the local roster at invite time, so the join-time `members_changed` produces
+  no roster diff → the roster-diff-only detector never fired. Fix = FIFO fallback. → §10d.
+- **[process] MCP device automation degraded over the long session** (wrong-app foreground,
+  mistaps, a swipe navigating into another app) → several wasted cycles. Lesson: fall back
+  to adb screencap + input tap/text/swipe with a11y device coords; wake+unlock+verify.
+
+### Skills / doc updates from this batch
+- Project → **PROJECT_KNOWLEDGE §10d** (store-catch-up, lightpush outage, invite/join model, BLE status).
+- Android-specific → **android-skills**: new `mcp-type-noop-rn-textinput.md`; added
+  `_index/triggers.md` (symptom→skill) + `_index/by-type.md`; wired into INDEX/README.
+- Infra → **`~/infra/msg.logos.live/`** (patched run_node.sh + redacted .env.example + runbook).
+- Closed #218 (dup → logos-libdelivery-android#1). Shipped v0.7.6.

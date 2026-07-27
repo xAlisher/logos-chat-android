@@ -405,6 +405,46 @@ them.
 
 **Proof:** `logs/verification/211-mesh-collapse-rootcause.txt`.
 
+## 10d. Delivery store-catch-up + invite/join rendering + BLE status (2026-07-27 batch)
+
+- **Store-query catch-up for missed welcomes (fix #3, #228).** On subscribe, the native
+  layer replays recent history for that content topic from the store peer into the same
+  inbound path live messages use → an offline invitee catches its MLS welcome and joins.
+  Native only (`logos-libchat-mls-android`: sys.rs binds `waku_store_query`, wrapper.rs
+  `store_query`, threaded.rs `store_catch_up`), no JNI ABI change.
+  - **Working store-query form (proven on-device):** `contentTopics`-only + a
+    `timeStart`/`timeEnd` window. A `pubsubTopic` filter **silently returns 0** — omit it.
+    camelCase JSON; payload comes back as a JSON byte array → decodes directly.
+  - **Run catch-up at most ONCE per topic per session.** Replaying history makes the app
+    re-subscribe, which feedback-loops into unbounded store queries (observed 1226; a
+    `caught_up` set caps it). Recovered payloads go through the same mapper, so MLS de-dupes
+    replays and a seen welcome surfaces as a benign inbound error.
+  - 1:1 messages missed while offline are NOT recovered (double-ratchet forward secrecy);
+    welcomes ARE (a Welcome establishes membership, not ratcheted away).
+- **The self-hosted node had lightpush DISABLED — the real delivery outage.**
+  `msg.logos.live`'s `run_node.sh` only enables `--lightpush` when RLN creds are present;
+  this node runs `--rln-relay=false`, so upstream left it `--lightpush=false` → phones
+  connected but **could not send at all**, nothing reached the store (breaks live invites
+  AND catch-up). Fix: force `--lightpush=true` (a no-RLN relay can serve it). Committed on
+  the VPS clone + mirrored to `~/infra/msg.logos.live/` (runbook there). Never rotate the
+  node's `NODEKEY` — the app pins that peerId.
+- **Invite/join system-message rendering (#230): per-member status, upserted.** A member's
+  line advances IN PLACE (invited → hasn't joined → joined / left) via
+  `setMemberStatus`/`clearMemberNotes` (pure helpers in `conversationView.ts`, unit-tested)
+  instead of append-only lines that stacked into re-invite spam.
+  - **Why "joined" never showed on the creator:** `addMember` pre-loads the invitee into
+    the local roster at invite time, so the later join's `members_changed` produces no
+    roster diff. Fix = a FIFO fallback (pop the oldest outstanding invite on a
+    non-`left` `members_changed`), in addition to the roster diff. Both idempotent (upsert
+    by member). The de-mls admission round takes **~90s** to settle even when the invitee
+    is online — the invited line says so inline.
+- **BLE chat is transport-proof only (still).** `sendBleTest` + `bleFrag` flood raw text and
+  reassemble it; delivering real MLS messages into the conversation timeline is gated on
+  link crypto (#136) + a native hook to produce/ingest MLS ciphertext off the node. Tapping
+  a Discovery peer now resolve-or-creates a real 1:1 by the peer's address (was a
+  `convoPk:-1` placeholder → "no peer address / send failed"), but it sends over **Logos**;
+  routing over the BLE mesh itself remains the #213 work.
+
 ## 10. Issue map
 
 | Area | Issues |
