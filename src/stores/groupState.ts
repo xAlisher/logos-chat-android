@@ -20,6 +20,9 @@ export interface ComposerStateInput {
   /** group liveness probe (#112): 'live' | 'dead' | 'unknown' | undefined. */
   liveness: string | undefined;
   createdByMe: boolean;
+  /** #237: a 1:1 whose peer is reachable over the BLE mesh right now — a viable
+   *  transport even when Logos is paused/off (MLS encrypts locally, BLE carries). */
+  bleReachable?: boolean;
 }
 
 export interface ComposerState {
@@ -50,11 +53,12 @@ export function deriveComposerState(i: ComposerStateInput): ComposerState {
     i.nodeStatus === 'initializing' || i.nodeStatus === 'starting';
   const overMesh = i.isMesh || i.meshMode;
   const meshLive = overMesh && i.meshStatus === 'connected';
-  const canSendBase = meshLive || running;
+  const bleReachable = i.bleReachable ?? false;
+  const canSendBase = meshLive || running || bleReachable;
 
   const sendColorKind: SendColorKind = meshLive
     ? 'mesh'
-    : running
+    : running || bleReachable
     ? 'accent'
     : connecting
     ? 'connecting'

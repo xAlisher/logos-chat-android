@@ -111,7 +111,18 @@ object NodeRuntime {
   }
 
   private fun startBlocking(): String? {
-    if (ctx != 0L) return "node already started (status=$status)"
+    if (ctx != 0L) {
+      // #237: the node is already open — "Logos on" is a RESUME of paused Waku
+      // delivery (the node/MLS engine was kept alive so BLE could still work).
+      val rc = NodeBridge.chatSetDeliveryActive(ctx, true)
+      if (rc != 0) {
+        val why = NodeBridge.chatLastError().ifEmpty { "resume delivery failed" }
+        setStatus("error", why)
+        return why
+      }
+      setStatus("running")
+      return null
+    }
     val context = appContext ?: return "no app context"
     setStatus("initializing")
     // #219: pin the delivery client to our self-hosted node if configured. Set the
@@ -141,6 +152,7 @@ object NodeRuntime {
     return null
   }
 
+  /** Real teardown — frees the ctx. Used by the wipe/reset flow only. */
   private fun stopBlocking() {
     val c = ctx
     if (c == 0L) return
@@ -148,6 +160,20 @@ object NodeRuntime {
     ctx = 0L
     address = null
     installationName = null
+    setStatus("stopped")
+  }
+
+  /**
+   * #237: PAUSE Waku delivery for the "Logos off" toggle — stops filter/lightpush +
+   * subscriptions but KEEPS the node (and its MLS engine) alive so BLE messaging
+   * (encryptForConvo/ingestCiphertext) keeps working offline. The stable address
+   * stays valid (node is up), so the QR/identity is unaffected.
+   */
+  private fun pauseBlocking() {
+    val c = ctx
+    if (c == 0L) return
+    val rc = NodeBridge.chatSetDeliveryActive(c, false)
+    if (rc != 0) Log.w(TAG, "pause delivery failed: ${NodeBridge.chatLastError()}")
     setStatus("stopped")
   }
 
@@ -167,7 +193,9 @@ object NodeRuntime {
   fun stop(onDone: (String?) -> Unit) {
     executor.execute {
       try {
-        stopBlocking()
+        // #237: the "Logos off" toggle pauses delivery (keeps the engine); it does
+        // NOT tear the node down. Real teardown is stopBlocking (wipe flow only).
+        pauseBlocking()
         onDone(null)
       } catch (t: Throwable) {
         setStatus("error", t.message)

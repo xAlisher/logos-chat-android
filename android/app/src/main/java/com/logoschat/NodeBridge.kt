@@ -63,6 +63,10 @@ object NodeBridge {
   /** Shut down and free a handle. Invalid after. */
   external fun chatShutdown(handle: Long)
 
+  /** #237: pause (false) / resume (true) Waku delivery without tearing the node
+   *  down — the MLS engine stays alive for BLE. 0 ok, -1 error. */
+  external fun chatSetDeliveryActive(handle: Long, active: Boolean): Int
+
   /** This client's account address (hex64 peers paste to reach it), or null. */
   external fun chatGetAddress(handle: Long): String?
 

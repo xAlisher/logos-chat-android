@@ -78,6 +78,7 @@ import AudioRecorder, {parseRecording, MAX_RECORDING_MS} from '../native/Audio';
 import {deriveComposerState} from '../stores/groupState';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
+import {useBleStore} from '../stores/bleStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -363,6 +364,14 @@ export function ChatScreen() {
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
+  // #237: a 1:1 whose peer is heard on the BLE mesh right now can be messaged even
+  // when Logos is off (MLS encrypts locally; BLE carries the ciphertext).
+  const bleStatus = useBleStore(s => s.status);
+  const bleNearby = useBleStore(s => s.nearbyContacts);
+  const bleReachable =
+    convo?.peerAddress != null &&
+    bleStatus === 'on' &&
+    bleNearby.some(a => a.toLowerCase() === convo.peerAddress!.toLowerCase());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -784,6 +793,7 @@ export function ChatScreen() {
     nodeStatus,
     liveness,
     createdByMe: convo?.createdByMe ?? false,
+    bleReachable,
   });
   const {running, connecting, overMesh, meshLive, dead, canRevive} = cs;
   const canSend = cs.canSendBase && text.trim().length > 0 && !busy;
@@ -997,10 +1007,12 @@ export function ChatScreen() {
   };
 
   const onSubmit = () => {
-    // A send goes through if the mesh radio is live (mesh path) OR the Logos node
-    // is running (a mesh-mirrored group falls back to Logos when the radio is
-    // down). Otherwise say which transport is missing.
-    if (meshLive || running) {
+    // A send goes through if the mesh radio is live (mesh path), the Logos node is
+    // running (a mesh-mirrored group falls back to Logos when the radio is down),
+    // OR — #237 — the 1:1 peer is reachable over the BLE mesh (works even with
+    // Logos off, since MLS encrypts locally and BLE carries the ciphertext).
+    // Otherwise say which transport is missing.
+    if (meshLive || running || bleReachable) {
       doSend();
     } else if (isMesh) {
       // Pure mesh channel with no radio — nothing to fall back to.
@@ -1008,6 +1020,11 @@ export function ChatScreen() {
     } else if (connecting) {
       // Keep the draft; just tell the user to wait.
       ToastAndroid.show('Logos node connecting…', ToastAndroid.SHORT);
+    } else if (bleStatus === 'on') {
+      // #237: Logos is off and BLE is on but this contact isn't in range.
+      useNodeStore.setState({
+        error: 'Logos off — this contact isn’t nearby over Bluetooth',
+      });
     } else {
       // #183: name the transport — the LOGOS node is down (a mirrored group with
       // the radio also down lands here: neither transport is available).

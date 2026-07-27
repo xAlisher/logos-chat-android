@@ -238,6 +238,15 @@ Java_com_logoschat_NodeBridge_chatIngestCiphertext(JNIEnv *env, jobject thiz, jl
   return rc;
 }
 
+// #237: pause/resume Waku delivery (keep MLS engine alive for BLE).
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatSetDeliveryActive(JNIEnv *env, jobject thiz, jlong handle,
+                                                    jboolean active) {
+  (void)env;
+  (void)thiz;
+  return logoschat_set_delivery_active((void *)handle, active ? 1 : 0);
+}
+
 // #163: chatListConversations removed — dead binding (app reads ChatDb, never
 // the lib for the conversation list).
 

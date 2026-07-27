@@ -858,6 +858,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // Neither transport carried it (onSubmit normally gates this).
           throw new Error('no transport available — connect the radio or the node');
         }
+      } else if (!running) {
+        // #237: Logos delivery is paused ("off") and this peer is not reachable
+        // over BLE (bleReachable) or mesh — refuse instead of calling the node's
+        // publish, which is now a no-op while paused (would look "sent" but go
+        // nowhere). onSubmit normally gates this; this is the store-side backstop.
+        throw new Error('Logos is off — this contact isn’t reachable over Bluetooth');
       } else {
         const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
         if (res.status === 'failed') {

@@ -594,7 +594,16 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     val count: Int
     val ids: Set<String>
     synchronized(peers) {
-      count = peers.size
+      // #238: count DISTINCT peers, not raw BLE addresses. Android rotates the BLE
+      // MAC for privacy, so one physical phone shows up under many `peers` keys
+      // within the TTL — `peers.size` overcounts (25+ for 2-3 phones). Dedup by the
+      // advertised identity when known (collapses a phone's rotated MACs into one);
+      // fall back to the address only for genuinely anonymous advertisers.
+      val distinct = HashSet<String>()
+      for ((addr, v) in peers) {
+        distinct.add(if (v.second.isNotEmpty()) "id:" + v.second else "anon:" + addr)
+      }
+      count = distinct.size
       ids = peers.values.mapNotNull { it.second.ifEmpty { null } }.toSet()
     }
     if (count == lastEmittedCount && ids == lastEmittedIds) return

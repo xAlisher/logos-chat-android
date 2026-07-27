@@ -133,6 +133,10 @@ char *logoschat_encrypt_for_convo(void *handle, const char *convo_id,
 // the normal inbound/event path (decode/decrypt/dedup → events). 0 ok, -1 fail.
 int logoschat_ingest_ciphertext(void *handle, const unsigned char *data, size_t len);
 
+// #237: pause (active==0) / resume (active!=0) Waku delivery without tearing the
+// node down. MLS stays alive for off-node (BLE) send/receive. 0 ok, -1 error.
+int logoschat_set_delivery_active(void *handle, int active);
+
 // Register the event callback: spawns a pump that drains the event stream and
 // invokes cb(event_type, json, user_data) per event. Call once per handle.
 // 0 on success, -1 if already registered / bad handle.
