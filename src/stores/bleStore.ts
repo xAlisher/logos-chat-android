@@ -111,6 +111,7 @@ function resolveNearby(ids: string[]): string[] {
 
 let rotateTimer: ReturnType<typeof setInterval> | null = null;
 let lastAdvId: string | null = null;
+let lastAnnounce = 0; // #239: throttle card floods (broadcast-storm guard)
 // #142: flood dedup + message reassembly across the app lifetime.
 const floodSeen = new SeenSet(1024);
 const reassembler = new Reassembler();
@@ -179,8 +180,6 @@ export const useBleStore = create<BleState>((set, get) => ({
           lastAdvId = next;
           BleMesh.updateAdvertiseId(next, currentFlags()).catch(() => {});
         }
-        // #239: re-announce our card each minute so late-arriving peers hear it.
-        get().announceCard();
       }, 60_000);
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
@@ -249,11 +248,17 @@ export const useBleStore = create<BleState>((set, get) => ({
   },
 
   announceCard: async () => {
-    // #239: flood our contact card so nearby peers can add us offline. Best-effort.
+    // #239: flood our contact card so nearby peers can add us offline. THROTTLED:
+    // the card is large (many fragments) and floods+relays across the mesh, so
+    // re-announcing rapidly is a broadcast storm — at most once per 30s.
+    const now = Date.now();
+    if (now - lastAnnounce < 30_000) return;
+    lastAnnounce = now;
     try {
       const card = await LogosChat.exportContact();
       await floodString(TAG_CARD + card, e => set({error: e}));
     } catch {
+      lastAnnounce = 0; // let a retry through if we had no identity yet
       // no identity to export yet (node not running) — ignore.
     }
   },
@@ -273,7 +278,9 @@ export const useBleStore = create<BleState>((set, get) => ({
 
 // Single subscription for the app lifetime.
 addBleListener(e => {
-  console.log('[BleMeshEvent]', JSON.stringify(e));
+  // #239: NO per-packet logging — a large card floods as many fragments, relayed
+  // across peers, so logging every event drowned the JS thread (10k+ lines) and
+  // janked the UI. Keep the handler lean.
   if (e.eventType === 'status' && e.status) {
     useBleStore.setState({status: e.status});
     if (e.status === 'off') useBleStore.setState({peerCount: 0, nearbyContacts: []});
@@ -322,6 +329,10 @@ async function handleCard(cardJson: string): Promise<void> {
     const address = String(card.account ?? '').toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(address)) return;
     if (address === (useNodeStore.getState().myAddress ?? '').toLowerCase()) return;
+    // #239: a card floods as many fragments AND is relayed, so the same card
+    // arrives many times — skip the native import (and state churn) once we've
+    // already got this peer.
+    if (useBleStore.getState().discovered.some(d => d.address === address)) return;
     // verify_bundle runs native-side; a spoofed/malformed card rejects here.
     await LogosChat.importContact(cardJson);
     useBleStore.setState(s =>

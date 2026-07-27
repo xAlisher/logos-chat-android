@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     paddingLeft: spacing.xl,
   },
   subName: {...type.body, color: colors.text},
-  status: {...type.label},
+  status: {...type.label, color: colors.textDim},
   setupBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,

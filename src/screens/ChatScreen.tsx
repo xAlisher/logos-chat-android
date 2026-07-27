@@ -1064,7 +1064,15 @@ export function ChatScreen() {
             ⚠ Unverified — this identity isn’t confirmed. Verify out of band before
             sharing anything sensitive.
           </Text>
-          <Pressable onPress={() => setVerified(convoPk, true)} hitSlop={8}>
+          <Pressable
+            onPress={() =>
+              setLabelTarget({
+                address: convo.peerAddress,
+                label: convo.nickname,
+                verified: convo.verified,
+              })
+            }
+            hitSlop={8}>
             <Text style={styles.unverifiedVerify}>Verify</Text>
           </Pressable>
         </View>

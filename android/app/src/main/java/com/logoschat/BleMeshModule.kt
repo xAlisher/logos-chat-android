@@ -85,6 +85,11 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     private const val PRUNE_INTERVAL_MS = 5_000L
     /** #214: advertised rotating-id length in bytes. */
     private const val ID_LEN = 6
+    /** #239: hard cap on concurrent GATT client links. Android's BLE stack chokes
+     *  well before this, and — with MAC rotation making one phone look like many
+     *  addresses — an uncapped dial-everyone burst balloons memory (100MB+ in
+     *  seconds) until the OS kills the app. */
+    private const val MAX_LINKS = 6
   }
 
   override fun getName() = "BleMesh"
@@ -119,6 +124,10 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
   private val clientConns = java.util.concurrent.ConcurrentHashMap<String, BluetoothGatt>()
   /** addresses we're mid-connect to, to avoid duplicate connectGatt. */
   private val connecting = java.util.Collections.synchronizedSet(HashSet<String>())
+  // #239: identities (advertised idHex) we already hold a link to, so a peer whose
+  // BLE MAC rotated isn't dialled again; and addr->idHex to clean up on disconnect.
+  private val linkedIds = java.util.Collections.synchronizedSet(HashSet<String>())
+  private val idByAddr = java.util.concurrent.ConcurrentHashMap<String, String>()
 
   // -- capability query -------------------------------------------------------
 
@@ -334,10 +343,9 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
       if (anyNonZero) idHex = sb.toString()
     }
     notePeer(address, idHex)
-    // #142: open a GATT link to this peer (as central) so packets can flow. Only
-    // ONE side needs to initiate — dedup by address; a lower-address tiebreak keeps
-    // both from dialling each other simultaneously.
-    result.device?.let { maybeConnect(it) }
+    // #142/#239: open a GATT link (as central) so packets can flow — but at most
+    // one link per identity, capped in total (see maybeConnect).
+    result.device?.let { maybeConnect(it, idHex) }
   }
 
   @SuppressLint("MissingPermission")
@@ -462,14 +470,20 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
       }
 
   @SuppressLint("MissingPermission")
-  private fun maybeConnect(device: BluetoothDevice) {
+  private fun maybeConnect(device: BluetoothDevice, idHex: String) {
     val addr = device.address
     if (clientConns.containsKey(addr) || connecting.contains(addr)) return
+    // #239: one link per IDENTITY — MAC rotation makes a single phone appear under
+    // many addresses; without this we'd open a fresh GATT link for each.
+    if (idHex.isNotEmpty() && linkedIds.contains(idHex)) return
     // If they already connected to OUR server, don't dial back (avoids double links).
     synchronized(serverClients) {
       if (serverClients.any { it.address == addr }) return
     }
+    // #239: hard cap — never let a scan burst open an unbounded number of links.
+    if (clientConns.size + connecting.size >= MAX_LINKS) return
     connecting.add(addr)
+    if (idHex.isNotEmpty()) idByAddr[addr] = idHex
     device.connectGatt(
         reactApplicationContext, false, gattClientCallback, BluetoothDevice.TRANSPORT_LE)
   }
@@ -484,6 +498,7 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             clientConns.remove(addr)
             connecting.remove(addr)
+            idByAddr.remove(addr)?.let { linkedIds.remove(it) } // #239
             try { gatt.close() } catch (_: Throwable) {}
           }
         }
@@ -495,7 +510,11 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
           val ch = gatt.getService(SERVICE_UUID)?.getCharacteristic(MESH_CHAR_UUID)
           if (ch == null) {
+            // #239: no mesh characteristic — not one of us. Close the link so it
+            // doesn't count against the cap / linger natively.
             connecting.remove(gatt.device.address)
+            idByAddr.remove(gatt.device.address)
+            try { gatt.close() } catch (_: Throwable) {}
             return
           }
           gatt.setCharacteristicNotification(ch, true)
@@ -508,6 +527,7 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
           }
           clientConns[gatt.device.address] = gatt
           connecting.remove(gatt.device.address)
+          idByAddr[gatt.device.address]?.let { linkedIds.add(it) } // #239: one link/identity
           Log.i(TAG, "GATT client linked to ${gatt.device.address}")
         }
         @Suppress("DEPRECATION")
@@ -574,6 +594,8 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     clientConns.clear()
     connecting.clear()
     serverClients.clear()
+    linkedIds.clear() // #239
+    idByAddr.clear()
     try { gattServer?.close() } catch (_: Throwable) {}
     gattServer = null
     meshChar = null
