@@ -176,6 +176,67 @@ object NodeRuntime {
     }
   }
 
+  // -- destructive wipe / identity reset (#232) ------------------------------
+
+  private fun deleteWithSiblings(base: File) {
+    // SQLite/rusqlite leaves -wal/-shm (WAL mode) or -journal beside the db file;
+    // delete them all so no fragment of the old encrypted store survives.
+    for (suffix in listOf("", "-wal", "-shm", "-journal")) {
+      val f = File(base.parentFile, base.name + suffix)
+      if (f.exists() && !f.delete()) Log.w(TAG, "wipe: could not delete ${f.name}")
+    }
+  }
+
+  private fun deleteRecursively(f: File) {
+    if (!f.exists()) return
+    if (f.isDirectory) f.listFiles()?.forEach { deleteRecursively(it) }
+    if (!f.delete()) Log.w(TAG, "wipe: could not delete ${f.absolutePath}")
+  }
+
+  /**
+   * #232 — reset identity and data. Runs ON the node executor (serialized with
+   * every other lib call). Steps, in order:
+   *   1. shut the node down (frees the ctx),
+   *   2. delete the identity seed (→ a NEW stable address is generated on reopen)
+   *      and the lib's encrypted store, plus clear the store key so a fresh key is
+   *      minted,
+   *   3. wipe the app-side ChatDb (all chats/groups/mesh pairings + kv/PIN) and
+   *      the stored chat images,
+   *   4. re-open the node → a brand-new identity + empty history.
+   *
+   * This is the SAME primitive behind "Reset identity and data", the duress/wipe
+   * PIN, and the 3-wrong-attempts "Create new identity" — all app-level, NO native
+   * Rust verb (we just delete the files the lib opens and re-open it).
+   */
+  fun wipeAndRestart(onDone: (String?) -> Unit) {
+    executor.execute {
+      try {
+        val context = appContext
+        if (context == null) {
+          onDone("no app context")
+          return@execute
+        }
+        stopBlocking()
+        deleteWithSiblings(File(context.filesDir, IDENTITY_FILE))
+        deleteWithSiblings(File(context.filesDir, STORE_FILE))
+        context
+            .getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_DB_KEY)
+            .commit()
+        // Chat images (#197) live outside the DB — clear them too.
+        deleteRecursively(File(context.filesDir, "chat-images"))
+        ChatRepo.wipeAndReinit(context)
+        Log.i(TAG, "identity + data wiped; reopening with a fresh identity")
+        val err = startBlocking()
+        onDone(err)
+      } catch (t: Throwable) {
+        setStatus("error", t.message)
+        onDone(t.message ?: t.toString())
+      }
+    }
+  }
+
   /**
    * ChatService START_STICKY path: the process died with the node running and the
    * system restarted the service — bring the node back, no JS involved. The

@@ -27,5 +27,6 @@ module.exports = {
     '<rootDir>/__tests__/bleIdentity.test.ts',
     '<rootDir>/__tests__/bleFlood.test.ts',
     '<rootDir>/__tests__/bleFrag.test.ts',
+    '<rootDir>/__tests__/pinSecurity.test.ts',
   ],
 };

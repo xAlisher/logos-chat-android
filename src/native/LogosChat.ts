@@ -194,6 +194,18 @@ interface LogosChatNative {
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<null>;
   /**
+   * #232: `byteLen` bytes of platform CSPRNG randomness as lowercase hex — used
+   * as the salt for a PIN verifier (Hermes has no reliable getRandomValues).
+   */
+  secureRandomHex(byteLen: number): Promise<string>;
+  /**
+   * #232: reset identity and data. Shuts the node down, deletes the identity
+   * seed + encrypted store + app-side DB + chat images, then reopens with a
+   * BRAND-NEW identity. Powers "Reset identity and data", the duress/wipe PIN,
+   * and the 3-wrong-attempts wipe. Resolves once the fresh node is running.
+   */
+  wipeIdentityAndData(): Promise<null>;
+  /**
    * #38: export the app-side store (conversations, messages, group roster, mesh
    * identity map + contact roster, kv settings) as a JSON backup and launch the
    * Android share sheet. Resolves the on-device path of the written file. Does NOT
