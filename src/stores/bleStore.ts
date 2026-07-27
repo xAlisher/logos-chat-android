@@ -8,6 +8,7 @@ import {PermissionsAndroid, Platform} from 'react-native';
 import {create} from 'zustand';
 import BleMesh, {addBleListener, parseAvailability} from '../native/BleMesh';
 import type {BleAvailability} from '../native/BleMesh';
+import LogosChat from '../native/LogosChat';
 import type {BleStatus} from './bleState';
 import {useSettingsStore} from './settingsStore';
 import {useNodeStore} from './nodeStore';
@@ -38,6 +39,9 @@ interface BleState {
   refreshAdvertiseId: () => Promise<void>;
   /** #142: send a text over the BLE flood (transport proof — fragments + floods). */
   sendBleTest: (text: string) => Promise<void>;
+  /** #213: flood a base64 MLS ciphertext (from LogosChat.encryptForConvo) over the
+   *  BLE mesh — the real chat-over-BLE send path. Fragmented like sendBleTest. */
+  sendCiphertext: (dataB64: string) => Promise<void>;
   /** #142: last message reassembled from the BLE flood (transport proof surface). */
   lastBleRx: string | null;
   clearError: () => void;
@@ -187,6 +191,30 @@ export const useBleStore = create<BleState>((set, get) => ({
     }
   },
 
+  sendCiphertext: async (dataB64: string) => {
+    // #213: same fragment+flood as sendBleTest, but the payload is a real MLS
+    // ciphertext (base64) — the receiver reassembles it and hands it to
+    // LogosChat.ingestCiphertext (see the inbound handler below).
+    const addr = useNodeStore.getState().myAddress ?? 'me';
+    const fragMsgId = newMsgId(addr, floodNonce++);
+    const frags = fragment(fragMsgId, dataB64, CHUNK);
+    for (const f of frags) {
+      const pkt = encodePacket({
+        msgId: newMsgId(addr, floodNonce++),
+        hopCount: 0,
+        ttl: 3,
+        kind: 'msg',
+        senderId: addr,
+        payload: f,
+      });
+      try {
+        await BleMesh.sendMeshPacket(pkt);
+      } catch (e: any) {
+        set({error: String(e?.message ?? e)});
+      }
+    }
+  },
+
   clearError: () => set({error: null}),
 }));
 
@@ -217,6 +245,11 @@ addBleListener(e => {
       if (done.done && done.dataB64 != null) {
         console.log('[BLE-RX msg]', pkt.senderId, '→', done.dataB64);
         useBleStore.setState({lastBleRx: done.dataB64});
+        // #213: the reassembled payload is a base64 MLS ciphertext — hand it to
+        // the lib's off-node ingest (#235) so it decrypts + surfaces in the
+        // timeline via db_changed, exactly like a Logos message. Best-effort: a
+        // stray/duplicate frame just yields a benign inbound error.
+        LogosChat.ingestCiphertext(done.dataB64).catch(() => {});
       }
     }
   }

@@ -773,7 +773,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       (convo?.meshMode ?? false) &&
       convo?.meshChannelIdx != null;
     const running = useNodeStore.getState().status === 'running';
-    const via: 'logos' | 'mesh' = transport === 'mesh' || meshMirror ? 'mesh' : 'logos';
+    // #213: a 1:1 with a contact currently reachable over the BLE mesh sends over
+    // BLE (encrypt once + flood) instead of the node — MLS still E2E-encrypts; BLE
+    // is just the pipe. (Noise link-auth #136 layers on later.) Lazy require breaks
+    // the bleStore↔chatStore import cycle.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const {useBleStore} = require('./bleStore');
+    const blePeer =
+      convo && !convo.isGroup ? convo.peerAddress?.toLowerCase() : undefined;
+    const bleReachable =
+      blePeer != null &&
+      useBleStore.getState().status === 'on' &&
+      useBleStore
+        .getState()
+        .nearbyContacts.some((a: string) => a.toLowerCase() === blePeer);
+    const via: 'logos' | 'mesh' | 'ble' = bleReachable
+      ? 'ble'
+      : transport === 'mesh' || meshMirror
+        ? 'mesh'
+        : 'logos';
     // Optimistic pending bubble; the durable row lands native-side and the
     // reload below replaces this. sentVia matches the transport actually used.
     const temp: MessageRow = {
@@ -789,7 +807,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: {...s.messages, [convoPk]: [temp, ...(s.messages[convoPk] ?? [])]},
     }));
     try {
-      if (transport === 'mesh') {
+      if (bleReachable) {
+        // #213: encrypt ONCE off-node (records the sender's bubble native-side +
+        // returns the wire bytes), then flood the base64 ciphertext over the BLE
+        // mesh. The peer's inbound handler reassembles + ingestCiphertext → its
+        // timeline. No node involved.
+        const res = JSON.parse(await LogosChat.encryptForConvo(convoPk, text));
+        await useBleStore.getState().sendCiphertext(res.dataB64);
+      } else if (transport === 'mesh') {
         // #167: a mesh conversation is either a channel ("mesh:chan:<idx>") or an
         // ECDH DM ("mesh:dm:<pubkeyHex>"). Route to the matching MeshCore verb.
         const libId = convo?.libConvoId ?? '';

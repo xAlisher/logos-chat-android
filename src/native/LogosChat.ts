@@ -83,7 +83,7 @@ export interface MessageRow {
    * 'logos' (default) or 'mesh'; #168 adds 'both' — a mirrored-group message that
    * arrived on BOTH transports (deduped to one row). One shared timeline, badged.
    */
-  sentVia: 'logos' | 'mesh' | 'both';
+  sentVia: 'logos' | 'mesh' | 'both' | 'ble';
 }
 
 /** A group roster entry (app-side, best-effort). */

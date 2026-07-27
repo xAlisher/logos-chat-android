@@ -378,12 +378,19 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         }
         d.setLibConvoId(pk, libConvoId)
       }
+      // Record the sender's own bubble up front (like sendMessageTo), so a
+      // BLE-carried message shows locally; the flood happens in JS after this.
+      val msgPk = ChatRepo.recordOutgoing(pk, textUtf8)
       val bytes = textUtf8.toByteArray(Charsets.UTF_8)
       val json = NodeBridge.chatEncryptForConvo(c, libConvoId, bytes)
       if (json == null) {
+        ChatRepo.finalizeOutgoing(msgPk, false)
         promise.reject("encrypt_for_convo", NodeBridge.chatLastError())
       } else {
-        promise.resolve(json)
+        // BLE flood is unacked/best-effort — mark sent once we have the bytes.
+        ChatRepo.finalizeOutgoing(msgPk, true)
+        // Splice msgPk into the {deliveryAddress,dataB64} JSON from the lib.
+        promise.resolve(json.dropLast(1) + ""","msgPk":$msgPk}""")
       }
     }
   }
