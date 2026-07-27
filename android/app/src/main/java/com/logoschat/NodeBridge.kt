@@ -75,6 +75,13 @@ object NodeBridge {
   /** Encrypt + send raw bytes (NOT hex) to convoId. 0 on success, -1 on failure. */
   external fun chatSendMessage(handle: Long, convoId: String, content: ByteArray): Int
 
+  // #235: encrypt content for convoId WITHOUT publishing → JSON
+  // {"deliveryAddress","dataB64"} (or null) for carrying over BLE.
+  external fun chatEncryptForConvo(handle: Long, convoId: String, content: ByteArray): String?
+
+  // #235: ingest raw off-node (BLE) ciphertext into the inbound path. 0 | -1.
+  external fun chatIngestCiphertext(handle: Long, data: ByteArray): Int
+
   // #163: chatListConversations removed — the app reads conversations from ChatDb
   // (the durable app-side store), never from the lib. The dead binding + its JNI
   // function are gone; bridge rebuilt.

@@ -348,6 +348,72 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * #235: encrypt `textUtf8` for `convoPk` and return the outbound envelope
+   * `{"deliveryAddress","dataB64"}` WITHOUT publishing, so JS can carry the bytes
+   * over BLE (#213). Resolves the lib convo id (creating it from the peer address
+   * like sendMessageTo). Advances FS state once — the caller sends the returned
+   * bytes and must NOT also sendMessageTo the same content.
+   */
+  @ReactMethod
+  fun encryptForConvo(convoPk: Double, textUtf8: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("encrypt_for_convo", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      var libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        val addr = d.peerAddressOf(pk)
+        if (addr == null) {
+          promise.reject("no_route", "conversation has no peer address")
+          return@execute
+        }
+        libConvoId = NodeBridge.chatCreateConversation(c, addr)
+        if (libConvoId == null) {
+          promise.reject("create_conversation", NodeBridge.chatLastError())
+          return@execute
+        }
+        d.setLibConvoId(pk, libConvoId)
+      }
+      val bytes = textUtf8.toByteArray(Charsets.UTF_8)
+      val json = NodeBridge.chatEncryptForConvo(c, libConvoId, bytes)
+      if (json == null) {
+        promise.reject("encrypt_for_convo", NodeBridge.chatLastError())
+      } else {
+        promise.resolve(json)
+      }
+    }
+  }
+
+  /**
+   * #235: ingest raw inbound ciphertext (base64) that arrived off-node (BLE) into
+   * the normal inbound/event path — same processing + events as a node message.
+   */
+  @ReactMethod
+  fun ingestCiphertext(dataB64: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("ingest_ciphertext", "node not started")
+        return@execute
+      }
+      val bytes =
+          try {
+            android.util.Base64.decode(dataB64, android.util.Base64.NO_WRAP)
+          } catch (t: Throwable) {
+            promise.reject("ingest_ciphertext", "bad base64: ${t.message}")
+            return@execute
+          }
+      val rc = NodeBridge.chatIngestCiphertext(c, bytes)
+      if (rc == 0) promise.resolve(null)
+      else promise.reject("ingest_ciphertext", NodeBridge.chatLastError())
+    }
+  }
+
+  /**
    * #197: send an image. Saves the base64 JPEG to app storage (own local copy),
    * records an outgoing `img1v:<mime>:<w>:<h>␟<path>` marker so the sender's bubble
    * renders from a file, then transmits the whole image as a single

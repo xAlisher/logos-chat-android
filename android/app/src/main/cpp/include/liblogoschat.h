@@ -122,6 +122,17 @@ char *logoschat_list_conversations(void *handle);
 int logoschat_send_message(void *handle, const char *convo_id,
                            const unsigned char *content, size_t len);
 
+// #235: encrypt content (len bytes) for convo_id and return the outbound envelope
+// as JSON {"deliveryAddress":"...","dataB64":"..."} WITHOUT publishing — the caller
+// carries the bytes over a non-node transport (BLE). Caller frees the string; NULL
+// on failure (see logoschat_last_error). 1:1 / GroupV1 conversations only.
+char *logoschat_encrypt_for_convo(void *handle, const char *convo_id,
+                                  const unsigned char *content, size_t len);
+
+// #235: ingest raw inbound ciphertext (len bytes) that arrived off-node (BLE) into
+// the normal inbound/event path (decode/decrypt/dedup → events). 0 ok, -1 fail.
+int logoschat_ingest_ciphertext(void *handle, const unsigned char *data, size_t len);
+
 // Register the event callback: spawns a pump that drains the event stream and
 // invokes cb(event_type, json, user_data) per event. Call once per handle.
 // 0 on success, -1 if already registered / bad handle.

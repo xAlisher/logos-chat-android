@@ -210,6 +210,34 @@ Java_com_logoschat_NodeBridge_chatSendMessage(JNIEnv *env, jobject thiz, jlong h
   return rc;
 }
 
+// #235: encrypt_for_convo(convoId, bytes) -> JSON {deliveryAddress,dataB64} | null.
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatEncryptForConvo(JNIEnv *env, jobject thiz, jlong handle,
+                                                  jstring convoId, jbyteArray content) {
+  (void)thiz;
+  const char *convo = (*env)->GetStringUTFChars(env, convoId, 0);
+  jsize len = (*env)->GetArrayLength(env, content);
+  jbyte *bytes = (*env)->GetByteArrayElements(env, content, NULL);
+  char *json = logoschat_encrypt_for_convo((void *)handle, convo,
+                                           (const unsigned char *)bytes, (size_t)len);
+  (*env)->ReleaseByteArrayElements(env, content, bytes, JNI_ABORT);
+  (*env)->ReleaseStringUTFChars(env, convoId, convo);
+  return take_cstr(env, json);
+}
+
+// #235: ingest_ciphertext(bytes) -> 0 | -1. Raw off-node (BLE) ciphertext.
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatIngestCiphertext(JNIEnv *env, jobject thiz, jlong handle,
+                                                   jbyteArray data) {
+  (void)thiz;
+  jsize len = (*env)->GetArrayLength(env, data);
+  jbyte *bytes = (*env)->GetByteArrayElements(env, data, NULL);
+  int rc = logoschat_ingest_ciphertext((void *)handle,
+                                       (const unsigned char *)bytes, (size_t)len);
+  (*env)->ReleaseByteArrayElements(env, data, bytes, JNI_ABORT);
+  return rc;
+}
+
 // #163: chatListConversations removed — dead binding (app reads ChatDb, never
 // the lib for the conversation list).
 

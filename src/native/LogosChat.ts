@@ -110,6 +110,18 @@ interface LogosChatNative {
   /** Send into a conversation (1:1 OR group — same verb). Resolves '{"msgPk":n,"status":…}'. */
   sendMessageTo(convoPk: number, textUtf8: string): Promise<string>;
   /**
+   * #235: encrypt `textUtf8` for `convoPk` and return the outbound envelope
+   * WITHOUT publishing — JSON `{"deliveryAddress":"…","dataB64":"…"}` — so the
+   * caller can carry the bytes over a non-node transport (BLE, #213). Advances
+   * forward-secrecy state ONCE; do not also `sendMessageTo` the same content.
+   */
+  encryptForConvo(convoPk: number, textUtf8: string): Promise<string>;
+  /**
+   * #235: ingest raw inbound ciphertext (base64) that arrived off-node (BLE) into
+   * the normal inbound/event path (decode → decrypt → dedup → db_changed events).
+   */
+  ingestCiphertext(dataB64: string): Promise<void>;
+  /**
    * #197: send an image (1:1 OR group). Persists the base64 JPEG locally, records
    * an own `img1v:` bubble, and transmits one `img1:` message. `base64` must be a
    * downscaled JPEG small enough for a single message. Resolves '{"msgPk":n,"status":…}'.
