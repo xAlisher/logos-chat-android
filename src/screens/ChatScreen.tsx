@@ -776,6 +776,17 @@ export function ChatScreen() {
                   📡 {peerPresence.text}
                 </Text>
               )}
+              {/* #246: live BLE presence. Unlike Logos (async), Bluetooth
+                  presence is real-time/binary — the peer is heard right now or
+                  not. Blue (#243) "nearby" when reachable over the BLE mesh. */}
+              {!isGroup && bleReachable && (
+                <Text
+                  style={[styles.headerLastSeen, {color: BLE_BLUE}]}
+                  numberOfLines={1}
+                  testID="chat-header-blepresence">
+                  ● nearby
+                </Text>
+              )}
             </View>
           </View>
         );
@@ -791,7 +802,7 @@ export function ChatScreen() {
         </Pressable>
       ),
     });
-  }, [navigation, convo, isGroup, peerMesh, peerPresence]);
+  }, [navigation, convo, isGroup, peerMesh, peerPresence, bleReachable]);
 
   // #193/docs/test-matrix: composer/liveness state is derived by the pure,
   // unit-tested deriveComposerState — the screen only maps sendColorKind→color
