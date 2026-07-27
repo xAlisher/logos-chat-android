@@ -9,6 +9,7 @@ import {
   Easing,
   Modal,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -287,6 +288,12 @@ export function SideMenu({
           </Pressable>
         </View>
 
+        {/* Header stays pinned above; everything below scrolls so the lower
+            items (Settings, About) are always reachable on short screens. */}
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}>
         {/* #167: All spans every transport; it sits above the transport groups. */}
         <View style={styles.group}>
           <Item
@@ -382,6 +389,7 @@ export function SideMenu({
             testID="menu-about"
           />
         </View>
+        </ScrollView>
       </Animated.View>
     </Modal>
   );
@@ -408,6 +416,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     gap: spacing.md,
   },
+  // Below the pinned header: fills the rest of the panel and scrolls.
+  scroll: {flex: 1},
+  scrollContent: {gap: spacing.md, paddingBottom: spacing.xl},
   header: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -2,7 +2,7 @@
 // (no presence — #212), BLE is real proximity: we resolve each heard rotating id
 // (#214) to a known contact. Hop pages (hop-1 = directly heard; hop-2/3 arrive
 // once the flood relay #142 lands) × filter (all / contacts / verified).
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
@@ -12,8 +12,9 @@ import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {BleLogo} from '../components/BleLogo';
 import {useBleStore} from '../stores/bleStore';
-import {useChatStore, knownContacts} from '../stores/chatStore';
+import {useChatStore, knownContacts, convoDisplayName} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
+import {useNodeStore} from '../stores/nodeStore';
 import {shortAddress} from '../native/LogosChat';
 import type {RootStackParamList} from '../navigation/types';
 
@@ -29,8 +30,40 @@ export function NearbyScreen() {
   const conversations = useChatStore(s => s.conversations);
   const members = useChatStore(s => s.members);
   const meshMap = useChatStore(s => s.meshMap);
+  const startConversation = useChatStore(s => s.startConversation);
 
   const [filter, setFilter] = useState<Filter>('all');
+
+  // Resolve-or-create the 1:1 with this peer and open it. A discovered peer has
+  // a real Logos address (resolved from its BLE identity), so tapping opens a
+  // normal MLS 1:1 — which is why the old convoPk:-1 placeholder failed to send
+  // ("no peer address"). Routing over the BLE mesh itself is the next step
+  // (#231): today the conversation sends over Logos.
+  const openPeer = useCallback(
+    (address: string, label: string | null) => {
+      const existing = Object.values(useChatStore.getState().conversations).find(
+        c => !c.isGroup && c.peerAddress?.toLowerCase() === address.toLowerCase(),
+      );
+      const go = (pk: number) => {
+        const target = useChatStore.getState().conversations[pk];
+        navigation.navigate('Chat', {
+          convoPk: pk,
+          convoName: target != null ? convoDisplayName(target) : label ?? shortAddress(address),
+          isGroup: false,
+        });
+      };
+      if (existing != null) {
+        go(existing.convoPk);
+      } else {
+        startConversation(address, {nickname: label || undefined})
+          .then(go)
+          .catch(e =>
+            useNodeStore.setState({error: `could not open chat: ${e?.message ?? e}`}),
+          );
+      }
+    },
+    [navigation, startConversation],
+  );
 
   // Resolve the heard contact addresses → full contacts (label + verified).
   const contacts = knownContacts(conversations, members, [], meshMap);
@@ -110,13 +143,7 @@ export function NearbyScreen() {
           renderItem={({item}) => (
             <Pressable
               style={styles.row}
-              onPress={() =>
-                navigation.navigate('Chat', {
-                  convoPk: -1,
-                  convoName: item.label ?? shortAddress(item.address),
-                  isGroup: false,
-                })
-              }
+              onPress={() => openPeer(item.address, item.label)}
               testID={`nearby-${item.address}`}>
               <HexAvatar seed={item.address} kind="contact" size={32} />
               <View style={styles.rowText}>
