@@ -911,6 +911,37 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #232: `byteLen` bytes of cryptographically-strong randomness as lowercase
+   * hex — the salt for a PIN verifier. JS (Hermes) has no reliable CSPRNG, so we
+   * source it from the platform SecureRandom here.
+   */
+  @ReactMethod
+  fun secureRandomHex(byteLen: Double, promise: Promise) {
+    try {
+      val n = byteLen.toInt().coerceIn(1, 1024)
+      val bytes = ByteArray(n)
+      java.security.SecureRandom().nextBytes(bytes)
+      promise.resolve(bytes.joinToString("") { "%02x".format(it) })
+    } catch (t: Throwable) {
+      promise.reject("secure_random", t)
+    }
+  }
+
+  /**
+   * #232: reset identity and data — the destructive primitive behind "Reset
+   * identity and data", the duress/wipe PIN, and the 3-wrong-attempts wipe. Shuts
+   * the node down, deletes the identity seed + encrypted store + app-side DB +
+   * chat images, then reopens with a BRAND-NEW identity. Resolves once the fresh
+   * node is up (or rejects with the reopen error). App-level only — no Rust verb.
+   */
+  @ReactMethod
+  fun wipeIdentityAndData(promise: Promise) {
+    NodeRuntime.wipeAndRestart { err ->
+      if (err == null) promise.resolve(null) else promise.reject("wipe", err)
+    }
+  }
+
   @ReactMethod
   fun addListener(eventName: String) {
     // Required by RN event emitter contract; no-op.

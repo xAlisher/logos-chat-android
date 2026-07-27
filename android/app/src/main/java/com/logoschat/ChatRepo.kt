@@ -69,6 +69,31 @@ object ChatRepo {
     activeConvoPk = 0
   }
 
+  /**
+   * #232 (reset identity / duress wipe): tear the durable app-side store down to
+   * nothing and re-open it empty. Closes the SQLite handle, deletes the DB file
+   * (with its -wal/-shm/-journal siblings, via deleteDatabase), forgets the active
+   * thread, then re-inits a fresh empty DB. This drops ALL chats, groups, rosters,
+   * mesh pairings AND the kv (so the PIN/duress verifiers go with it). The node's
+   * own identity/seed + encrypted store are wiped separately by
+   * [NodeRuntime.wipeAndRestart], which owns those file paths.
+   */
+  fun wipeAndReinit(context: Context) {
+    synchronized(this) {
+      try {
+        db?.close()
+      } catch (t: Throwable) {
+        Log.w(TAG, "db close during wipe failed: ${t.message}")
+      }
+      db = null
+      activeConvoPk = 0
+      context.applicationContext.deleteDatabase(ChatDb.DB_NAME)
+    }
+    // init() early-returns if db != null; we just nulled it, so this re-opens fresh.
+    init(context)
+    Log.i(TAG, "app-side store wiped and re-initialized (empty)")
+  }
+
   fun requireDb(): ChatDb =
       db ?: throw IllegalStateException("ChatRepo.init not called before use")
 
