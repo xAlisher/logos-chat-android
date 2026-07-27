@@ -23,10 +23,10 @@ describe('bleStatusLabel', () => {
     expect(bleStatusLabel('starting', 0)).toBe('Starting…');
   });
 
-  it('folds in the peer count when on, singular vs plural', () => {
-    expect(bleStatusLabel('on', 0)).toBe('0 peers nearby');
-    expect(bleStatusLabel('on', 1)).toBe('1 peer nearby');
-    expect(bleStatusLabel('on', 3)).toBe('3 peers nearby');
+  it('folds in the nearby count when on (#242: no "peers" noun)', () => {
+    expect(bleStatusLabel('on', 0)).toBe('0 nearby');
+    expect(bleStatusLabel('on', 1)).toBe('1 nearby');
+    expect(bleStatusLabel('on', 3)).toBe('3 nearby');
   });
 });
 

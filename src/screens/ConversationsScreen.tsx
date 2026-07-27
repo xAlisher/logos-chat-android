@@ -267,7 +267,7 @@ export function ConversationsScreen() {
               ? 'no mesh DMs yet — start one from the MeshCore page'
               : view === 'ble-dms'
               ? 'no Bluetooth chats yet — meet a nearby peer from the Discovery page'
-              : 'no conversations — tap the + button to add a peer by address'}
+              : 'no conversations — tap the + button to add a contact by address'}
           </Text>
         </View>
       ) : (

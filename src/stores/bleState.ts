@@ -20,12 +20,13 @@ export type BleStatus = 'off' | 'starting' | 'on';
 
 /**
  * The status-label shown in the Transports modal for the BLE row. Once live it
- * folds in the nearby-peer count (#146/#148 "Nearby mesh — N peers").
+ * folds in the nearby count. #242: dropped the "peers" noun — the app is named
+ * Peers now, so "3 peers nearby" collided with the brand. "3 nearby" reads clean.
  */
 export function bleStatusLabel(status: BleStatus, peerCount: number): string {
   switch (status) {
     case 'on':
-      return peerCount === 1 ? '1 peer nearby' : `${peerCount} peers nearby`;
+      return peerCount === 1 ? '1 nearby' : `${peerCount} nearby`;
     case 'starting':
       return 'Starting…';
     default:

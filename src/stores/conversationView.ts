@@ -274,7 +274,7 @@ export function convoDisplayName(c: ConversationRow): string {
   if (c.peerAddress != null && c.peerAddress.length > 0) {
     return shortAddress(c.peerAddress);
   }
-  return `peer #${c.convoPk}`;
+  return `contact #${c.convoPk}`;
 }
 
 /**

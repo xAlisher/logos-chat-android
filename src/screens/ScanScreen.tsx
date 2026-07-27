@@ -122,7 +122,7 @@ export function ScanScreen() {
               <View style={[styles.corner, styles.bl]} />
               <View style={[styles.corner, styles.br]} />
             </View>
-            <Text style={styles.caption}>scan a peer's address QR</Text>
+            <Text style={styles.caption}>scan a contact's address QR</Text>
             {invalid != null && <Text style={styles.invalid}>{invalid}</Text>}
           </View>
         </View>
@@ -149,7 +149,7 @@ export function ScanScreen() {
             </Text>
           ) : !hasPermission ? (
             <Text style={styles.rationale}>
-              camera access is used only to scan a peer's address QR — nothing is
+              camera access is used only to scan a contact's address QR — nothing is
               recorded.
             </Text>
           ) : device == null ? (

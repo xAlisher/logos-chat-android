@@ -890,7 +890,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Don't blame the node — it is usually healthy here. A repeat failure
         // now means the route could not be re-established for this peer.
         useNodeStore.setState({
-          error: 'still could not send — the peer may be unreachable',
+          error: 'still could not send — the contact may be unreachable',
         });
       }
     } finally {
