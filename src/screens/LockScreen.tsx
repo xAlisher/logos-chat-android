@@ -15,7 +15,6 @@ import {ActionButton} from '../components/ActionButton';
 import {useSecurityStore} from '../stores/securityStore';
 import {useChatStore} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
-import {shortAddress} from '../native/LogosChat';
 import {
   PIN_LENGTH,
   MAX_PIN_ATTEMPTS,
@@ -86,10 +85,7 @@ export function LockScreen() {
     <SafeAreaView style={styles.root}>
       <View style={styles.hero}>
         {myAddress ? (
-          <>
-            <HexAvatar seed={myAddress} kind="contact" size={56} />
-            <Text style={styles.addr}>{shortAddress(myAddress)}</Text>
-          </>
+          <HexAvatar seed={myAddress} kind="contact" size={56} />
         ) : (
           <Logo size={48} color={colors.accent} strokeWidth={2} />
         )}
@@ -157,7 +153,6 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   hero: {alignItems: 'center', gap: spacing.sm},
-  addr: {...type.label, color: colors.textDim},
   title: {...type.brand, color: colors.text, fontSize: 22},
   subtitle: {...type.label, color: colors.textDim, textAlign: 'center'},
   busy: {alignItems: 'center', gap: spacing.md},
