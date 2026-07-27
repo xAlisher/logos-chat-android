@@ -104,6 +104,9 @@ interface LogosChatNative {
   getNodeStatus(): Promise<NodeStatus>;
   /** #244: the real installed version — JSON {"versionName","versionCode"}. */
   getAppVersion(): Promise<string>;
+  /** #247: pin a home-screen shortcut with the user's own identicon as its icon.
+   *  Resolves 'ok' | 'unsupported' (the OS shows its own confirm dialog). */
+  pinIdentityShortcut(): Promise<string>;
   /** This client's own stable hex address (the QR/paste peers use to reach us). */
   getMyAddress(): Promise<string>;
   getInstallationName(): Promise<string>;

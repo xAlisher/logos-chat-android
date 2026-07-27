@@ -50,6 +50,19 @@ export function AboutScreen() {
     }
   };
 
+  // #247: pin a home-screen shortcut whose icon is the user's own identicon —
+  // "my app icon is my identity". The OS shows its own confirm dialog.
+  const onPinShortcut = async () => {
+    try {
+      const res = await LogosChat.pinIdentityShortcut();
+      if (res === 'unsupported') {
+        ToastAndroid.show('Your launcher doesn’t support pinning', ToastAndroid.SHORT);
+      }
+    } catch {
+      ToastAndroid.show('Couldn’t add the shortcut', ToastAndroid.SHORT);
+    }
+  };
+
   return (
     <SafeAreaView edges={['bottom']} style={styles.root}>
       <ScrollView contentContainerStyle={styles.content}>
@@ -77,6 +90,19 @@ export function AboutScreen() {
               </Text>
             </View>
           </View>
+        )}
+
+        {myAddress != null && (
+          <Pressable
+            style={styles.linkRow}
+            onPress={onPinShortcut}
+            testID="about-pin-identity">
+            <Text style={styles.linkText}>Add my identity to the home screen</Text>
+            <Text style={styles.helper}>
+              Pins a home-screen icon drawn from your own identity — your sigil
+              becomes your app icon.
+            </Text>
+          </Pressable>
         )}
 
         <Pressable

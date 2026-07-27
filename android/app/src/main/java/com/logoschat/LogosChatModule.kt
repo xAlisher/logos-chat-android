@@ -1,5 +1,8 @@
 package com.logoschat
 
+import android.content.pm.ShortcutInfo
+import android.content.pm.ShortcutManager
+import android.graphics.drawable.Icon
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -208,6 +211,55 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   @ReactMethod
   fun getNodeStatus(promise: Promise) {
     promise.resolve(NodeRuntime.status)
+  }
+
+  /**
+   * #247: pin a home-screen shortcut whose icon is the user's OWN identity
+   * sigil (the same identicon as the in-app avatar + the launcher icon), opening
+   * the app. The launcher-drawer icon can't be a runtime bitmap, but a pinned
+   * shortcut can — so "my app icon is my identity" is achievable this way.
+   * Resolves "ok" / "unsupported" / rejects; the OS shows its own confirm dialog.
+   */
+  @ReactMethod
+  fun pinIdentityShortcut(promise: Promise) {
+    try {
+      val ctx = reactApplicationContext
+      val addr = NodeRuntime.address
+      if (addr.isNullOrBlank()) {
+        promise.reject("pin_shortcut", "identity not ready")
+        return
+      }
+      if (android.os.Build.VERSION.SDK_INT < 26) {
+        promise.resolve("unsupported")
+        return
+      }
+      val sm = ctx.getSystemService(ShortcutManager::class.java)
+      if (sm == null || !sm.isRequestPinShortcutSupported) {
+        promise.resolve("unsupported")
+        return
+      }
+      // Adaptive bitmap: full square ground + inset sigil, so the launcher mask
+      // shapes it consistently with the app icon.
+      val bmp = Identicon.render(addr, 288, fill = 0.66f, rounded = false)
+      val launch =
+          ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
+              ?: run {
+                promise.reject("pin_shortcut", "no launch intent")
+                return
+              }
+      launch.action = android.content.Intent.ACTION_MAIN
+      val shortcut =
+          ShortcutInfo.Builder(ctx, "peers-identity")
+              .setShortLabel("Peers")
+              .setLongLabel("My Peers identity")
+              .setIcon(Icon.createWithAdaptiveBitmap(bmp))
+              .setIntent(launch)
+              .build()
+      sm.requestPinShortcut(shortcut, null)
+      promise.resolve("ok")
+    } catch (t: Throwable) {
+      promise.reject("pin_shortcut", t.message)
+    }
   }
 
   /** #244: the real installed app version, so the About screen can't drift from
