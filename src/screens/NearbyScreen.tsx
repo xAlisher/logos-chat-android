@@ -228,7 +228,10 @@ export function NearbyScreen() {
                 </Text>
               </View>
               <View style={styles.hopBadge}>
-                <View style={[styles.dot, item.kind === 'new' && styles.dotNew]} />
+                {/* #249: only the amber "new — tap to add" dot remains. The green
+                    online dot is dropped — green now means MeshCore (#243), and
+                    the "1 hop" text already says the peer is directly heard. */}
+                {item.kind === 'new' && <View style={[styles.dot, styles.dotNew]} />}
                 <Text style={styles.hopText}>1 hop</Text>
               </View>
             </Pressable>
