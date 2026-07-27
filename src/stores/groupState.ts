@@ -5,7 +5,7 @@
 // Inputs are the structural facts (kind × liveness × radio × node × role); the
 // screen ANDs `canSendBase` with the composer text/busy state.
 
-export type SendColorKind = 'mesh' | 'accent' | 'connecting' | 'offline';
+export type SendColorKind = 'mesh' | 'ble' | 'accent' | 'connecting' | 'offline';
 
 export interface ComposerStateInput {
   isGroup: boolean;
@@ -56,9 +56,15 @@ export function deriveComposerState(i: ComposerStateInput): ComposerState {
   const bleReachable = i.bleReachable ?? false;
   const canSendBase = meshLive || running || bleReachable;
 
-  const sendColorKind: SendColorKind = meshLive
+  // #243: color the button by the transport the send will ACTUALLY use. chatStore
+  // routes over BLE whenever the peer is reachable there (`via = bleReachable ? …`),
+  // even with Logos running — so BLE reachability wins the color, matching the
+  // blue 'ble' bubble it produces.
+  const sendColorKind: SendColorKind = bleReachable
+    ? 'ble'
+    : meshLive
     ? 'mesh'
-    : running || bleReachable
+    : running
     ? 'accent'
     : connecting
     ? 'connecting'

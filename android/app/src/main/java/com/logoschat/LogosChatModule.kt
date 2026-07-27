@@ -453,7 +453,8 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       }
       // Record the sender's own bubble up front (like sendMessageTo), so a
       // BLE-carried message shows locally; the flood happens in JS after this.
-      val msgPk = ChatRepo.recordOutgoing(pk, textUtf8)
+      // Tag it 'ble' — this path only runs for a BLE send (#243: blue bubble).
+      val msgPk = ChatRepo.recordOutgoing(pk, textUtf8, "ble")
       val bytes = textUtf8.toByteArray(Charsets.UTF_8)
       val json = NodeBridge.chatEncryptForConvo(c, libConvoId, bytes)
       if (json == null) {

@@ -125,10 +125,12 @@ object ChatRepo {
   }
 
   /** Persist an outbound message (status 'pending') before the lib send. */
-  fun recordOutgoing(convoPk: Long, text: String): Long {
+  fun recordOutgoing(convoPk: Long, text: String, sentVia: String = "logos"): Long {
     val now = System.currentTimeMillis()
     val d = requireDb()
-    val msgPk = d.insertMessage(convoPk, "out", text, now, "pending")
+    // sentVia records the transport actually used; 'ble' when the send rides the
+    // BLE mesh (encryptForConvo) so the bubble stays blue after reload (#243).
+    val msgPk = d.insertMessage(convoPk, "out", text, now, "pending", null, sentVia)
     d.touchConversation(convoPk, now)
     return msgPk
   }

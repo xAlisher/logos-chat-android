@@ -101,6 +101,10 @@ function fitImage(w: number, h: number): {width: number; height: number} {
 // Mesh transport accent — theme has no green token (brand is orange), so the
 // literal lives here per the mesh-transport design (docs/mesh-transport.md).
 const MESH_GREEN = '#22C55E';
+// #243: Bluetooth transport accent. A message that rode the BLE mesh (sentVia
+// 'ble', Logos off/paused or peer nearby) is blue — own bubble filled blue, the
+// send button blue — so "this went over Bluetooth" reads at a glance.
+const BLE_BLUE = '#0EA5E9';
 
 /** The attribution shown above an incoming bubble (#10). Display-only (#109). */
 interface Attribution {
@@ -199,6 +203,8 @@ function Bubble({
   // #168: 'both' = delivered on Logos AND mesh (deduped) — still badge it as mesh-touched.
   const viaMesh = msg.sentVia === 'mesh' || msg.sentVia === 'both';
   const viaLabel = msg.sentVia === 'both' ? 'via mesh + logos · ' : 'via mesh · ';
+  // #243: a message carried over the BLE mesh — blue, mirroring the mesh badge.
+  const viaBle = msg.sentVia === 'ble';
   // #168: a bridged (relayed) message carries an envelope naming its ORIGINAL
   // sender — B (the relayer) signed/sent it, so its raw attribution is B. Unwrap
   // it: show the real origin + the real text, marked "via <bridge>" and NOT
@@ -270,6 +276,7 @@ function Bubble({
           own ? styles.bubbleOwn : styles.bubblePeer,
           msg.status === 'pending' && styles.bubblePending,
           viaMesh && (own ? styles.bubbleMeshOwn : styles.bubbleMeshPeer),
+          viaBle && (own ? styles.bubbleBleOwn : styles.bubbleBlePeer),
           failed && styles.bubbleFailed,
           image != null && styles.bubbleImage,
         ]}>
@@ -310,6 +317,7 @@ function Bubble({
       </Pressable>
       <View style={styles.timeRow}>
         {viaMesh && <Text style={styles.viaMesh}>{viaLabel}</Text>}
+        {viaBle && <Text style={styles.viaBle}>via BLE · </Text>}
         <Text style={[styles.time, failed && {color: colors.unread}]}>
           {msg.status === 'pending'
             ? 'sending…'
@@ -800,6 +808,8 @@ export function ChatScreen() {
   const sendColor =
     cs.sendColorKind === 'mesh'
       ? MESH_GREEN
+      : cs.sendColorKind === 'ble'
+      ? BLE_BLUE
       : cs.sendColorKind === 'accent'
       ? colors.accent
       : cs.sendColorKind === 'connecting'
@@ -1590,6 +1600,14 @@ const styles = StyleSheet.create({
     borderRightColor: MESH_GREEN,
     borderRightWidth: 2,
   },
+  // #243: a message that rode the BLE mesh. Own bubbles fill blue (the user's
+  // sent-over-Bluetooth cue); peer bubbles get the mesh-style blue edge + tint.
+  bubbleBleOwn: {backgroundColor: BLE_BLUE},
+  bubbleBlePeer: {
+    borderLeftColor: BLE_BLUE,
+    borderLeftWidth: 2,
+    backgroundColor: 'rgba(14,165,233,0.10)',
+  },
   systemLine: {
     ...type.caption,
     color: colors.textFaint,
@@ -1618,6 +1636,7 @@ const styles = StyleSheet.create({
   time: {...type.caption, color: colors.textFaint},
   // #167: tiny "via mesh" caption on the time line, in the mesh green.
   viaMesh: {...type.caption, color: MESH_GREEN},
+  viaBle: {...type.caption, color: BLE_BLUE},
   headerBtn: {
     minWidth: layout.minTouchTarget,
     minHeight: layout.minTouchTarget,

@@ -37,6 +37,21 @@ describe('deriveComposerState — matrix', () => {
     expect(s.canSendBase).toBe(false);
   });
 
+  it('BLE: node off but peer reachable over BLE → ble color, sendable', () => {
+    const s = deriveComposerState(
+      input({isGroup: false, nodeStatus: 'offline', bleReachable: true}),
+    );
+    expect(s.sendColorKind).toBe('ble');
+    expect(s.canSendBase).toBe(true);
+  });
+
+  it('BLE wins over Logos: node running + peer BLE-reachable → ble (matches routing)', () => {
+    const s = deriveComposerState(
+      input({isGroup: false, nodeStatus: 'running', bleReachable: true}),
+    );
+    expect(s.sendColorKind).toBe('ble');
+  });
+
   it('4: pure-Logos DEAD, creator → dead + canRevive (Restart footer)', () => {
     const s = deriveComposerState(input({liveness: 'dead', createdByMe: true}));
     expect(s.dead).toBe(true);
