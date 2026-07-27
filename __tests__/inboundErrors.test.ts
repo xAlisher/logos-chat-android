@@ -6,6 +6,7 @@ const FORWARD_SECRECY =
   'demls error: MLS error: The requested secret was deleted to preserve forward secrecy.';
 const DUPLICATE_WELCOME =
   'demls error: MLS error: A group with this [`GroupId`] already exists.';
+const OLD_GENERATION = 'generic: Generation is too old to be processed.';
 
 describe('isBenignInboundError', () => {
   it('suppresses our own message echoed back by the relay', () => {
@@ -19,6 +20,10 @@ describe('isBenignInboundError', () => {
 
   it('suppresses a duplicate welcome for a group we already have', () => {
     expect(isBenignInboundError(DUPLICATE_WELCOME)).toBe(true);
+  });
+
+  it('suppresses a replayed message past its ratchet generation (catch-up)', () => {
+    expect(isBenignInboundError(OLD_GENERATION)).toBe(true);
   });
 
   it('is case-insensitive', () => {

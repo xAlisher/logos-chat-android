@@ -30,6 +30,14 @@ const BENIGN: Array<{pattern: RegExp; why: string}> = [
     pattern: /group with this .*groupid.* already exists/i,
     why: 'duplicate welcome for a group we already have',
   },
+  {
+    // A replayed / very-late message whose ratchet generation is already past its
+    // key window — e.g. the #228 store catch-up replaying old messages. Forward
+    // secrecy + ordering working as designed; the old frame can't be decrypted and
+    // there is nothing for the user to do.
+    pattern: /generation is too old/i,
+    why: 'replayed/late message past its ratchet generation',
+  },
 ];
 
 /** True when this inbound error is routine and must NOT reach the user. */
