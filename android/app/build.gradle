@@ -82,8 +82,8 @@ android {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 21
-        versionName "0.7.9"
+        versionCode 24
+        versionName "0.7.12"
         ndk {
             // liblogoschat.so is built for arm64 only (emulators can't run the Nim node anyway)
             abiFilters "arm64-v8a"
@@ -142,5 +142,53 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
+    }
+}
+
+/**
+ * Guard against shipping a STALE JNI bridge. liblogoschat_bridge.so is built
+ * out-of-band by scripts/build-bridge.sh (NOT by gradle — RN New Arch owns the
+ * CMake pipeline). So editing logoschat_jni.c + adding an `external fun` in
+ * NodeBridge.kt WITHOUT re-running build-bridge.sh compiles + packages fine, then
+ * crashes at runtime with UnsatisfiedLinkError (this exact bug shipped in v0.7.9,
+ * #213). This task asserts every `external fun chat*` has its JNI symbol in the
+ * packaged .so and fails the build with a fix hint if not. Best-effort: if llvm-nm
+ * can't be located it warns instead of failing (never breaks an exotic host/CI).
+ */
+tasks.register("checkBridgeSymbols") {
+    def bridge = file("src/main/jniLibs/arm64-v8a/liblogoschat_bridge.so")
+    def kt = file("src/main/java/com/logoschat/NodeBridge.kt")
+    doLast {
+        if (!bridge.exists() || !kt.exists()) {
+            logger.warn("checkBridgeSymbols: bridge or NodeBridge.kt missing — skipping")
+            return
+        }
+        // Every native method the Kotlin side declares.
+        def declared = (kt.text =~ /external fun (\w+)/).collect { it[1] }.unique()
+        // Locate an nm that can read an ELF .so.
+        def host = org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? "darwin-x86_64" : "linux-x86_64"
+        def nm = new File("${android.sdkDirectory}/ndk/${rootProject.ext.ndkVersion}/toolchains/llvm/prebuilt/${host}/bin/llvm-nm")
+        if (!nm.exists()) {
+            logger.warn("checkBridgeSymbols: llvm-nm not found at ${nm} — skipping symbol check")
+            return
+        }
+        def proc = [nm.absolutePath, "-D", bridge.absolutePath].execute()
+        def symbols = proc.inputStream.text
+        proc.waitFor()
+        def missing = declared.findAll { !symbols.contains("Java_com_logoschat_NodeBridge_${it}") }
+        if (!missing.isEmpty()) {
+            throw new GradleException(
+                "STALE JNI bridge: liblogoschat_bridge.so is missing symbols for external fun(s): ${missing}.\n" +
+                "  Fix: run  bash scripts/build-bridge.sh  then rebuild the APK.\n" +
+                "  (The bridge is built out-of-band; editing logoschat_jni.c is not enough.)")
+        }
+        logger.lifecycle("checkBridgeSymbols: OK — all ${declared.size()} external funs present in the bridge")
+    }
+}
+
+// Run the guard before native libs are merged into any release APK/bundle.
+tasks.configureEach { t ->
+    if (t.name == "mergeReleaseNativeLibs") {
+        t.dependsOn("checkBridgeSymbols")
     }
 }
