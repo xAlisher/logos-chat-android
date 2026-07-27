@@ -31,7 +31,7 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {ActionButton} from '../components/ActionButton';
-import {HexAvatar, avatarSeed, convoKind} from '../components/HexAvatar';
+import {HexAvatar, avatarSeed, convoKind, type AvatarKind} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SystemLine} from '../components/SystemLine';
 import {TrashIcon} from '../components/TrashIcon';
@@ -184,6 +184,7 @@ function resolveAttribution(
 function Bubble({
   msg,
   attribution,
+  avatarKind,
   onRetry,
   onLongPress,
   onOpenImage,
@@ -191,6 +192,9 @@ function Bubble({
 }: {
   msg: Message;
   attribution: Attribution | null;
+  // #251: the sender identicon's color follows the conversation's transport
+  // (mesh green / BLE blue / Logos orange), not a hardcoded contact orange.
+  avatarKind: AvatarKind;
   onRetry: () => void;
   onLongPress: (pageY: number) => void;
   onOpenImage: (path: string) => void;
@@ -238,7 +242,7 @@ function Bubble({
           A tiny identicon (#118) makes senders distinct in a busy group thread. */}
       {effAttr != null && (
         <View style={styles.attrRow} testID={`attr-${effAttr.address}`}>
-          <HexAvatar seed={effAttr.address} kind="contact" size={16} />
+          <HexAvatar seed={effAttr.address} kind={avatarKind} size={16} />
           {/* #122: primary line white; the hex is the gray secondary when a
               label exists, and the white primary itself when there's no label. */}
           {effAttr.label != null ? (
@@ -1187,6 +1191,9 @@ export function ChatScreen() {
             <Bubble
               msg={m}
               attribution={attribution}
+              avatarKind={
+                convo ? convoKind({transport: convo.transport, isGroup: false}) : 'contact'
+              }
               onRetry={() => retry(convoPk, m.msgPk)}
               onOpenImage={path => setFullscreen(path)}
               onOpenLocation={loc =>
@@ -1483,6 +1490,9 @@ export function ChatScreen() {
         visible={labelTarget != null}
         label={labelTarget?.label ?? null}
         address={labelTarget?.address ?? null}
+        avatarKind={
+          convo ? convoKind({transport: convo.transport, isGroup: false}) : 'contact'
+        }
         verified={labelTarget?.verified ?? false}
         onClose={() => setLabelTarget(null)}
         onSave={(newLabel, verified) =>

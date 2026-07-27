@@ -15,12 +15,13 @@ import {
   StyleSheet,
 } from 'react-native';
 import {colors, type, spacing, radii, layout} from '../theme';
-import {HexAvatar} from './HexAvatar';
+import {HexAvatar, type AvatarKind} from './HexAvatar';
 
 export function LabelModal({
   visible,
   label,
   address,
+  avatarKind = 'contact',
   verified = false,
   onClose,
   onSave,
@@ -29,6 +30,8 @@ export function LabelModal({
   label: string | null;
   /** The contact being labelled — shows their identicon so it's clear who (#118). */
   address?: string | null;
+  /** #251: identicon color by transport (mesh green / BLE blue / Logos orange). */
+  avatarKind?: AvatarKind;
   /** #153: current verified state of this contact. */
   verified?: boolean;
   onClose: () => void;
@@ -62,7 +65,7 @@ export function LabelModal({
         <Pressable style={styles.card} onPress={() => {}} testID="label-modal">
           <View style={styles.headingRow}>
             {address != null && address.length > 0 && (
-              <HexAvatar seed={address} kind="contact" size={40} />
+              <HexAvatar seed={address} kind={avatarKind} size={40} />
             )}
             <Text style={styles.heading}>Label</Text>
           </View>
