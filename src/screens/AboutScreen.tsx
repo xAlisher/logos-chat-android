@@ -19,8 +19,8 @@ import {useNodeStore} from '../stores/nodeStore';
 import LogosChat, {shortAddress} from '../native/LogosChat';
 
 // Kept in sync with android/app/build.gradle (versionName / versionCode).
-const APP_VERSION = '0.4.1';
-const APP_BUILD = 9;
+const APP_VERSION = '0.7.19';
+const APP_BUILD = 31;
 const REPO_URL = 'https://github.com/xAlisher/logos-chat-android';
 
 export function AboutScreen() {
@@ -34,7 +34,7 @@ export function AboutScreen() {
     setExporting(true);
     try {
       await LogosChat.exportChatData();
-      ToastAndroid.show('Chat data exported', ToastAndroid.SHORT);
+      ToastAndroid.show('Data exported', ToastAndroid.SHORT);
     } catch {
       ToastAndroid.show('Export failed', ToastAndroid.SHORT);
     } finally {
@@ -47,7 +47,7 @@ export function AboutScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.hero}>
           <Logo size={56} color={colors.accent} strokeWidth={2} />
-          <Text style={styles.name}>Chat</Text>
+          <Text style={styles.name}>peers</Text>
           <Text style={styles.version}>
             v{APP_VERSION} ({APP_BUILD})
           </Text>
