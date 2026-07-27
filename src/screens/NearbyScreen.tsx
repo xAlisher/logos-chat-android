@@ -3,7 +3,7 @@
 // (#214) to a known contact. Hop pages (hop-1 = directly heard; hop-2/3 arrive
 // once the flood relay #142 lands) × filter (all / contacts / verified).
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Text, View, Pressable, FlatList, StyleSheet} from 'react-native';
+import {Text, View, Pressable, FlatList, StyleSheet, Modal} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
@@ -20,19 +20,39 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Filter = 'all' | 'contacts' | 'verified';
+type Row = {
+  address: string;
+  label: string | null;
+  verified: boolean;
+  /** 'contact' = a known contact heard nearby; 'new' = a #239 BLE-discovered peer
+   *  (card imported, UNVERIFIED) we can bootstrap a chat with. */
+  kind: 'contact' | 'new';
+};
 
 export function NearbyScreen() {
   const navigation = useNavigation<Nav>();
   const status = useBleStore(s => s.status);
   const peerCount = useBleStore(s => s.peerCount);
   const nearbyContacts = useBleStore(s => s.nearbyContacts);
+  const discovered = useBleStore(s => s.discovered);
   const engage = useBleStore(s => s.engage);
+  const announceCard = useBleStore(s => s.announceCard);
+  const startBleChat = useBleStore(s => s.startBleChat);
   const conversations = useChatStore(s => s.conversations);
   const members = useChatStore(s => s.members);
   const meshMap = useChatStore(s => s.meshMap);
   const startConversation = useChatStore(s => s.startConversation);
 
   const [filter, setFilter] = useState<Filter>('all');
+  // #239: the peer awaiting the identity-card trust gate before a chat is created.
+  const [pendingTrust, setPendingTrust] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+
+  // #239: announce our card when the page is shown (and whenever BLE turns on),
+  // so nearby peers can add us offline.
+  useEffect(() => {
+    if (status === 'on') announceCard();
+  }, [status, announceCard]);
 
   // Resolve-or-create the 1:1 with this peer and open it. A discovered peer has
   // a real Logos address (resolved from its BLE identity), so tapping opens a
@@ -80,13 +100,54 @@ export function NearbyScreen() {
         .filter((c): c is KnownContact => c != null),
     [nearbyContacts, byAddr],
   );
-  const rows = useMemo(
-    () => (filter === 'verified' ? resolved.filter(c => c.verified) : resolved),
-    [resolved, filter],
+  // #239: peers whose card we imported over BLE but who aren't saved contacts yet.
+  const newPeers: Row[] = useMemo(
+    () =>
+      discovered
+        .filter(d => !byAddr.has(d.address.toLowerCase()))
+        .map(d => ({address: d.address, label: d.name, verified: false, kind: 'new' as const})),
+    [discovered, byAddr],
   );
-  // "All" also accounts for heard devices we couldn't identify (anonymous / not a
-  // contact) — honest: we know they're there, not who they are.
-  const anon = Math.max(0, peerCount - resolved.length);
+  const allRows: Row[] = useMemo(
+    () => [
+      ...resolved.map(c => ({
+        address: c.address,
+        label: c.label,
+        verified: c.verified,
+        kind: 'contact' as const,
+      })),
+      ...newPeers,
+    ],
+    [resolved, newPeers],
+  );
+  const rows = useMemo(
+    () => (filter === 'verified' ? allRows.filter(r => r.verified) : allRows),
+    [allRows, filter],
+  );
+  // "All" also accounts for heard devices we couldn't identify (anonymous / no card
+  // yet) — honest: we know they're there, not who they are.
+  const anon = Math.max(0, peerCount - resolved.length - newPeers.length);
+
+  // #239: create the MLS 1:1 over BLE for the peer the user just trusted.
+  const confirmStartChat = useCallback(
+    async (address: string) => {
+      setStarting(true);
+      try {
+        const convoPk = await startBleChat(address);
+        setPendingTrust(null);
+        navigation.navigate('Chat', {
+          convoPk,
+          convoName: shortAddress(address),
+          isGroup: false,
+        });
+      } catch (e: any) {
+        useNodeStore.setState({error: `could not start chat: ${e?.message ?? e}`});
+      } finally {
+        setStarting(false);
+      }
+    },
+    [startBleChat, navigation],
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -143,7 +204,11 @@ export function NearbyScreen() {
           renderItem={({item}) => (
             <Pressable
               style={styles.row}
-              onPress={() => openPeer(item.address, item.label)}
+              onPress={() =>
+                item.kind === 'new'
+                  ? setPendingTrust(item.address)
+                  : openPeer(item.address, item.label)
+              }
               testID={`nearby-${item.address}`}>
               <HexAvatar seed={item.address} kind="contact" size={32} />
               <View style={styles.rowText}>
@@ -153,25 +218,69 @@ export function NearbyScreen() {
                   </Text>
                   {item.verified && <VerifiedBadge size={14} />}
                 </View>
-                <Text style={styles.hex} numberOfLines={1}>
-                  {shortAddress(item.address)} · nearby
+                <Text
+                  style={[styles.hex, item.kind === 'new' && styles.hexNew]}
+                  numberOfLines={1}>
+                  {shortAddress(item.address)}
+                  {item.kind === 'new' ? ' · new — tap to add' : ' · nearby'}
                 </Text>
               </View>
-              {/* #231: hop distance, right-aligned (like the group member count).
-                  Directly-heard peers are 1 hop; multi-hop (#142) will fill more. */}
               <View style={styles.hopBadge}>
-                <View style={styles.dot} />
+                <View style={[styles.dot, item.kind === 'new' && styles.dotNew]} />
                 <Text style={styles.hopText}>1 hop</Text>
               </View>
             </Pressable>
           )}
         />
       )}
+
+      {/* #239: identity-card TRUST GATE. TOFU — the card arrived over BLE and could
+          be an impersonator, so we show the raw identity + an explicit warning and
+          require a confirm before the (unverified) conversation is created. */}
+      <Modal
+        visible={pendingTrust != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPendingTrust(null)}>
+        <Pressable style={styles.scrim} onPress={() => !starting && setPendingTrust(null)}>
+          <Pressable style={styles.card} onPress={() => {}}>
+            <HexAvatar seed={pendingTrust ?? 'x'} kind="contact" size={56} />
+            <Text style={styles.cardTitle}>New Bluetooth contact</Text>
+            <Text style={styles.cardAddr} selectable>
+              {pendingTrust}
+            </Text>
+            <View style={styles.warnBox}>
+              <Text style={styles.warnText}>
+                ⚠ This identity was received over Bluetooth and could be an
+                impersonator. Verify it out of band (compare this code in person)
+                before sharing anything sensitive.
+              </Text>
+            </View>
+            <View style={styles.cardBtns}>
+              <Pressable
+                style={[styles.cardBtn, styles.cardBtnGhost]}
+                disabled={starting}
+                onPress={() => setPendingTrust(null)}>
+                <Text style={[type.label, {color: colors.textDim}]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.cardBtn, styles.cardBtnAccent]}
+                disabled={starting}
+                onPress={() => pendingTrust && confirmStartChat(pendingTrust)}>
+                <Text style={[type.label, {color: colors.onAccent}]}>
+                  {starting ? 'Starting…' : 'Start chat'}
+                </Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
 
 const GREEN = '#22C55E';
+const AMBER = '#F59E0B';
 const styles = StyleSheet.create({
   safe: {flex: 1, backgroundColor: colors.canvas},
   encNote: {...type.caption, color: colors.textFaint, paddingHorizontal: spacing.lg, paddingBottom: spacing.xs},
@@ -202,5 +311,28 @@ const styles = StyleSheet.create({
   name: {...type.title, color: colors.text, lineHeight: 18, flexShrink: 1},
   hex: {...type.label, color: GREEN, lineHeight: 14},
   dot: {width: 10, height: 10, borderRadius: 5, backgroundColor: GREEN},
+  dotNew: {backgroundColor: AMBER},
+  hexNew: {color: AMBER},
   anon: {...type.caption, color: colors.textFaint, padding: spacing.lg, textAlign: 'center'},
+  // #239 trust gate
+  scrim: {flex: 1, backgroundColor: '#000000B0', alignItems: 'center', justifyContent: 'center', padding: spacing.xl},
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: colors.panel,
+    borderRadius: radii.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    padding: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  cardTitle: {...type.title, color: colors.text},
+  cardAddr: {...type.label, color: colors.textDim, fontFamily: 'monospace', textAlign: 'center'},
+  warnBox: {backgroundColor: '#F59E0B22', borderColor: AMBER, borderWidth: 1, borderRadius: radii.card, padding: spacing.md},
+  warnText: {...type.caption, color: colors.text},
+  cardBtns: {flexDirection: 'row', gap: spacing.md, alignSelf: 'stretch', marginTop: spacing.xs},
+  cardBtn: {flex: 1, alignItems: 'center', paddingVertical: spacing.md, borderRadius: radii.card},
+  cardBtnGhost: {borderColor: colors.border, borderWidth: 1},
+  cardBtnAccent: {backgroundColor: colors.accent},
 });

@@ -122,6 +122,19 @@ interface LogosChatNative {
    */
   ingestCiphertext(dataB64: string): Promise<void>;
   /**
+   * #239: our contact card JSON — everything a peer needs to add us to an MLS
+   * conversation offline over BLE ({account,device,keyPackage,bundlePayload,bundleSig}).
+   */
+  exportContact(): Promise<string>;
+  /** #239: verify + seed a peer's contact card (JSON received over BLE). */
+  importContact(cardJson: string): Promise<void>;
+  /**
+   * #239: create a 1:1 with `peerAccount` OFFLINE from a seeded card (no registry),
+   * returning '{"convoPk":n,"welcome":["<base64>"…]}' — flood the welcome over BLE
+   * and the peer joins by ingesting it.
+   */
+  createConversationOffline(peerAccount: string): Promise<string>;
+  /**
    * #197: send an image (1:1 OR group). Persists the base64 JPEG locally, records
    * an own `img1v:` bubble, and transmits one `img1:` message. `base64` must be a
    * downscaled JPEG small enough for a single message. Resolves '{"msgPk":n,"status":…}'.

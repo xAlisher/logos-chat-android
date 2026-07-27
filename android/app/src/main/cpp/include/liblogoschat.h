@@ -137,6 +137,14 @@ int logoschat_ingest_ciphertext(void *handle, const unsigned char *data, size_t 
 // node down. MLS stays alive for off-node (BLE) send/receive. 0 ok, -1 error.
 int logoschat_set_delivery_active(void *handle, int active);
 
+// #239: offline (BLE) contact bootstrap. Caller frees returned strings.
+//  export -> JSON contact card {account,device,keyPackage,bundlePayload,bundleSig}.
+//  import -> verify + seed a peer's card (JSON). 0 ok, -1 error.
+//  create offline -> {convoId, welcome:[<base64 wire bytes>]} using seeded data.
+char *logoschat_export_contact(void *handle);
+int logoschat_import_contact(void *handle, const char *card_json);
+char *logoschat_create_conversation_offline(void *handle, const char *peer_account);
+
 // Register the event callback: spawns a pump that drains the event stream and
 // invokes cb(event_type, json, user_data) per event. Call once per handle.
 // 0 on success, -1 if already registered / bad handle.

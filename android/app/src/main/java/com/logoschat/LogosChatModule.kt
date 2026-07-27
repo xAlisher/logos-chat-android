@@ -278,6 +278,77 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #239: our contact card JSON to hand a peer over BLE (add-me-offline). */
+  @ReactMethod
+  fun exportContact(promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("export_contact", "node not started")
+        return@execute
+      }
+      val json = NodeBridge.chatExportContact(c)
+      if (json == null) promise.reject("export_contact", NodeBridge.chatLastError())
+      else promise.resolve(json)
+    }
+  }
+
+  /** #239: verify + seed a peer's contact card (JSON received over BLE). */
+  @ReactMethod
+  fun importContact(cardJson: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("import_contact", "node not started")
+        return@execute
+      }
+      val rc = NodeBridge.chatImportContact(c, cardJson)
+      if (rc == 0) promise.resolve(null) else promise.reject("import_contact", NodeBridge.chatLastError())
+    }
+  }
+
+  /**
+   * #239: create a 1:1 with `peerAccount` OFFLINE using data seeded via
+   * importContact (no registry), and hand back the welcome to flood over BLE.
+   * Creates/binds the local conversation row like createConversation. Resolves
+   * '{"convoPk":n,"welcome":["<base64>"…]}'. The peer joins by ingesting the welcome.
+   */
+  @ReactMethod
+  fun createConversationOffline(peerAccount: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("create_offline", "node not started")
+        return@execute
+      }
+      val addr = peerAccount.trim().lowercase()
+      if (addr.equals(NodeRuntime.address ?: "", ignoreCase = true)) {
+        promise.reject("self_address", "that is your own address")
+        return@execute
+      }
+      try {
+        val convoPk = ChatRepo.ensureConversationForAddress(addr, null)
+        val d = ChatRepo.requireDb()
+        val json = NodeBridge.chatCreateConversationOffline(c, addr)
+        if (json == null) {
+          if (d.listMessagesJson(convoPk, 0, 1) == "[]") d.deleteConversation(convoPk)
+          promise.reject("create_offline", NodeBridge.chatLastError())
+          return@execute
+        }
+        // {"convoId":"…","welcome":[…]} — bind the lib id, splice convoPk in.
+        val obj = org.json.JSONObject(json)
+        d.setLibConvoId(convoPk, obj.getString("convoId"))
+        promise.resolve(
+            org.json.JSONObject()
+                .put("convoPk", convoPk)
+                .put("welcome", obj.getJSONArray("welcome"))
+                .toString())
+      } catch (t: Throwable) {
+        promise.reject("create_offline", t)
+      }
+    }
+  }
+
   /**
    * The lib does not rehydrate conversation state across a node restart, so a
    * conversation bound in an EARLIER session fails with "convo <id> was not

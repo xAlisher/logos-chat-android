@@ -67,6 +67,16 @@ object NodeBridge {
    *  down — the MLS engine stays alive for BLE. 0 ok, -1 error. */
   external fun chatSetDeliveryActive(handle: Long, active: Boolean): Int
 
+  /** #239: our contact card JSON for a peer to add us over BLE, or null. */
+  external fun chatExportContact(handle: Long): String?
+
+  /** #239: verify + seed a peer's contact card (JSON from their export). 0 | -1. */
+  external fun chatImportContact(handle: Long, cardJson: String): Int
+
+  /** #239: create a 1:1 with peerAccount from seeded contact data, returning
+   *  '{"convoId":…,"welcome":[<base64>…]}' to carry the welcome over BLE, or null. */
+  external fun chatCreateConversationOffline(handle: Long, peerAccount: String): String?
+
   /** This client's account address (hex64 peers paste to reach it), or null. */
   external fun chatGetAddress(handle: Long): String?
 

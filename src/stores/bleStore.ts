@@ -23,12 +23,23 @@ import {
 } from '../native/bleFlood';
 import {fragment, Reassembler} from '../native/bleFrag';
 
+/** #239: a peer whose contact card we've received (and verified/imported) over
+ *  BLE — not yet a saved contact until the user starts a chat. UNTRUSTED until
+ *  verified out of band. */
+export interface DiscoveredPeer {
+  address: string;
+  /** installation/display name from the card, if any. */
+  name: string | null;
+}
+
 interface BleState {
   status: BleStatus;
   /** Nearby Logos-mesh peers seen while engaged; 0 when off. */
   peerCount: number;
   /** #214: addresses of KNOWN CONTACTS currently heard nearby (resolved from ids). */
   nearbyContacts: string[];
+  /** #239: peers whose card arrived over BLE this session (bootstrappable, UNVERIFIED). */
+  discovered: DiscoveredPeer[];
   /** Device BLE capability, hydrated by {@link refreshAvailability}. */
   availability: BleAvailability;
   error: string | null;
@@ -42,6 +53,12 @@ interface BleState {
   /** #213: flood a base64 MLS ciphertext (from LogosChat.encryptForConvo) over the
    *  BLE mesh — the real chat-over-BLE send path. Fragmented like sendBleTest. */
   sendCiphertext: (dataB64: string) => Promise<void>;
+  /** #239: flood our own contact card so nearby peers can add us offline (BLE
+   *  cold-start). Called on engage + when the Discovery page is shown. */
+  announceCard: () => Promise<void>;
+  /** #239: bootstrap a 1:1 with a BLE-discovered peer — create the MLS convo
+   *  offline (from its imported card) and flood the welcome. Resolves convoPk. */
+  startBleChat: (address: string) => Promise<number>;
   /** #142: last message reassembled from the BLE flood (transport proof surface). */
   lastBleRx: string | null;
   clearError: () => void;
@@ -100,10 +117,39 @@ const reassembler = new Reassembler();
 let floodNonce = 0;
 const CHUNK = 120; // fits one GATT write at MTU 247 after flood + frag headers
 
+// #239: every BLE app payload is a 1-char TYPE + body, reassembled as a string:
+//   'M' + <base64 MLS wire bytes>  — a message ciphertext OR a welcome → ingest
+//   'K' + <contact card JSON>      — a peer's card → import + surface as discovered
+const TAG_MLS = 'M';
+const TAG_CARD = 'K';
+
+/** Fragment + flood a tagged string over the BLE mesh (the #213 transport). */
+async function floodString(str: string, onErr: (e: string) => void): Promise<void> {
+  const addr = useNodeStore.getState().myAddress ?? 'me';
+  const fragMsgId = newMsgId(addr, floodNonce++);
+  const frags = fragment(fragMsgId, str, CHUNK);
+  for (const f of frags) {
+    const pkt = encodePacket({
+      msgId: newMsgId(addr, floodNonce++),
+      hopCount: 0,
+      ttl: 3,
+      kind: 'msg',
+      senderId: addr,
+      payload: f,
+    });
+    try {
+      await BleMesh.sendMeshPacket(pkt);
+    } catch (e: any) {
+      onErr(String(e?.message ?? e));
+    }
+  }
+}
+
 export const useBleStore = create<BleState>((set, get) => ({
   status: 'off',
   peerCount: 0,
   nearbyContacts: [],
+  discovered: [],
   availability: {supported: false, advertiseSupported: false, adapterOn: false},
   error: null,
   lastBleRx: null,
@@ -122,6 +168,9 @@ export const useBleStore = create<BleState>((set, get) => ({
       useSettingsStore.getState().setBleConfigured(true);
       // #214: re-derive the rotating id each minute; re-advertise on epoch rollover
       // (or a flags change, e.g. node came online).
+      // #239: announce our contact card shortly after engaging (once the flood
+      // links settle) so nearby peers can add us offline.
+      setTimeout(() => get().announceCard(), 4_000);
       if (rotateTimer != null) clearInterval(rotateTimer);
       rotateTimer = setInterval(() => {
         if (get().status !== 'on') return;
@@ -130,6 +179,8 @@ export const useBleStore = create<BleState>((set, get) => ({
           lastAdvId = next;
           BleMesh.updateAdvertiseId(next, currentFlags()).catch(() => {});
         }
+        // #239: re-announce our card each minute so late-arriving peers hear it.
+        get().announceCard();
       }, 60_000);
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
@@ -143,7 +194,7 @@ export const useBleStore = create<BleState>((set, get) => ({
         rotateTimer = null;
       }
       await BleMesh.disengage();
-      set({peerCount: 0, nearbyContacts: []});
+      set({peerCount: 0, nearbyContacts: [], discovered: []});
     } catch (e: any) {
       set({error: String(e?.message ?? e)});
     }
@@ -192,27 +243,29 @@ export const useBleStore = create<BleState>((set, get) => ({
   },
 
   sendCiphertext: async (dataB64: string) => {
-    // #213: same fragment+flood as sendBleTest, but the payload is a real MLS
-    // ciphertext (base64) — the receiver reassembles it and hands it to
-    // LogosChat.ingestCiphertext (see the inbound handler below).
-    const addr = useNodeStore.getState().myAddress ?? 'me';
-    const fragMsgId = newMsgId(addr, floodNonce++);
-    const frags = fragment(fragMsgId, dataB64, CHUNK);
-    for (const f of frags) {
-      const pkt = encodePacket({
-        msgId: newMsgId(addr, floodNonce++),
-        hopCount: 0,
-        ttl: 3,
-        kind: 'msg',
-        senderId: addr,
-        payload: f,
-      });
-      try {
-        await BleMesh.sendMeshPacket(pkt);
-      } catch (e: any) {
-        set({error: String(e?.message ?? e)});
-      }
+    // #213: a real MLS ciphertext (base64), tagged 'M'; the peer reassembles it
+    // and hands it to LogosChat.ingestCiphertext (see the inbound handler below).
+    await floodString(TAG_MLS + dataB64, e => set({error: e}));
+  },
+
+  announceCard: async () => {
+    // #239: flood our contact card so nearby peers can add us offline. Best-effort.
+    try {
+      const card = await LogosChat.exportContact();
+      await floodString(TAG_CARD + card, e => set({error: e}));
+    } catch {
+      // no identity to export yet (node not running) — ignore.
     }
+  },
+
+  startBleChat: async (address: string) => {
+    // #239: create the MLS 1:1 offline from the peer's imported card, then flood
+    // the welcome so the peer joins. Returns the local convoPk.
+    const res = JSON.parse(await LogosChat.createConversationOffline(address));
+    for (const w of res.welcome as string[]) {
+      await floodString(TAG_MLS + w, e => set({error: e}));
+    }
+    return res.convoPk as number;
   },
 
   clearError: () => set({error: null}),
@@ -243,14 +296,40 @@ addBleListener(e => {
     if (pkt.kind === 'msg') {
       const done = reassembler.add(pkt.payload);
       if (done.done && done.dataB64 != null) {
-        console.log('[BLE-RX msg]', pkt.senderId, '→', done.dataB64);
-        useBleStore.setState({lastBleRx: done.dataB64});
-        // #213: the reassembled payload is a base64 MLS ciphertext — hand it to
-        // the lib's off-node ingest (#235) so it decrypts + surfaces in the
-        // timeline via db_changed, exactly like a Logos message. Best-effort: a
-        // stray/duplicate frame just yields a benign inbound error.
-        LogosChat.ingestCiphertext(done.dataB64).catch(() => {});
+        const payload = done.dataB64;
+        const tag = payload.charAt(0);
+        const body = payload.slice(1);
+        useBleStore.setState({lastBleRx: payload});
+        if (tag === TAG_MLS) {
+          // #213/#235: base64 MLS wire bytes (a message ciphertext OR a #239
+          // welcome) — hand to the lib's off-node ingest; it decrypts / joins and
+          // surfaces via db_changed exactly like a Logos message. Best-effort.
+          LogosChat.ingestCiphertext(body).catch(() => {});
+        } else if (tag === TAG_CARD) {
+          // #239: a peer's contact card — verify+import and surface it as a
+          // discoverable (UNVERIFIED) peer the user can start a chat with.
+          handleCard(body);
+        }
       }
     }
   }
 });
+
+/** #239: verify + import a peer's contact card, then list it as discovered. */
+async function handleCard(cardJson: string): Promise<void> {
+  try {
+    const card = JSON.parse(cardJson);
+    const address = String(card.account ?? '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(address)) return;
+    if (address === (useNodeStore.getState().myAddress ?? '').toLowerCase()) return;
+    // verify_bundle runs native-side; a spoofed/malformed card rejects here.
+    await LogosChat.importContact(cardJson);
+    useBleStore.setState(s =>
+      s.discovered.some(d => d.address === address)
+        ? s
+        : {discovered: [...s.discovered, {address, name: card.name ?? null}]},
+    );
+  } catch {
+    // malformed or unverifiable card — ignore.
+  }
+}

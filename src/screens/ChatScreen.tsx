@@ -1055,6 +1055,20 @@ export function ChatScreen() {
     <KeyboardAvoidingView
       style={styles.root}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* #239: persistent trust strip for an UNVERIFIED 1:1 (e.g. a contact
+          bootstrapped over BLE). Stays until the user verifies out of band, so a
+          single tap-through of the identity card doesn't silently grant trust. */}
+      {!isGroup && convo != null && !convo.verified && (
+        <View style={styles.unverifiedStrip}>
+          <Text style={styles.unverifiedText} numberOfLines={2}>
+            ⚠ Unverified — this identity isn’t confirmed. Verify out of band before
+            sharing anything sensitive.
+          </Text>
+          <Pressable onPress={() => setVerified(convoPk, true)} hitSlop={8}>
+            <Text style={styles.unverifiedVerify}>Verify</Text>
+          </Pressable>
+        </View>
+      )}
       {/* #168 (Phase 2b): mesh-mirror banner. On a Logos group with a radio
           connected: either the group is already on its MeshCore mirror, or it can
           be switched. The "N/M mapped" is tappable → Group info (mapping lives
@@ -1513,6 +1527,19 @@ export function ChatScreen() {
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.canvas},
+  // #239 unverified trust strip
+  unverifiedStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: '#F59E0B22',
+    borderBottomColor: '#F59E0B',
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  unverifiedText: {...type.caption, color: colors.text, flex: 1},
+  unverifiedVerify: {...type.label, color: '#F59E0B'},
   list: {flex: 1},
   listContent: {padding: spacing.lg, gap: spacing.sm},
   listContentEmpty: {flexGrow: 1},

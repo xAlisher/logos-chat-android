@@ -247,6 +247,35 @@ Java_com_logoschat_NodeBridge_chatSetDeliveryActive(JNIEnv *env, jobject thiz, j
   return logoschat_set_delivery_active((void *)handle, active ? 1 : 0);
 }
 
+// #239: our contact card JSON for a peer to add us over BLE.
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatExportContact(JNIEnv *env, jobject thiz, jlong handle) {
+  (void)thiz;
+  return take_cstr(env, logoschat_export_contact((void *)handle));
+}
+
+// #239: verify + seed a peer's contact card (JSON received over BLE). 0 | -1.
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatImportContact(JNIEnv *env, jobject thiz, jlong handle,
+                                                jstring cardJson) {
+  (void)thiz;
+  const char *card = (*env)->GetStringUTFChars(env, cardJson, 0);
+  int rc = logoschat_import_contact((void *)handle, card);
+  (*env)->ReleaseStringUTFChars(env, cardJson, card);
+  return rc;
+}
+
+// #239: create a 1:1 offline from seeded data -> {convoId, welcome:[b64]}.
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatCreateConversationOffline(JNIEnv *env, jobject thiz,
+                                                            jlong handle, jstring peerAccount) {
+  (void)thiz;
+  const char *peer = (*env)->GetStringUTFChars(env, peerAccount, 0);
+  char *r = logoschat_create_conversation_offline((void *)handle, peer);
+  (*env)->ReleaseStringUTFChars(env, peerAccount, peer);
+  return take_cstr(env, r);
+}
+
 // #163: chatListConversations removed — dead binding (app reads ChatDb, never
 // the lib for the conversation list).
 
