@@ -1,5 +1,8 @@
 <resources>
     <!-- Theme canvas (docs/theme.md §1) — used for the black system bars (#54). -->
     <color name="canvas">#0A0A0A</color>
-    <color name="ic_launcher_background">#161616</color>
+    <!-- The launcher icon is a pixel identicon (HexAvatar engine, seeded from an
+         identity address) on the identicon ground (#0A0A0A) so the logo reads as a
+         real identicon. Per-identity dynamic version → #247. -->
+    <color name="ic_launcher_background">#0A0A0A</color>
 </resources>
