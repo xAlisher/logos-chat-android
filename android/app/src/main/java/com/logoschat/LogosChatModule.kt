@@ -327,7 +327,9 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         return@execute
       }
       try {
-        val convoPk = ChatRepo.ensureConversationForAddress(addr, null)
+        // #245: bootstrapped over BLE mesh → classify as a Bluetooth chat, even
+        // though the underlying conversation is a Logos MLS convo.
+        val convoPk = ChatRepo.ensureConversationForAddress(addr, null, transport = "ble")
         val d = ChatRepo.requireDb()
         val json = NodeBridge.chatCreateConversationOffline(c, addr)
         if (json == null) {

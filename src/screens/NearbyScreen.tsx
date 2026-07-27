@@ -191,7 +191,7 @@ export function NearbyScreen() {
             <Text style={styles.emptyText}>
               {filter === 'verified'
                 ? 'No verified contacts nearby.'
-                : 'No contacts identified nearby yet.'}
+                : 'No one identified nearby yet.'}
             </Text>
           }
           ListFooterComponent={
@@ -298,7 +298,14 @@ const styles = StyleSheet.create({
   chipText: {...type.label, color: colors.textDim},
   chipTextActive: {color: colors.onAccent},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, padding: spacing.xl},
-  emptyText: {...type.body, color: colors.textDim, textAlign: 'center'},
+  emptyText: {
+    ...type.body,
+    color: colors.textDim,
+    textAlign: 'center',
+    alignSelf: 'center',
+    maxWidth: 260,
+    paddingVertical: spacing.xl,
+  },
   engageBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,

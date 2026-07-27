@@ -62,6 +62,10 @@ function ConversationRow({
   onPress: () => void;
   onLongPress: (pageY: number) => void;
 }) {
+  // #245: a conversation bootstrapped over BLE mesh is marked with a faded blue
+  // left line + a "via BLE mesh" caption so it reads as a Bluetooth chat in the
+  // mixed All view (its home section is Bluetooth mesh / DMs).
+  const isBle = convo.transport === 'ble';
   return (
     <Pressable
       style={styles.row}
@@ -69,6 +73,7 @@ function ConversationRow({
       onLongPress={e => onLongPress(e.nativeEvent.pageY)}
       delayLongPress={300}
       testID={`convo-${convo.convoPk}`}>
+      {isBle && <View style={styles.bleBar} />}
       <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={32} />
       <View style={styles.rowBody}>
         <View style={styles.titleRow}>
@@ -86,6 +91,7 @@ function ConversationRow({
               <Text style={styles.groupCount}>{convo.memberCount}</Text>
             </View>
           )}
+          {isBle && <Text style={styles.bleTag}>via BLE mesh</Text>}
         </View>
         {/* #155/#159: last message on the left, timestamp bottom-right on the
             same line. #160: when the newest thread event is a system note
@@ -113,6 +119,7 @@ const VIEW_TITLE: Record<MenuView, string> = {
   groups: 'Groups',
   'mesh-channels': 'Channels',
   'mesh-dms': 'Mesh DMs',
+  'ble-dms': 'Bluetooth DMs',
 };
 
 export function ConversationsScreen() {
@@ -134,8 +141,10 @@ export function ConversationsScreen() {
   const [rowMenu, setRowMenu] = useState<Conversation | null>(null);
   const [rowMenuY, setRowMenuY] = useState(0);
   const all = sortedConversations(conversations);
-  // #167 (docs/mesh-transport.md): transport-grouped filter. Logos vs MeshCore ×
-  // group/1:1. `all` spans every transport.
+  // #167/#245 (docs/mesh-transport.md): transport-grouped filter, classified by
+  // the conversation's bootstrap origin. Logos (node) and BLE both use MLS, so
+  // `chats`/`groups` require transport==='logos' — which already excludes 'ble'.
+  // `all` spans every transport.
   const list =
     view === 'chats'
       ? all.filter(c => c.transport === 'logos' && !c.isGroup)
@@ -145,6 +154,8 @@ export function ConversationsScreen() {
       ? all.filter(c => c.transport === 'mesh' && c.isGroup)
       : view === 'mesh-dms'
       ? all.filter(c => c.transport === 'mesh' && !c.isGroup)
+      : view === 'ble-dms'
+      ? all.filter(c => c.transport === 'ble')
       : all;
 
   const onDeleteConvo = useCallback(
@@ -254,6 +265,8 @@ export function ConversationsScreen() {
               ? 'no mesh channels yet — join one from the MeshCore page'
               : view === 'mesh-dms'
               ? 'no mesh DMs yet — start one from the MeshCore page'
+              : view === 'ble-dms'
+              ? 'no Bluetooth chats yet — meet a nearby peer from the Discovery page'
               : 'no conversations — tap the + button to add a peer by address'}
           </Text>
         </View>
@@ -373,7 +386,23 @@ const styles = StyleSheet.create({
   // #155: gray group glyph + participant count, pushed to the title row's right.
   groupMeta: {flexDirection: 'row', alignItems: 'center', gap: 3, marginLeft: 'auto'},
   groupCount: {...type.caption, color: colors.textFaint},
+  // #245: BLE-bootstrapped chat markers — a faded blue left line + "via BLE mesh"
+  // caption (the #243 Bluetooth blue #0EA5E9, faded). BLE chats are 1:1, so the
+  // tag never collides with the group meta above.
+  bleBar: {
+    position: 'absolute',
+    left: 0,
+    top: 8,
+    bottom: 8,
+    width: 3,
+    borderTopRightRadius: 2,
+    borderBottomRightRadius: 2,
+    backgroundColor: 'rgba(14,165,233,0.55)',
+  },
+  bleTag: {...type.caption, color: 'rgba(56,189,248,0.9)', marginLeft: 'auto'},
   separator: {height: 1, backgroundColor: colors.border},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  emptyText: {...type.label, color: colors.textDim},
+  // Centered + narrow so long copy wraps as a tidy centered block, not a
+  // full-width left-aligned run.
+  emptyText: {...type.label, color: colors.textDim, textAlign: 'center', maxWidth: 240},
 });

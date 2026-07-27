@@ -31,7 +31,8 @@ export type MenuView =
   | 'chats'
   | 'groups'
   | 'mesh-channels'
-  | 'mesh-dms';
+  | 'mesh-dms'
+  | 'ble-dms';
 
 // --- small local glyphs (lucide-style, matching the app's SVG icons) ---------
 function Icon({children}: {children: React.ReactNode}) {
@@ -113,6 +114,16 @@ const MeshDmIcon = ({color = colors.text}: {color?: string}) => (
     <Path d="M4 5h16v11H9l-4 3.5V16H4z" {...stroke(color, {strokeLinejoin: 'round'})} />
     <Circle cx="12" cy="9" r="1.2" fill={color} />
     <Path d="M9.5 11a3.5 3.5 0 0 1 0-4M14.5 7a3.5 3.5 0 0 1 0 4" {...stroke(color)} />
+  </Icon>
+);
+// #245: a Bluetooth DM = the bluetooth rune inside a chat bubble.
+const BleDmIcon = ({color = colors.text}: {color?: string}) => (
+  <Icon>
+    <Path d="M4 5h16v11H9l-4 3.5V16H4z" {...stroke(color, {strokeLinejoin: 'round'})} />
+    <Path
+      d="M10 7.5l4 3-2 1.5V6l2 1.5-4 3"
+      {...stroke(color, {strokeLinejoin: 'round'})}
+    />
   </Icon>
 );
 
@@ -361,8 +372,9 @@ export function SideMenu({
 
         <View style={styles.divider} />
 
-        {/* #231: Bluetooth mesh is its own transport block, separate from
-            MeshCore (LoRa). Its page is "Discovery". */}
+        {/* #231/#245: Bluetooth mesh is its own transport block, separate from
+            MeshCore (LoRa). Discovery = the nearby-peers page; DMs = chats
+            bootstrapped over BLE. */}
         <Text style={styles.sectionLabel}>Bluetooth mesh</Text>
         <View style={styles.group}>
           <Item
@@ -370,6 +382,13 @@ export function SideMenu({
             label="Discovery"
             onPress={() => pick(onNearby)}
             testID="menu-nearby"
+          />
+          <Item
+            icon={c => <BleDmIcon color={c} />}
+            label="DMs"
+            active={activeView === 'ble-dms'}
+            onPress={() => pick(() => onSelectView('ble-dms'))}
+            testID="menu-ble-dms"
           />
         </View>
 

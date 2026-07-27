@@ -57,10 +57,13 @@ export interface ConversationRow {
   /** #153: local, user-asserted "verified" flag (I confirmed this address). */
   verified: boolean;
   /**
-   * #165 (docs/mesh-transport.md): which transport carries this conversation.
-   * 'logos' = the Logos MLS node (default); 'mesh' = a paired MeshCore radio.
+   * #165/#245: which transport this conversation was bootstrapped on (its home
+   * section + color). 'logos' = the Logos MLS node (default); 'mesh' = a paired
+   * MeshCore radio; 'ble' = bootstrapped over BLE mesh (#239 offline — still a
+   * Logos MLS convo underneath, but classified as a Bluetooth chat by origin).
+   * Set at creation, never changes.
    */
-  transport: 'logos' | 'mesh';
+  transport: 'logos' | 'mesh' | 'ble';
   /**
    * #168 (Phase 2c): a Logos GROUP currently mirrored onto MeshCore — sends ride
    * the private channel at meshChannelIdx instead of the node. The conversation's

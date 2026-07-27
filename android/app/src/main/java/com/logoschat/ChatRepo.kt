@@ -102,15 +102,26 @@ object ChatRepo {
   /**
    * Resolve (creating if needed) the durable conversation for a peer address.
    * Returns convoPk. Does NOT touch the lib — the caller binds lib_convo_id.
+   *
+   * `transport` classifies a NEWLY-created conversation by how it was bootstrapped
+   * (#245): 'logos' for a node/address exchange, 'ble' for one bootstrapped over
+   * BLE mesh (#239 offline). It is set at creation and never changes; an already-
+   * existing conversation keeps its original classification.
    */
-  fun ensureConversationForAddress(peerAddress: String, nickname: String?): Long {
+  fun ensureConversationForAddress(
+      peerAddress: String,
+      nickname: String?,
+      transport: String = "logos",
+  ): Long {
     val d = requireDb()
     val existing = d.convoPkByAddress(peerAddress)
     if (existing != null) {
       if (!nickname.isNullOrBlank()) d.setNickname(existing, nickname)
       return existing
     }
-    return d.insertConversation(peerAddress, null, nickname?.ifBlank { null }, System.currentTimeMillis())
+    return d.insertConversation(
+        peerAddress, null, nickname?.ifBlank { null }, System.currentTimeMillis(),
+        transport = transport)
   }
 
   /** Persist an outbound message (status 'pending') before the lib send. */

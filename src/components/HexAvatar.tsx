@@ -2,10 +2,13 @@
 //
 // A 5×5 left-right-symmetric grid of FLUSH squares (no gaps, no rounding on the
 // cells). Same seed → same avatar on every device, generated on-device, no
-// network. Two colour families make the two kinds distinguishable at a glance:
-//   contact (1:1)  → orange ramp   (the app accent, #FF5000 → near-white)
-//   group          → azure ramp    (the COMPLEMENT of the accent, ~#0EA5E9)
-// so a group never looks like a person in the list.
+// network. #243: colour = TRANSPORT (which network the conversation lives on),
+// not conversation type:
+//   Logos (contact + group) → orange ramp   (the app accent, #FF5000)
+//   MeshCore                → green ramp     (a different network)
+//   Bluetooth (BLE)         → azure ramp     (~#0EA5E9)
+// Groups no longer get their own colour — they're a Logos feature, so they're
+// orange like 1:1s, distinguished by the group glyph/count in the row.
 //
 // Seeds: a 1:1 uses the peer's stable address; a group uses its SHARED lib
 // conversation id, so every member of a group sees the same group avatar.
@@ -15,20 +18,22 @@ import Svg, {Rect} from 'react-native-svg';
 import {colors} from '../theme';
 
 // Dark → near-white. The top of each ramp is close to white so bright cells pop.
-const CONTACT_RAMP = ['#B8420E', '#FF5000', '#FF7A33', '#FFB27A', '#FFE4D0'];
-const GROUP_RAMP = ['#0B5C8A', '#0EA5E9', '#38BDF8', '#7DD3FC', '#E0F5FF'];
-// #167: a MeshCore identity (channel or mesh peer) — green, distinct from the
-// Logos orange/azure so "this is a different network" reads at a glance.
+const LOGOS_RAMP = ['#B8420E', '#FF5000', '#FF7A33', '#FFB27A', '#FFE4D0'];
+// #167: a MeshCore identity (channel or mesh peer) — green, a different network.
 const MESH_RAMP = ['#166534', '#22C55E', '#4ADE80', '#86EFAC', '#DCFCE7'];
+// #243: a BLE-bootstrapped chat — azure (Bluetooth). Previously the group ramp.
+const BLE_RAMP = ['#0B5C8A', '#0EA5E9', '#38BDF8', '#7DD3FC', '#E0F5FF'];
 
-/** MeshCore ('mesh') is a third identity kind alongside Logos contact/group. */
-export type AvatarKind = 'contact' | 'group' | 'mesh';
+/** Identity kinds by transport (#243). Logos contact+group share the orange ramp;
+ *  'mesh' is green; 'ble' is azure. */
+export type AvatarKind = 'contact' | 'group' | 'mesh' | 'ble';
 const RAMPS: Record<AvatarKind, string[]> = {
-  contact: CONTACT_RAMP,
-  group: GROUP_RAMP,
+  contact: LOGOS_RAMP,
+  group: LOGOS_RAMP,
   mesh: MESH_RAMP,
+  ble: BLE_RAMP,
 };
-const PREFIX: Record<AvatarKind, string> = {contact: 'c:', group: 'g:', mesh: 'm:'};
+const PREFIX: Record<AvatarKind, string> = {contact: 'c:', group: 'g:', mesh: 'm:', ble: 'b:'};
 
 // mulberry32 seeded via an xmur3 hash of the seed — deterministic per identity.
 function rng(seed: string): () => number {
@@ -135,14 +140,18 @@ export function avatarSeed(convo: {
   return convo.peerAddress ?? `pk${convo.convoPk}`;
 }
 
-/** The avatar kind for a conversation (#167): a MeshCore conversation is 'mesh'
- *  (green) regardless of channel-vs-DM; otherwise Logos group/contact. */
+/** The avatar kind for a conversation (#167/#243): colour by transport. MeshCore
+ *  → 'mesh' (green); a BLE-bootstrapped chat → 'ble' (azure); otherwise Logos
+ *  → 'group'/'contact', which now share the orange ramp. */
 export function convoKind(convo: {
-  transport: 'logos' | 'mesh';
+  transport: 'logos' | 'mesh' | 'ble';
   isGroup: boolean;
 }): AvatarKind {
   if (convo.transport === 'mesh') {
     return 'mesh';
+  }
+  if (convo.transport === 'ble') {
+    return 'ble';
   }
   return convo.isGroup ? 'group' : 'contact';
 }
