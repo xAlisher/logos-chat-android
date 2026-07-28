@@ -14,7 +14,7 @@ import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
 import ImagePicker, {parsePicked, parsePickedArray} from '../native/ImagePicker';
 import LocationNative, {parseLocation as parseNativeLocation} from '../native/Location';
-import {buildLocation} from '../native/locMsg';
+import {buildLocation, type LatLng} from '../native/locMsg';
 import AudioRecorder, {parseRecording} from '../native/Audio';
 import {PermissionsAndroid, Platform} from 'react-native';
 import {useNodeStore} from './nodeStore';
@@ -168,6 +168,14 @@ interface ChatState {
   sendCameraPhoto: (convoPk: number) => Promise<void>;
   /** #204: share the current location as clickable coordinates. */
   sendLocation: (convoPk: number) => Promise<void>;
+  /**
+   * #255: acquire the current location (permission + fix) WITHOUT sending, so the
+   * composer can preview it and let the user confirm. Returns null on
+   * denial/failure (error is surfaced via nodeStore).
+   */
+  fetchLocation: () => Promise<LatLng | null>;
+  /** #255: send a location the user already previewed/confirmed. */
+  sendLocationValue: (convoPk: number, loc: LatLng) => Promise<void>;
   /** #205: send an already-recorded voice note. */
   sendVoice: (
     convoPk: number,
@@ -684,26 +692,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().refreshConversations();
   },
 
-  sendLocation: async (convoPk: number) => {
+  // #255: acquire a fix but DON'T send — the composer previews it first.
+  fetchLocation: async () => {
     if (
       !(await ensurePerm(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION))
     ) {
       useNodeStore.setState({error: 'location permission denied'});
-      return;
+      return null;
     }
     let loc;
     try {
       loc = parseNativeLocation(await LocationNative.getCurrent());
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
-      return;
+      return null;
     }
     if (loc == null) {
       useNodeStore.setState({error: 'could not get location'});
-      return;
+      return null;
     }
-    // Location is tiny text — route through the normal send (works on any transport).
+    return loc;
+  },
+
+  // #255: send a location the user confirmed. Tiny text — routes through the
+  // normal send (works on any transport).
+  sendLocationValue: async (convoPk: number, loc: LatLng) => {
     await get().send(convoPk, buildLocation(loc));
+  },
+
+  // #204: kept as the fetch-then-send convenience (unused by the composer since
+  // #255, which previews before sending).
+  sendLocation: async (convoPk: number) => {
+    const loc = await get().fetchLocation();
+    if (loc == null) return;
+    await get().sendLocationValue(convoPk, loc);
   },
 
   sendVoice: async (convoPk, rec) => {

@@ -71,7 +71,7 @@ import {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
 import {parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal} from '../native/voiceMsg';
-import {parseLocation, formatLatLng, geoUri} from '../native/locMsg';
+import {parseLocation, formatLatLng, geoUri, type LatLng} from '../native/locMsg';
 import {VoiceBubble} from '../components/VoiceBubble';
 import {CameraIcon, LocationIcon, MicIcon} from '../components/MediaIcons';
 import AudioRecorder, {parseRecording, MAX_RECORDING_MS} from '../native/Audio';
@@ -358,7 +358,8 @@ export function ChatScreen() {
   const sendImage = useChatStore(s => s.sendImage);
   const sendImages = useChatStore(s => s.sendImages); // #207
   const sendCameraPhoto = useChatStore(s => s.sendCameraPhoto); // #203
-  const sendLocation = useChatStore(s => s.sendLocation); // #204
+  const fetchLocation = useChatStore(s => s.fetchLocation); // #255
+  const sendLocationValue = useChatStore(s => s.sendLocationValue); // #255
   const sendVoice = useChatStore(s => s.sendVoice); // #205
   const retry = useChatStore(s => s.retry);
   const setActive = useChatStore(s => s.setActive);
@@ -385,6 +386,8 @@ export function ChatScreen() {
     bleStatus === 'on' &&
     bleNearby.some(a => a.toLowerCase() === convo.peerAddress!.toLowerCase());
   const [text, setText] = useState('');
+  // #255: a location fix staged in the composer, previewed before the user sends.
+  const [pendingLoc, setPendingLoc] = useState<LatLng | null>(null);
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [recording, setRecording] = useState(false); // #205 voice
@@ -826,7 +829,9 @@ export function ChatScreen() {
     bleReachable,
   });
   const {running, connecting, overMesh, meshLive, dead, canRevive} = cs;
-  const canSend = cs.canSendBase && text.trim().length > 0 && !busy;
+  // #255: a staged location counts as sendable payload even with no typed text.
+  const canSend =
+    cs.canSendBase && (text.trim().length > 0 || pendingLoc != null) && !busy;
   const sendColor =
     cs.sendColorKind === 'mesh'
       ? MESH_GREEN
@@ -838,7 +843,9 @@ export function ChatScreen() {
       ? colors.nodeConnecting
       : colors.nodeOffline;
   // #206: the send button is only active when there's text to send; gray otherwise.
+  // #255: …or a location is staged in the composer.
   const canSendText = text.trim().length > 0;
+  const canSendComposer = canSendText || pendingLoc != null;
 
   // #168 (Phase 2b): mesh-mirror banner state. Shown on a Logos group when a radio
   // is connected and the group is either already mirrored or has mapped members.
@@ -931,13 +938,21 @@ export function ChatScreen() {
       return;
     }
     const t = text.trim();
+    const loc = pendingLoc; // #255: staged location, if any
     setText('');
+    setPendingLoc(null);
     try {
       setBusy(true);
       // #191: no more silent revive-on-send. A dead group is restarted only via
       // the explicit "Restart group" action (which shows what it does), so the
       // composer isn't even reachable while dead — a plain send is all this is.
-      await send(convoPk, t);
+      if (t) {
+        await send(convoPk, t);
+      }
+      // #255: send the confirmed location as its own message (after any text).
+      if (loc != null) {
+        await sendLocationValue(convoPk, loc);
+      }
     } catch (e: any) {
       useNodeStore.setState({error: `send failed: ${e?.message ?? e}`});
     } finally {
@@ -972,7 +987,13 @@ export function ChatScreen() {
   };
   const onPickImages = () => withAttaching(() => sendImages(convoPk));
   const onCamera = () => withAttaching(() => sendCameraPhoto(convoPk));
-  const onLocation = () => withAttaching(() => sendLocation(convoPk));
+  // #255: acquire a fix and STAGE it in the composer (preview + confirm) instead
+  // of sending on the first tap.
+  const onLocation = () =>
+    withAttaching(async () => {
+      const loc = await fetchLocation();
+      if (loc != null) setPendingLoc(loc);
+    });
 
   // #205: tick the elapsed timer + auto-finalize when the 120s cap is hit.
   useEffect(() => {
@@ -1360,6 +1381,21 @@ export function ChatScreen() {
       ) : (
         // #206: 2-line composer — a growing text row + an action-icon row.
         <View style={styles.composerV}>
+          {/* #255: staged location preview — the user confirms with Send or clears it. */}
+          {pendingLoc != null && (
+            <View style={styles.pendingLoc} testID="pending-location">
+              <LocationIcon size={16} color={colors.accent} />
+              <Text style={styles.pendingLocText} numberOfLines={1}>
+                {formatLatLng(pendingLoc)}
+              </Text>
+              <Pressable
+                onPress={() => setPendingLoc(null)}
+                hitSlop={10}
+                testID="pending-location-clear">
+                <Text style={styles.pendingLocClear}>✕</Text>
+              </Pressable>
+            </View>
+          )}
           <View style={styles.composerRow1}>
             <TextInput
               style={styles.input}
@@ -1373,10 +1409,10 @@ export function ChatScreen() {
             <Pressable
               style={[
                 styles.send,
-                {backgroundColor: canSendText ? sendColor : colors.border},
+                {backgroundColor: canSendComposer ? sendColor : colors.border},
               ]}
               onPress={onSubmit}
-              disabled={!canSendText}
+              disabled={!canSendComposer}
               testID="composer-send">
               {busy ? (
                 <Text style={[type.title, {color: colors.onAccent}]}>…</Text>
@@ -1772,6 +1808,22 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   composerRow1: {flexDirection: 'row', alignItems: 'flex-end', gap: spacing.md},
+  // #255: staged-location preview chip above the input row.
+  pendingLoc: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  pendingLocText: {...type.label, color: colors.text, flexShrink: 1},
+  pendingLocClear: {...type.label, color: colors.textDim, paddingHorizontal: spacing.xs},
   actionRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingLeft: spacing.xs},
   actionBtn: {padding: spacing.xs},
   // #205: recording bar.
