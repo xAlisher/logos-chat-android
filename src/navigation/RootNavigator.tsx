@@ -98,6 +98,14 @@ export function RootNavigator() {
           // pop, so its SwipeRow (swipe-to-delete) never competes with this.
           gestureEnabled: true,
           fullScreenGestureEnabled: true,
+          // #226: the authoritative fix for the react-native-screens
+          // "Screen fragments should never be restored" crash-on-resume is the
+          // native super.onCreate(null) (MainActivity.kt, already shipped).
+          // On the JS side we pin freezeOnBlur:false so react-freeze can never
+          // leave a resumed screen frozen/blank — a belt-and-suspenders guard
+          // against the black-screen half of the same resume path, and future-
+          // proof if a global enableFreeze() is ever introduced.
+          freezeOnBlur: false,
         }}>
         <Stack.Screen
           name="Conversations"

@@ -1,5 +1,11 @@
-import React, {useEffect} from 'react';
-import {PermissionsAndroid, Platform, StatusBar, View} from 'react-native';
+import React, {useEffect, useRef} from 'react';
+import {
+  AppState,
+  PermissionsAndroid,
+  Platform,
+  StatusBar,
+  View,
+} from 'react-native';
 import {PaperProvider} from 'react-native-paper';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {paperTheme, colors} from './src/theme';
@@ -63,6 +69,14 @@ async function restoreBleEngaged() {
   }
 }
 
+/**
+ * #236: auto-lock grace period. A departure from the foreground shorter than
+ * this (a quick app-switch, the photo picker, a permission dialog) does NOT
+ * re-lock, so the gate doesn't nag on brief round-trips. Longer absences re-arm
+ * the PIN gate. Sane fixed default; "lock immediately" would be grace = 0.
+ */
+const LOCK_ON_BACKGROUND_GRACE_MS = 15_000;
+
 function App() {
   // #232: gate the app behind the PIN lock on cold launch. `locked` is true only
   // when a PIN is set AND this session hasn't been unlocked yet.
@@ -70,6 +84,37 @@ function App() {
   const hasPin = useSecurityStore(s => s.hasPin);
   const unlocked = useSecurityStore(s => s.unlocked);
   const locked = hasPin && !unlocked;
+
+  // #236: auto-lock when the app goes to the background. On leaving 'active' we
+  // stamp the departure time; on returning to 'active' we re-lock (via
+  // securityStore.relock) when a PIN is set, the lockOnBackground setting is on,
+  // and the app was away at least the grace period. State is read live via
+  // getState() so toggling the setting mid-session takes effect immediately.
+  // Separate from RootNavigator's deep-link AppState listener — multiple
+  // listeners coexist fine.
+  const backgroundedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', next => {
+      if (next === 'active') {
+        const since = backgroundedAtRef.current;
+        backgroundedAtRef.current = null;
+        const sec = useSecurityStore.getState();
+        if (
+          since != null &&
+          sec.hasPin &&
+          useSettingsStore.getState().lockOnBackground &&
+          Date.now() - since >= LOCK_ON_BACKGROUND_GRACE_MS
+        ) {
+          sec.relock();
+        }
+      } else if (backgroundedAtRef.current == null) {
+        // First departure from active ('inactive' or 'background') — start the
+        // grace clock. Ignore repeat transitions so the earliest stamp wins.
+        backgroundedAtRef.current = Date.now();
+      }
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     requestNotificationPermission();

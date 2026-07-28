@@ -248,6 +248,11 @@ interface LogosChatNative {
    * include the lib's MLS crypto identity/ratchet state (ephemeral, not portable).
    */
   exportChatData(): Promise<string>;
+  /**
+   * #241: share a PNG (base64, no data: prefix) via the OS share sheet
+   * (ACTION_SEND, image/png). Used to share the my-address QR + sigil as an image.
+   */
+  shareIdentityImage(base64Png: string): Promise<string>;
 }
 
 /** A peer address is 64 lowercase hex chars (32-byte Ed25519 account pubkey). */

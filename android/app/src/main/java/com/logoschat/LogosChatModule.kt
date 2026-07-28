@@ -1212,6 +1212,46 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #241: share a base64 PNG (no data: prefix) as an image via the OS share sheet.
+   * Mirrors [exportChatData]: decode to a cache file, hand it out via a FileProvider
+   * URI on an ACTION_SEND(image/png) chooser.
+   */
+  @ReactMethod
+  fun shareIdentityImage(base64Png: String, promise: Promise) {
+    try {
+      val ctx = reactApplicationContext
+      val bytes = android.util.Base64.decode(base64Png, android.util.Base64.DEFAULT)
+      val dir = java.io.File(ctx.cacheDir, "exports")
+      dir.mkdirs()
+      val file = java.io.File(dir, "peers-identity.png")
+      file.writeBytes(bytes)
+      val uri =
+          androidx.core.content.FileProvider.getUriForFile(
+              ctx, "${ctx.packageName}.fileprovider", file)
+      val send =
+          android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+          }
+      com.facebook.react.bridge.UiThreadUtil.runOnUiThread {
+        val chooser = android.content.Intent.createChooser(send, "Share my identity")
+        val act = reactApplicationContext.currentActivity
+        if (act != null) {
+          act.startActivity(chooser)
+        } else {
+          chooser.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          ctx.startActivity(chooser)
+        }
+      }
+      promise.resolve(file.absolutePath)
+    } catch (t: Throwable) {
+      Log.w("logos-chat-bridge", "shareIdentityImage failed: ${t.message}")
+      promise.reject("share_image", t)
+    }
+  }
+
   @ReactMethod
   fun getSetting(key: String, promise: Promise) {
     try {

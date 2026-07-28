@@ -2,7 +2,9 @@
 // string + Copy. Replaces the old ephemeral intro-bundle screen. There is no
 // Refresh: the address is STABLE (persistent identity), so re-reading it could
 // never change anything — the button only looked broken.
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
+import type Svg from 'react-native-svg';
+import LogosChat from '../native/LogosChat';
 import {
   Text,
   View,
@@ -10,6 +12,7 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
+  Share,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
@@ -28,6 +31,8 @@ export function MyAddressScreen() {
   // #240: the user's own local label — read-only here; when set, we offer to
   // embed it in the QR so a peer scanning me back can prefill their contact name.
   const myLabel = useSettingsStore(s => s.displayName);
+  // #241: ref to the QR's <Svg> so we can capture it to a PNG and share the image.
+  const qrSvgRef = useRef<React.ElementRef<typeof Svg>>(null);
   const hasLabel = myLabel.trim().length > 0;
   // Opt-in, OFF by default — a bare-address QR stays the interoperable form.
   const [includeLabel, setIncludeLabel] = useState(false);
@@ -49,6 +54,55 @@ export function MyAddressScreen() {
     const t = setTimeout(() => setCopied(false), 1600);
     return () => clearTimeout(t);
   }, [copied]);
+
+  // #241: open the OS share sheet with the address so a peer can add us from any
+  // app. We share the SAME payload the QR encodes — the bare hex, or the `peers:`
+  // URI when the label toggle is on — so a scanner-less peer can still paste it.
+  //
+  // NOTE: the issue asks to share the rendered QR+sigil as an IMAGE. That is not
+  // reachable from JS under the current native surface: React Native's built-in
+  // Share carries TEXT ONLY on Android (its `url` field is iOS-only), and there is
+  // no exposed native ACTION_SEND-image method (exportChatData is hardcoded to the
+  // JSON backup). True image-share needs a small native "share this file as image"
+  // method (mirroring exportChatData's FileProvider+ACTION_SEND) — the QR PNG can
+  // then be produced via react-native-svg's Svg.toDataURL. Text share is the
+  // working fallback until that native method lands.
+  const onShare = async () => {
+    if (myAddress == null) {
+      return;
+    }
+    const payload =
+      includeLabel && hasLabel
+        ? encodeAddressPayload(myAddress, myLabel)
+        : myAddress;
+    // #241: try to share the QR + sigil as a PNG image. Capture the <Svg> to
+    // base64 (react-native-svg toDataURL, no data: prefix) and hand it to the
+    // native ACTION_SEND(image/png) sheet. Fall back to sharing the address
+    // text/URI if capture or the native share isn't available.
+    const svg = qrSvgRef.current as unknown as
+      | {toDataURL?: (cb: (b64: string) => void) => void}
+      | null;
+    if (svg?.toDataURL) {
+      try {
+        const b64 = await new Promise<string>((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error('capture timeout')), 4000);
+          svg.toDataURL!(data => {
+            clearTimeout(t);
+            data ? resolve(data) : reject(new Error('empty capture'));
+          });
+        });
+        await LogosChat.shareIdentityImage(b64);
+        return;
+      } catch {
+        // fall through to the text/URI share below
+      }
+    }
+    try {
+      await Share.share({message: payload, title: 'My address'});
+    } catch {
+      // user dismissed the sheet or share failed — nothing to recover.
+    }
+  };
 
   return (
     <View style={styles.root}>
@@ -74,21 +128,31 @@ export function MyAddressScreen() {
                 size={260}
                 badgeSeed={myAddress}
                 badgeKind="contact"
+                svgRef={qrSvgRef}
               />
               <Text style={styles.code} selectable>
                 {myAddress}
               </Text>
-              <Pressable
-                testID="copy-address"
-                style={styles.copyBtn}
-                onPress={() => {
-                  Clipboard.setString(myAddress);
-                  setCopied(true);
-                }}>
-                <Text style={[type.title, {color: colors.onAccent}]}>
-                  {copied ? 'Copied' : 'Copy'}
-                </Text>
-              </Pressable>
+              <View style={styles.btnRow}>
+                <Pressable
+                  testID="copy-address"
+                  style={styles.copyBtn}
+                  onPress={() => {
+                    Clipboard.setString(myAddress);
+                    setCopied(true);
+                  }}>
+                  <Text style={[type.title, {color: colors.onAccent}]}>
+                    {copied ? 'Copied' : 'Copy'}
+                  </Text>
+                </Pressable>
+                {/* #241: share the address via the OS share sheet. */}
+                <Pressable
+                  testID="share-address"
+                  style={styles.shareBtn}
+                  onPress={onShare}>
+                  <Text style={[type.title, {color: colors.accent}]}>Share</Text>
+                </Pressable>
+              </View>
               {/* #240: opt-in to embed the local label. Only offered when the
                   user has actually set one; off by default. */}
               {hasLabel && (
@@ -148,13 +212,33 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   labelText: {flex: 1, gap: spacing.xs},
+  // #241: Copy + Share sit side by side, each taking half the card width.
+  btnRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    alignSelf: 'stretch',
+  },
   copyBtn: {
+    flex: 1,
     backgroundColor: colors.accent,
     borderRadius: radii.card,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.sm,
     minHeight: 44,
     justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // #241: Share is the secondary action — bordered, accent text.
+  shareBtn: {
+    flex: 1,
+    borderColor: colors.accent,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   hint: {...type.label, color: colors.textFaint, textAlign: 'center'},
 });

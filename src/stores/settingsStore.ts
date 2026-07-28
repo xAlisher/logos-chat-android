@@ -24,6 +24,13 @@ export const KV_BLE_ADVERTISE_IDENTITY = 'bleAdvertiseIdentity';
  */
 export const KV_BLE_ENGAGED_PREF = 'bleEngagedPref';
 
+/**
+ * #236: KV key — re-lock the app whenever it goes to the background (auto-lock).
+ * Only meaningful when a PIN is set (securityStore.hasPin). Default OFF: this is
+ * a stricter, opt-in security behaviour on top of the cold-launch gate (#232).
+ */
+export const KV_LOCK_ON_BACKGROUND = 'lockOnBackground';
+
 // #232: notification preferences. All default ON. Persisted per device.
 export const KV_NOTIF_LOCAL = 'notifLocal'; // OS notifications while backgrounded
 export const KV_NOTIF_INAPP = 'notifInApp'; // in-app banners while foregrounded
@@ -71,6 +78,12 @@ interface SettingsState {
    * Only ever restores what was ON — off stays off.
    */
   bleEngagedPref: boolean;
+  /**
+   * #236: auto-lock — re-lock the app when it goes to the background so a
+   * picked-up, already-running phone still hits the PIN gate on return. Only
+   * enforced when a PIN is set. Default off (opt-in).
+   */
+  lockOnBackground: boolean;
   /** #232: OS notifications while the app is backgrounded. Default on. */
   localNotifications: boolean;
   /** #232: in-app banners for other chats while foregrounded. Default on. */
@@ -91,6 +104,8 @@ interface SettingsState {
   setBleAdvertiseIdentity: (on: boolean) => Promise<void>;
   /** #259: record whether BLE-mesh is currently engaged (persisted for boot restore). */
   setBleEngagedPref: (on: boolean) => Promise<void>;
+  /** #236: toggle auto-lock (re-lock when the app backgrounds); persisted. */
+  setLockOnBackground: (on: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -99,6 +114,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   bleConfigured: false,
   bleAdvertiseIdentity: false,
   bleEngagedPref: false,
+  lockOnBackground: false,
   localNotifications: true,
   inAppNotifications: true,
   messageSound: true,
@@ -133,6 +149,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const be = await LogosChat.getSetting(KV_BLE_ENGAGED_PREF);
       if (be === 'true') set({bleEngagedPref: true});
+    } catch {
+      // keep default
+    }
+    // #236: auto-lock defaults OFF — only flip on when explicitly stored 'true'.
+    try {
+      const lb = await LogosChat.getSetting(KV_LOCK_ON_BACKGROUND);
+      if (lb === 'true') set({lockOnBackground: true});
     } catch {
       // keep default
     }
@@ -196,6 +219,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({bleEngagedPref: on});
     try {
       await LogosChat.setSetting(KV_BLE_ENGAGED_PREF, on ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setLockOnBackground: async (on: boolean) => {
+    // #236: idempotent — follows the setBleAdvertiseIdentity/setNotifPref pattern.
+    if (get().lockOnBackground === on) return;
+    set({lockOnBackground: on});
+    try {
+      await LogosChat.setSetting(KV_LOCK_ON_BACKGROUND, on ? 'true' : 'false');
     } catch {
       // best-effort
     }

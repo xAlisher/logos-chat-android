@@ -26,10 +26,13 @@ import {
   OverflowMenu,
   UsersIcon,
   MessageCircleIcon,
+  MeshIcon,
   type MenuItem,
 } from '../components/OverflowMenu';
 import {TrashIcon} from '../components/TrashIcon';
+import {PulseDot} from '../components/PulseDot';
 import {useNodeStore} from '../stores/nodeStore';
+import {useBleStore} from '../stores/bleStore';
 import {
   useChatStore,
   sortedConversations,
@@ -40,6 +43,11 @@ import type {Conversation, ConvoPreview} from '../stores/chatStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+// #174: mesh-mapped identity color (matches GroupInfo / Contacts badge).
+const MESH_GREEN = '#22C55E';
+// #246/#243: Bluetooth transport blue — reused for the live BLE presence label.
+const BLE_BLUE = '#0EA5E9';
 
 function formatTime(at: number): string {
   const d = new Date(at);
@@ -61,11 +69,17 @@ function formatTime(at: number): string {
 function ConversationRow({
   convo,
   preview,
+  meshEntry,
+  bleNearby,
   onPress,
   onLongPress,
 }: {
   convo: Conversation;
   preview: ConvoPreview;
+  // #174: the MeshCore identity this 1:1 peer is mapped to (null = unmapped).
+  meshEntry: {pubkey: string; name: string | null} | null;
+  // #246: true when this BLE-DM peer's identity is currently heard nearby.
+  bleNearby: boolean;
   onPress: () => void;
   onLongPress: (pageY: number) => void;
 }) {
@@ -98,7 +112,30 @@ function ConversationRow({
               <Text style={styles.groupCount}>{convo.memberCount}</Text>
             </View>
           )}
-          {isBle && <Text style={styles.bleTag}>via BLE mesh</Text>}
+          {/* #174: mapped-to-mesh indicator — a green mesh glyph + the mesh name,
+              same treatment as the GroupInfo member badge. 1:1 rows only (the
+              mapping is per-peer); groups fold into their own meshMode marker. */}
+          {!convo.isGroup && meshEntry != null && (
+            <View style={styles.meshTag}>
+              <MeshIcon size={14} color={MESH_GREEN} />
+              <Text style={styles.meshName} numberOfLines={1}>
+                {meshEntry.name || 'mesh'}
+              </Text>
+            </View>
+          )}
+          {isBle && (
+            <View style={styles.bleMeta}>
+              {/* #246: live BLE presence — a pulsing blue dot + "nearby" while the
+                  peer's rotating identity is currently heard over Bluetooth. */}
+              {bleNearby && (
+                <View style={styles.bleNearby}>
+                  <PulseDot color={BLE_BLUE} pulsing size={6} />
+                  <Text style={styles.bleNearbyText}>nearby</Text>
+                </View>
+              )}
+              <Text style={styles.bleTag}>via BLE mesh</Text>
+            </View>
+          )}
         </View>
         {/* #155/#159: last message on the left, timestamp bottom-right on the
             same line. #160: when the newest thread event is a system note
@@ -162,6 +199,12 @@ export function ConversationsScreen() {
   // #160: subscribe to the in-memory system notes so the list re-renders when a
   // system event fires and surfaces it as the row preview.
   const systemLines = useChatStore(s => s.systemLines);
+  // #174: local mesh-map cache (address→{pubkey,name}) so a mapped 1:1 peer shows
+  // the green mesh badge on its row, same as Contacts / Group info.
+  const meshMap = useChatStore(s => s.meshMap);
+  // #246: contact addresses currently heard over BLE (deduped by identity, #238).
+  // Subscribing re-renders the list live as peers come/go; no added broadcast.
+  const nearbyContacts = useBleStore(s => s.nearbyContacts);
   const refreshConversations = useChatStore(s => s.refreshConversations);
   const remove = useChatStore(s => s.remove);
   // Side-menu (#125): filter the list (All/Chats/Groups) or open a page.
@@ -386,6 +429,16 @@ export function ConversationsScreen() {
               <ConversationRow
                 convo={item}
                 preview={conversationPreview(item, systemLines[item.convoPk])}
+                meshEntry={
+                  item.peerAddress != null
+                    ? meshMap[item.peerAddress.toLowerCase()] ?? null
+                    : null
+                }
+                bleNearby={
+                  item.transport === 'ble' &&
+                  item.peerAddress != null &&
+                  nearbyContacts.includes(item.peerAddress.toLowerCase())
+                }
                 onPress={() => openChat(item)}
                 onLongPress={pageY => onRowLongPress(item, pageY)}
               />
@@ -506,7 +559,22 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 2,
     backgroundColor: 'rgba(14,165,233,0.55)',
   },
-  bleTag: {...type.caption, color: 'rgba(56,189,248,0.9)', marginLeft: 'auto'},
+  // #245/#246: right-aligned Bluetooth meta group — live "nearby" presence (when
+  // heard) sits left of the persistent "via BLE mesh" origin caption.
+  bleMeta: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs, marginLeft: 'auto'},
+  bleTag: {...type.caption, color: 'rgba(56,189,248,0.9)'},
+  bleNearby: {flexDirection: 'row', alignItems: 'center', gap: 4},
+  bleNearbyText: {...type.caption, color: BLE_BLUE, fontWeight: '600'},
+  // #174: green mesh-mapped badge (glyph + mesh name), pushed to the title row's
+  // right — mirrors the GroupInfo / Contacts treatment. 1:1 rows only.
+  meshTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 'auto',
+    maxWidth: 110,
+  },
+  meshName: {...type.caption, color: MESH_GREEN},
   separator: {height: 1, backgroundColor: colors.border},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center'},
   // Centered + narrow so long copy wraps as a tidy centered block, not a

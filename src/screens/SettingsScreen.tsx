@@ -87,6 +87,9 @@ export function SettingsScreen() {
   const vibration = useSettingsStore(s => s.vibration);
   const setNotifPref = useSettingsStore(s => s.setNotifPref);
   const setNotif = (pref: NotifPref) => (on: boolean) => setNotifPref(pref, on);
+  // #236: auto-lock when the app goes to background (only meaningful with a PIN).
+  const lockOnBackground = useSettingsStore(s => s.lockOnBackground);
+  const setLockOnBackground = useSettingsStore(s => s.setLockOnBackground);
 
   // Security (#232)
   const hasPin = useSecurityStore(s => s.hasPin);
@@ -186,6 +189,15 @@ export function SettingsScreen() {
 
         {hasPin && (
           <>
+            <View style={styles.card}>
+              <ToggleRow
+                label="Lock when app goes to background"
+                sublabel="Ask for the PIN again when you return after a short while."
+                value={lockOnBackground}
+                onChange={setLockOnBackground}
+                testID="settings-lock-on-background"
+              />
+            </View>
             <View style={styles.card}>
               <Row
                 label={hasDuressPin ? 'Change wipe PIN' : 'Set wipe PIN'}

@@ -21,12 +21,15 @@ export function QrCard({
   size = 260,
   badgeSeed,
   badgeKind = 'contact',
+  svgRef,
 }: {
   data: string;
   size?: number;
   /** When set, draw this identicon in the center of the QR (#118). */
   badgeSeed?: string;
   badgeKind?: 'contact' | 'group';
+  /** #241: ref to the inner <Svg> so a parent can capture it (toDataURL). */
+  svgRef?: React.Ref<React.ElementRef<typeof Svg>>;
 }) {
   const badged = badgeSeed != null && badgeSeed.length > 0;
   const {path, total} = useMemo(() => {
@@ -61,7 +64,7 @@ export function QrCard({
 
   return (
     <View style={[styles.card, {width: size, height: size}]}>
-      <Svg width={size} height={size} viewBox={`0 0 ${total} ${total}`}>
+      <Svg ref={svgRef} width={size} height={size} viewBox={`0 0 ${total} ${total}`}>
         <Rect x={0} y={0} width={total} height={total} fill={colors.qrBg} />
         <Path d={path} fill={colors.qrFg} />
         {badged && (

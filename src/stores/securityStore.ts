@@ -63,6 +63,12 @@ interface SecurityState {
   /** Mark the app unlocked for this session (after a correct PIN). */
   unlock: () => void;
   /**
+   * #236: re-arm the gate (unlocked = false) so returning to the foreground
+   * shows LockScreen again. No-op when no PIN is set — a PIN-less app has no
+   * gate to show. Powers the auto-lock-on-background setting.
+   */
+  relock: () => void;
+  /**
    * Set OR change the main PIN. When a PIN already exists, `oldPin` must verify
    * (the update flow: enter old → new → confirm new). Resolves true on success,
    * false if the old PIN is wrong or the new PIN is invalid.
@@ -115,6 +121,11 @@ export const useSecurityStore = create<SecurityState>((set, get) => ({
   },
 
   unlock: () => set({unlocked: true}),
+
+  // #236: only re-lock when a PIN is actually set; otherwise there is no gate.
+  relock: () => {
+    if (get().hasPin) set({unlocked: false});
+  },
 
   setMainPin: async (newPin, oldPin) => {
     if (!isValidPin(newPin)) return false;

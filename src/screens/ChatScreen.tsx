@@ -9,7 +9,9 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   Alert,
+  Animated,
   DeviceEventEmitter,
+  Easing,
   Image,
   Linking,
   Text,
@@ -179,6 +181,59 @@ function resolveAttribution(
       senderAddr,
     ),
   };
+}
+
+// #257: a live moving waveform in the record area, shown while capturing a voice
+// note. The native recorder does NOT stream the mic level to JS — it buffers
+// getMaxAmplitude() internally and only emits the "maxDuration" cap event (see
+// AudioModule.kt) — so drawing the *true* amplitude would need a native change.
+// Instead we animate a lively synthetic equalizer that signals "listening" without
+// faking a specific level. Each bar owns a looping scaleY oscillation with a
+// varied range/period (native-driven, so it stays smooth); mounting on the
+// recording branch starts the loops, unmounting stops them.
+const REC_WAVE_BARS = 28;
+function RecordingWaveform() {
+  const bars = React.useRef(
+    Array.from({length: REC_WAVE_BARS}, (_, i) => ({
+      v: new Animated.Value(0.2 + ((i * 37) % 60) / 100),
+      min: 0.15 + ((i * 13) % 25) / 100,
+      max: 0.55 + ((i * 29) % 45) / 100,
+      dur: 320 + ((i * 53) % 380), // 320–700 ms per half-cycle
+    })),
+  ).current;
+  useEffect(() => {
+    const loops = bars.map(b => {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(b.v, {
+            toValue: b.max,
+            duration: b.dur,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(b.v, {
+            toValue: b.min,
+            duration: b.dur,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      loop.start();
+      return loop;
+    });
+    return () => loops.forEach(l => l.stop());
+  }, [bars]);
+  return (
+    <View style={styles.recWave} testID="rec-waveform" pointerEvents="none">
+      {bars.map((b, i) => (
+        <Animated.View
+          key={i}
+          style={[styles.recWaveBar, {transform: [{scaleY: b.v}]}]}
+        />
+      ))}
+    </View>
+  );
 }
 
 function Bubble({
@@ -1338,7 +1393,8 @@ export function ChatScreen() {
               {' '}/ {Math.floor(MAX_RECORDING_MS / 60000)}:00
             </Text>
           </Text>
-          <View style={{flex: 1}} />
+          {/* #257: live (synthetic) moving waveform fills the middle of the bar. */}
+          <RecordingWaveform />
           <Pressable
             style={styles.recCancel}
             onPress={() => finishRecord(false)}
@@ -1831,6 +1887,17 @@ const styles = StyleSheet.create({
   recTime: {...type.body, color: colors.text, marginLeft: spacing.sm},
   recCap: {...type.caption, color: colors.textFaint},
   recCancel: {paddingHorizontal: spacing.md, justifyContent: 'center'},
+  // #257: synthetic recording waveform — a row of oscillating bars.
+  recWave: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 24,
+    marginHorizontal: spacing.sm,
+    gap: 2,
+    overflow: 'hidden',
+  },
+  recWaveBar: {flex: 1, height: 20, borderRadius: 1.5, backgroundColor: colors.unread},
   // #167: live char counter shown only for a mesh composer.
   charCount: {...type.caption, color: colors.textFaint},
   send: {
