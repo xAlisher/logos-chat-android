@@ -1,6 +1,7 @@
 package com.logoschat
 
 import android.database.sqlite.SQLiteConstraintException
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,15 +26,16 @@ class ChatDbTest {
 
   @Before
   fun setUp() {
-    // name=null → in-memory database, fresh per test
-    db = ChatDb(RuntimeEnvironment.getApplication(), null)
+    // name=null → in-memory database, fresh per test. SQLCipher can't run under
+    // Robolectric, so back the store with the framework (plaintext) factory.
+    db = ChatDb(RuntimeEnvironment.getApplication(), null, FrameworkSQLiteOpenHelperFactory())
   }
 
   @Test
   fun schemaHasExpectedTables() {
     val tables = mutableSetOf<String>()
     db.readableDatabase
-        .rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null)
+        .query("SELECT name FROM sqlite_master WHERE type='table'")
         .use { c -> while (c.moveToNext()) tables.add(c.getString(0)) }
     for (t in listOf("kv", "conversations", "messages")) {
       assertTrue("missing table $t", t in tables)
@@ -172,7 +174,7 @@ class ChatDbTest {
   fun schemaHasGroupTablesAndColumns() {
     val tables = mutableSetOf<String>()
     db.readableDatabase
-        .rawQuery("SELECT name FROM sqlite_master WHERE type='table'", null)
+        .query("SELECT name FROM sqlite_master WHERE type='table'")
         .use { c -> while (c.moveToNext()) tables.add(c.getString(0)) }
     assertTrue("missing group_members table", "group_members" in tables)
     assertEquals(ChatDb.DB_VERSION, db.readableDatabase.version)

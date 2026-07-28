@@ -1,5 +1,6 @@
 package com.logoschat
 
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -26,7 +27,7 @@ class ChatRepoTest {
 
   @Before
   fun setUp() {
-    db = ChatDb(RuntimeEnvironment.getApplication(), null)
+    db = ChatDb(RuntimeEnvironment.getApplication(), null, FrameworkSQLiteOpenHelperFactory())
     ChatRepo.initForTest(db)
   }
 

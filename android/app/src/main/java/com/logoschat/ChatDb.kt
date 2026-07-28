@@ -2,8 +2,9 @@ package com.logoschat
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
+import android.database.Cursor
+import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -28,8 +29,11 @@ import org.json.JSONObject
  * Writers: the "logoschat-events" HandlerThread (inbound persist-before-forward)
  * and the "logoschat-node" executor (outbound); SQLite serializes internally.
  */
-class ChatDb(context: Context, name: String? = DB_NAME) :
-    SQLiteOpenHelper(context, name, null, DB_VERSION) {
+class ChatDb(
+    context: Context,
+    name: String? = DB_NAME,
+    factory: SupportSQLiteOpenHelper.Factory = ChatDbCrypto.factory(context),
+) {
 
   companion object {
     // New DB file for the address model — the old ephemeral `logoschat.db`
@@ -55,198 +59,225 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // #168 (dual-send dedup): a mirrored group's message can arrive on BOTH
     // transports; the two copies land within this window (LoRa latency = minutes).
     const val DEDUP_WINDOW_MS = 10 * 60 * 1000L
-  }
 
-  override fun onCreate(db: SQLiteDatabase) {
-    db.execSQL("CREATE TABLE kv(key TEXT PRIMARY KEY, value TEXT)")
-    db.execSQL(
-        """CREATE TABLE conversations(
-             convo_pk INTEGER PRIMARY KEY AUTOINCREMENT,
-             peer_address TEXT,
-             lib_convo_id TEXT,
-             nickname TEXT,
-             is_group INT DEFAULT 0,
-             group_name TEXT,
-             created_by_me INT DEFAULT 0,
-             verified INT DEFAULT 0,
-             transport TEXT DEFAULT 'logos',
-             mesh_mode INT DEFAULT 0,
-             mesh_channel_idx INT,
-             mesh_channel_key TEXT,
-             created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
-    db.execSQL(
-        """CREATE TABLE messages(
-             msg_pk INTEGER PRIMARY KEY AUTOINCREMENT,
-             convo_pk INT REFERENCES conversations,
-             direction TEXT CHECK(direction IN ('in','out')),
-             content TEXT, sent_at INT, sender_account TEXT,
-             sent_via TEXT DEFAULT 'logos',
-             status TEXT CHECK(status IN ('pending','sent','failed','received')))""")
-    // Group roster (app-side, best-effort): the creator records itself + each
-    // member it adds. The lib does not expose a roster verb in this wrapper, so
-    // joiner-side enumeration is a follow-up (see docs/m2prime-log.md).
-    db.execSQL(
-        """CREATE TABLE group_members(
-             convo_pk INT REFERENCES conversations,
-             address TEXT, is_self INT DEFAULT 0, added_at INT,
-             PRIMARY KEY(convo_pk, address))""")
-    // #168 (Phase 2): local mapping from a Logos address (1:1 contact peer_address
-    // or a group member address) → a MeshCore identity. Like `verified`, this is a
-    // local user assertion ("this person on Logos IS this mesh pubkey"), never
-    // broadcast. Used to mirror a group into a mesh channel among mapped members.
-    db.execSQL(
-        """CREATE TABLE mesh_map(
-             logos_address TEXT PRIMARY KEY,
-             mesh_pubkey TEXT NOT NULL,
-             mesh_name TEXT,
-             mapped_at INT)""")
-    // #172: durable MeshCore contact roster (peers heard over LoRa). Keyed by the
-    // full 32-byte account pubkey (64 hex). `last_seen` is ms since epoch of the
-    // most recent time we learned/refreshed this contact.
-    db.execSQL(
-        """CREATE TABLE mesh_contacts(
-             pubkey_hex TEXT PRIMARY KEY,
-             name TEXT,
-             last_seen INT)""")
-    db.execSQL("CREATE INDEX idx_messages_convo ON messages(convo_pk, msg_pk)")
-    db.execSQL("CREATE INDEX idx_convo_addr ON conversations(peer_address)")
-    db.execSQL("CREATE INDEX idx_convo_lib ON conversations(lib_convo_id)")
-  }
+    val CALLBACK =
+        object : SupportSQLiteOpenHelper.Callback(DB_VERSION) {
+          override fun onCreate(db: SupportSQLiteDatabase) = createSchema(db)
 
-  override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-    var v = oldVersion
-    while (v < newVersion) {
-      v++
-      when (v) {
-        2 -> {
-          db.execSQL("ALTER TABLE conversations ADD COLUMN is_group INT DEFAULT 0")
-          db.execSQL("ALTER TABLE conversations ADD COLUMN group_name TEXT")
-          db.execSQL("ALTER TABLE messages ADD COLUMN sender_account TEXT")
-          db.execSQL(
-              """CREATE TABLE group_members(
-                   convo_pk INT REFERENCES conversations,
-                   address TEXT, is_self INT DEFAULT 0, added_at INT,
-                   PRIMARY KEY(convo_pk, address))""")
+          override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) =
+              migrateSchema(db, oldVersion, newVersion)
         }
-        3 -> {
-          // #112: only the device that CREATED a group may re-create it after a
-          // restart. Two members re-creating would fork the group, and a joiner's
-          // roster is partial (#95) so it would silently drop members. Groups that
-          // already exist get 0 — they are unrecoverable anyway.
-          db.execSQL("ALTER TABLE conversations ADD COLUMN created_by_me INT DEFAULT 0")
-        }
-        4 -> {
-          // #153: a local, user-asserted "verified" flag for a contact (I confirmed
-          // this address belongs to this person). Local-only, never broadcast.
-          db.execSQL("ALTER TABLE conversations ADD COLUMN verified INT DEFAULT 0")
-        }
-        5 -> {
-          // #165 (docs/mesh-transport.md): per-conversation transport tag
-          // ('logos'|'mesh'). Existing rows are Logos conversations.
-          db.execSQL("ALTER TABLE conversations ADD COLUMN transport TEXT DEFAULT 'logos'")
-        }
-        6 -> {
-          // #165 (docs/mesh-transport.md): per-message transport tag
-          // ('logos'|'mesh') — one shared timeline, mesh rows badged.
-          db.execSQL("ALTER TABLE messages ADD COLUMN sent_via TEXT DEFAULT 'logos'")
-        }
-        7 -> {
-          // #168 (Phase 2): local contact↔mesh-identity mapping for group mirroring.
-          db.execSQL(
-              """CREATE TABLE mesh_map(
-                   logos_address TEXT PRIMARY KEY,
-                   mesh_pubkey TEXT NOT NULL,
-                   mesh_name TEXT,
-                   mapped_at INT)""")
-        }
-        8 -> {
-          // #168 (Phase 2c): per-group mesh-mirror state. mesh_mode=1 routes the
-          // group's sends over the private channel at mesh_channel_idx.
-          db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_mode INT DEFAULT 0")
-          db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_idx INT")
-          db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_key TEXT")
-        }
-        9 -> {
-          // #175/#176: one-time collapse of duplicate 1:1s sharing an account.
-          dedupeDirectByAddress(db)
-        }
-        10 -> {
-          // #172: durable MeshCore contact roster (was in-memory only).
-          db.execSQL(
-              """CREATE TABLE mesh_contacts(
-                   pubkey_hex TEXT PRIMARY KEY,
-                   name TEXT,
-                   last_seen INT)""")
-        }
-        else -> throw IllegalStateException("no migration to schema v$v")
-      }
+
+    private fun createSchema(db: SupportSQLiteDatabase) {
+      db.execSQL("CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT)")
+      db.execSQL(
+          """CREATE TABLE IF NOT EXISTS conversations(
+               convo_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+               peer_address TEXT,
+               lib_convo_id TEXT,
+               nickname TEXT,
+               is_group INT DEFAULT 0,
+               group_name TEXT,
+               created_by_me INT DEFAULT 0,
+               verified INT DEFAULT 0,
+               transport TEXT DEFAULT 'logos',
+               mesh_mode INT DEFAULT 0,
+               mesh_channel_idx INT,
+               mesh_channel_key TEXT,
+               created_at INT, last_message_at INT, unread INT DEFAULT 0)""")
+      db.execSQL(
+          """CREATE TABLE IF NOT EXISTS messages(
+               msg_pk INTEGER PRIMARY KEY AUTOINCREMENT,
+               convo_pk INT REFERENCES conversations,
+               direction TEXT CHECK(direction IN ('in','out')),
+               content TEXT, sent_at INT, sender_account TEXT,
+               sent_via TEXT DEFAULT 'logos',
+               status TEXT CHECK(status IN ('pending','sent','failed','received')))""")
+      // Group roster (app-side, best-effort): the creator records itself + each
+      // member it adds. The lib does not expose a roster verb in this wrapper, so
+      // joiner-side enumeration is a follow-up (see docs/m2prime-log.md).
+      db.execSQL(
+          """CREATE TABLE IF NOT EXISTS group_members(
+               convo_pk INT REFERENCES conversations,
+               address TEXT, is_self INT DEFAULT 0, added_at INT,
+               PRIMARY KEY(convo_pk, address))""")
+      // #168 (Phase 2): local mapping from a Logos address (1:1 contact peer_address
+      // or a group member address) → a MeshCore identity. Like `verified`, this is a
+      // local user assertion ("this person on Logos IS this mesh pubkey"), never
+      // broadcast. Used to mirror a group into a mesh channel among mapped members.
+      db.execSQL(
+          """CREATE TABLE IF NOT EXISTS mesh_map(
+               logos_address TEXT PRIMARY KEY,
+               mesh_pubkey TEXT NOT NULL,
+               mesh_name TEXT,
+               mapped_at INT)""")
+      // #172: durable MeshCore contact roster (peers heard over LoRa). Keyed by the
+      // full 32-byte account pubkey (64 hex). `last_seen` is ms since epoch of the
+      // most recent time we learned/refreshed this contact.
+      db.execSQL(
+          """CREATE TABLE IF NOT EXISTS mesh_contacts(
+               pubkey_hex TEXT PRIMARY KEY,
+               name TEXT,
+               last_seen INT)""")
+      db.execSQL("CREATE INDEX IF NOT EXISTS idx_messages_convo ON messages(convo_pk, msg_pk)")
+      db.execSQL("CREATE INDEX IF NOT EXISTS idx_convo_addr ON conversations(peer_address)")
+      db.execSQL("CREATE INDEX IF NOT EXISTS idx_convo_lib ON conversations(lib_convo_id)")
     }
-  }
 
-  /**
-   * #175/#176: collapse duplicate 1:1 conversations that share a peer_address (a
-   * reinstalled peer forked a new convo). Runs on the migration's [db] (not the
-   * helper methods, which would re-enter getWritableDatabase during onUpgrade).
-   * Survivor = the labeled row if any, else the lowest convo_pk; it adopts the
-   * most-recently-active lib_convo_id (the live binding) and all messages.
-   */
-  private fun dedupeDirectByAddress(db: SQLiteDatabase) {
-    val dupAddrs = mutableListOf<String>()
-    db.rawQuery(
-            "SELECT peer_address FROM conversations " +
-                "WHERE is_group=0 AND peer_address IS NOT NULL " +
-                "GROUP BY peer_address HAVING COUNT(*)>1",
-            null)
-        .use { while (it.moveToNext()) dupAddrs.add(it.getString(0)) }
-    for (addr in dupAddrs) {
-      data class Row(val pk: Long, val labeled: Boolean, val libId: String?, val at: Long)
-      val rows = mutableListOf<Row>()
-      db.rawQuery(
-              "SELECT convo_pk, nickname, lib_convo_id, last_message_at " +
-                  "FROM conversations WHERE is_group=0 AND peer_address=?",
-              arrayOf(addr))
-          .use {
-            while (it.moveToNext()) {
-              rows.add(
-                  Row(
-                      it.getLong(0),
-                      !it.isNull(1) && it.getString(1).isNotEmpty(),
-                      if (it.isNull(2)) null else it.getString(2),
-                      it.getLong(3)))
-            }
+    private fun migrateSchema(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+      var v = oldVersion
+      while (v < newVersion) {
+        v++
+        when (v) {
+          2 -> {
+            db.execSQL("ALTER TABLE conversations ADD COLUMN is_group INT DEFAULT 0")
+            db.execSQL("ALTER TABLE conversations ADD COLUMN group_name TEXT")
+            db.execSQL("ALTER TABLE messages ADD COLUMN sender_account TEXT")
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS group_members(
+                     convo_pk INT REFERENCES conversations,
+                     address TEXT, is_self INT DEFAULT 0, added_at INT,
+                     PRIMARY KEY(convo_pk, address))""")
           }
-      if (rows.size < 2) continue
-      val survivor = (rows.firstOrNull { it.labeled } ?: rows.minByOrNull { it.pk }!!).pk
-      // The live binding = the lib_convo_id of the most-recently-active row.
-      val liveLibId = rows.filter { it.libId != null }.maxByOrNull { it.at }?.libId
-      db.beginTransaction()
-      try {
-        for (r in rows) {
-          if (r.pk == survivor) continue
-          db.execSQL("UPDATE messages SET convo_pk=? WHERE convo_pk=?", arrayOf(survivor, r.pk))
-          db.execSQL("DELETE FROM group_members WHERE convo_pk=?", arrayOf(r.pk))
-          db.execSQL("DELETE FROM conversations WHERE convo_pk=?", arrayOf(r.pk))
+          3 -> {
+            // #112: only the device that CREATED a group may re-create it after a
+            // restart. Two members re-creating would fork the group, and a joiner's
+            // roster is partial (#95) so it would silently drop members. Groups that
+            // already exist get 0 — they are unrecoverable anyway.
+            db.execSQL("ALTER TABLE conversations ADD COLUMN created_by_me INT DEFAULT 0")
+          }
+          4 -> {
+            // #153: a local, user-asserted "verified" flag for a contact (I confirmed
+            // this address belongs to this person). Local-only, never broadcast.
+            db.execSQL("ALTER TABLE conversations ADD COLUMN verified INT DEFAULT 0")
+          }
+          5 -> {
+            // #165 (docs/mesh-transport.md): per-conversation transport tag
+            // ('logos'|'mesh'). Existing rows are Logos conversations.
+            db.execSQL("ALTER TABLE conversations ADD COLUMN transport TEXT DEFAULT 'logos'")
+          }
+          6 -> {
+            // #165 (docs/mesh-transport.md): per-message transport tag
+            // ('logos'|'mesh') — one shared timeline, mesh rows badged.
+            db.execSQL("ALTER TABLE messages ADD COLUMN sent_via TEXT DEFAULT 'logos'")
+          }
+          7 -> {
+            // #168 (Phase 2): local contact↔mesh-identity mapping for group mirroring.
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS mesh_map(
+                     logos_address TEXT PRIMARY KEY,
+                     mesh_pubkey TEXT NOT NULL,
+                     mesh_name TEXT,
+                     mapped_at INT)""")
+          }
+          8 -> {
+            // #168 (Phase 2c): per-group mesh-mirror state. mesh_mode=1 routes the
+            // group's sends over the private channel at mesh_channel_idx.
+            db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_mode INT DEFAULT 0")
+            db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_idx INT")
+            db.execSQL("ALTER TABLE conversations ADD COLUMN mesh_channel_key TEXT")
+          }
+          9 -> {
+            // #175/#176: one-time collapse of duplicate 1:1s sharing an account.
+            dedupeDirectByAddress(db)
+          }
+          10 -> {
+            // #172: durable MeshCore contact roster (was in-memory only).
+            db.execSQL(
+                """CREATE TABLE IF NOT EXISTS mesh_contacts(
+                     pubkey_hex TEXT PRIMARY KEY,
+                     name TEXT,
+                     last_seen INT)""")
+          }
+          else -> throw IllegalStateException("no migration to schema v$v")
         }
-        if (liveLibId != null) {
-          db.execSQL(
-              "UPDATE conversations SET lib_convo_id=? WHERE convo_pk=?", arrayOf(liveLibId, survivor))
-        }
-        db.execSQL(
-            "UPDATE conversations SET last_message_at=" +
-                "COALESCE((SELECT MAX(sent_at) FROM messages WHERE convo_pk=?), last_message_at) " +
-                "WHERE convo_pk=?",
-            arrayOf(survivor, survivor))
-        db.setTransactionSuccessful()
-      } finally {
-        db.endTransaction()
       }
     }
+
+    /**
+     * #175/#176: collapse duplicate 1:1 conversations that share a peer_address (a
+     * reinstalled peer forked a new convo). Runs on the migration's [db] (not the
+     * helper methods, which would re-enter getWritableDatabase during onUpgrade).
+     * Survivor = the labeled row if any, else the lowest convo_pk; it adopts the
+     * most-recently-active lib_convo_id (the live binding) and all messages.
+     */
+    private fun dedupeDirectByAddress(db: SupportSQLiteDatabase) {
+      val dupAddrs = mutableListOf<String>()
+      db.query(
+              "SELECT peer_address FROM conversations " +
+                  "WHERE is_group=0 AND peer_address IS NOT NULL " +
+                  "GROUP BY peer_address HAVING COUNT(*)>1")
+          .use { while (it.moveToNext()) dupAddrs.add(it.getString(0)) }
+      for (addr in dupAddrs) {
+        data class Row(val pk: Long, val labeled: Boolean, val libId: String?, val at: Long)
+        val rows = mutableListOf<Row>()
+        db.query(
+                "SELECT convo_pk, nickname, lib_convo_id, last_message_at " +
+                    "FROM conversations WHERE is_group=0 AND peer_address=?",
+                arrayOf(addr))
+            .use {
+              while (it.moveToNext()) {
+                rows.add(
+                    Row(
+                        it.getLong(0),
+                        !it.isNull(1) && it.getString(1).isNotEmpty(),
+                        if (it.isNull(2)) null else it.getString(2),
+                        it.getLong(3)))
+              }
+            }
+        if (rows.size < 2) continue
+        val survivor = (rows.firstOrNull { it.labeled } ?: rows.minByOrNull { it.pk }!!).pk
+        // The live binding = the lib_convo_id of the most-recently-active row.
+        val liveLibId = rows.filter { it.libId != null }.maxByOrNull { it.at }?.libId
+        db.beginTransaction()
+        try {
+          for (r in rows) {
+            if (r.pk == survivor) continue
+            db.execSQL("UPDATE messages SET convo_pk=? WHERE convo_pk=?", arrayOf(survivor, r.pk))
+            db.execSQL("DELETE FROM group_members WHERE convo_pk=?", arrayOf(r.pk))
+            db.execSQL("DELETE FROM conversations WHERE convo_pk=?", arrayOf(r.pk))
+          }
+          if (liveLibId != null) {
+            db.execSQL(
+                "UPDATE conversations SET lib_convo_id=? WHERE convo_pk=?", arrayOf(liveLibId, survivor))
+          }
+          db.execSQL(
+              "UPDATE conversations SET last_message_at=" +
+                  "COALESCE((SELECT MAX(sent_at) FROM messages WHERE convo_pk=?), last_message_at) " +
+                  "WHERE convo_pk=?",
+              arrayOf(survivor, survivor))
+          db.setTransactionSuccessful()
+        } finally {
+          db.endTransaction()
+        }
+      }
+    }
+  }
+
+  private val helper: SupportSQLiteOpenHelper =
+      factory.create(
+          SupportSQLiteOpenHelper.Configuration.builder(context)
+              .name(name)
+              .callback(CALLBACK)
+              .build())
+
+  // Delegating accessors so the existing writableDatabase.…/readableDatabase.…
+  // call sites (and the Robolectric tests that read `db.readableDatabase`) stay
+  // unchanged. Public to preserve the SQLiteOpenHelper API the tests depend on.
+  val writableDatabase: SupportSQLiteDatabase
+    get() = helper.writableDatabase
+
+  val readableDatabase: SupportSQLiteDatabase
+    get() = helper.readableDatabase
+
+  fun close() {
+    helper.close()
   }
 
   // -- kv --------------------------------------------------------------------
 
   fun kvGet(key: String): String? =
-      readableDatabase.rawQuery("SELECT value FROM kv WHERE key=?", arrayOf(key)).use {
+      readableDatabase.query("SELECT value FROM kv WHERE key=?", arrayOf(key)).use {
         if (it.moveToFirst()) it.getString(0) else null
       }
 
@@ -268,9 +299,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       createdByMe: Boolean = false,
       transport: String = "logos",
   ): Long =
-      writableDatabase.insertOrThrow(
+      writableDatabase.insert(
           "conversations",
-          null,
+          android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
           ContentValues().apply {
             if (peerAddress != null) put("peer_address", peerAddress) else putNull("peer_address")
             if (libConvoId != null) put("lib_convo_id", libConvoId) else putNull("lib_convo_id")
@@ -338,7 +369,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
    */
   fun meshDmByPrefix(prefixHex: String): Long? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT convo_pk FROM conversations WHERE transport='mesh' AND is_group=0 " +
                   "AND lib_convo_id LIKE ? LIMIT 1",
               arrayOf("mesh:dm:$prefixHex%"))
@@ -376,13 +407,13 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** True if this conversation is an MLS group. */
   fun isGroup(convoPk: Long): Boolean =
       readableDatabase
-          .rawQuery("SELECT is_group FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .query("SELECT is_group FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
           .use { it.moveToFirst() && it.getInt(0) == 1 }
 
   /** #112: did THIS device create the group? Only the creator may re-create it. */
   fun createdByMe(convoPk: Long): Boolean =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT created_by_me FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use { it.moveToFirst() && it.getInt(0) == 1 }
@@ -390,14 +421,14 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** A group's stored name (#112: reused verbatim when re-creating a dead group). */
   fun groupNameOf(convoPk: Long): String? =
       readableDatabase
-          .rawQuery("SELECT group_name FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .query("SELECT group_name FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
           .use { if (it.moveToFirst()) it.getString(0) else null }
 
   /** Every roster address for a group (#112: who to re-invite). */
   fun groupMemberAddresses(convoPk: Long): List<String> {
     val out = mutableListOf<String>()
     readableDatabase
-        .rawQuery(
+        .query(
             "SELECT address FROM group_members WHERE convo_pk=? ORDER BY added_at ASC",
             arrayOf(convoPk.toString()))
         .use { cur -> while (cur.moveToNext()) cur.getString(0)?.let { out.add(it) } }
@@ -436,7 +467,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
     // #168: LEFT JOIN the local mesh mapping so each member carries whether (and to
     // which mesh identity) it is mapped — the group UI computes "N/M mapped" from this.
     readableDatabase
-        .rawQuery(
+        .query(
             "SELECT m.address, m.is_self, x.mesh_pubkey, x.mesh_name " +
                 "FROM group_members m LEFT JOIN mesh_map x ON x.logos_address = m.address " +
                 "WHERE m.convo_pk=? ORDER BY m.is_self DESC, m.added_at ASC",
@@ -474,7 +505,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** The mesh pubkey a Logos address is mapped to, or null. */
   fun meshMapFor(logosAddress: String): String? =
       readableDatabase
-          .rawQuery("SELECT mesh_pubkey FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
+          .query("SELECT mesh_pubkey FROM mesh_map WHERE logos_address=?", arrayOf(logosAddress))
           .use { if (it.moveToFirst()) it.getString(0) else null }
 
   /**
@@ -485,7 +516,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   fun listMeshMapJson(): String {
     val arr = JSONArray()
     readableDatabase
-        .rawQuery("SELECT logos_address, mesh_pubkey, mesh_name FROM mesh_map", null)
+        .query("SELECT logos_address, mesh_pubkey, mesh_name FROM mesh_map")
         .use {
           while (it.moveToNext()) {
             arr.put(
@@ -523,10 +554,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   fun listMeshContactsJson(): String {
     val arr = JSONArray()
     readableDatabase
-        .rawQuery(
+        .query(
             "SELECT pubkey_hex, name, last_seen FROM mesh_contacts " +
-                "ORDER BY last_seen DESC, pubkey_hex ASC",
-            null)
+                "ORDER BY last_seen DESC, pubkey_hex ASC")
         .use { cur ->
           while (cur.moveToNext()) {
             arr.put(
@@ -547,7 +577,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
    */
   fun meshContactName(prefixHex: String): String? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT name FROM mesh_contacts WHERE pubkey_hex LIKE ? LIMIT 1",
               arrayOf("$prefixHex%"))
           .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
@@ -570,7 +600,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** True if this group is currently mirrored onto MeshCore (dual-transport). */
   fun isMeshMode(convoPk: Long): Boolean =
       readableDatabase
-          .rawQuery("SELECT mesh_mode FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .query("SELECT mesh_mode FROM conversations WHERE convo_pk=?", arrayOf(convoPk.toString()))
           .use { it.moveToFirst() && it.getInt(0) == 1 }
 
   /**
@@ -585,7 +615,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
    */
   fun dedupInbound(convoPk: Long, content: String, atMs: Long, via: String): Long =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT msg_pk, sent_via FROM messages WHERE convo_pk=? AND content=? " +
                   "AND sent_at>=? AND sent_at<=? ORDER BY msg_pk DESC LIMIT 1",
               arrayOf(
@@ -607,7 +637,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** (channelIdx, channelKey) of a group's mesh mirror, or null if never switched. */
   fun meshMirrorFor(convoPk: Long): Pair<Int, String>? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT mesh_channel_idx, mesh_channel_key FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use {
@@ -619,20 +649,20 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
    *  channel traffic into the mirrored group instead of a standalone channel convo. */
   fun groupForMeshChannel(idx: Int): Long =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT convo_pk FROM conversations WHERE is_group=1 AND mesh_channel_idx=? LIMIT 1",
               arrayOf(idx.toString()))
           .use { if (it.moveToFirst()) it.getLong(0) else -1L }
 
   fun groupMemberCount(convoPk: Long): Int =
       readableDatabase
-          .rawQuery("SELECT COUNT(*) FROM group_members WHERE convo_pk=?", arrayOf(convoPk.toString()))
+          .query("SELECT COUNT(*) FROM group_members WHERE convo_pk=?", arrayOf(convoPk.toString()))
           .use { it.moveToFirst(); it.getInt(0) }
 
   /** convo_pk for a peer address, or null. */
   fun convoPkByAddress(peerAddress: String): Long? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT convo_pk FROM conversations WHERE peer_address=? LIMIT 1",
               arrayOf(peerAddress))
           .use { if (it.moveToFirst()) it.getLong(0) else null }
@@ -640,7 +670,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** convo_pk for a lib conversation id, or null. */
   fun convoPkByLibId(libConvoId: String): Long? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT convo_pk FROM conversations WHERE lib_convo_id=? LIMIT 1",
               arrayOf(libConvoId))
           .use { if (it.moveToFirst()) it.getLong(0) else null }
@@ -648,7 +678,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** The lib conversation id to send on for this convo, or null (not yet bound). */
   fun libConvoIdOf(convoPk: Long): String? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT lib_convo_id FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
@@ -656,7 +686,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** The peer address for this convo, or null (unverified / not yet known). */
   fun peerAddressOf(convoPk: Long): String? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT peer_address FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use { if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null }
@@ -771,9 +801,9 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
       senderAccount: String? = null,
       sentVia: String = "logos", // #165: transport this message went over ('logos'|'mesh')
   ): Long =
-      writableDatabase.insertOrThrow(
+      writableDatabase.insert(
           "messages",
-          null,
+          android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
           ContentValues().apply {
             put("convo_pk", convoPk)
             put("direction", direction)
@@ -792,7 +822,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** (convoPk, content) of an outbound message — for retry. */
   fun outboundMessage(msgPk: Long): Pair<Long, String>? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT convo_pk, content FROM messages WHERE msg_pk=? AND direction='out'",
               arrayOf(msgPk.toString()))
           .use { if (it.moveToFirst()) Pair(it.getLong(0), it.getString(1)) else null }
@@ -802,7 +832,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** Display label: group name, else nickname, else short address, else "peer #pk". */
   fun displayNameFor(convoPk: Long): String? =
       readableDatabase
-          .rawQuery(
+          .query(
               "SELECT nickname, peer_address, group_name FROM conversations WHERE convo_pk=?",
               arrayOf(convoPk.toString()))
           .use { cur ->
@@ -819,7 +849,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   fun listConversationsJson(): String {
     val arr = JSONArray()
     readableDatabase
-        .rawQuery(
+        .query(
             """SELECT c.convo_pk, c.peer_address, c.nickname, c.lib_convo_id,
                       c.created_at, c.last_message_at, c.unread,
                       (SELECT content FROM messages m WHERE m.convo_pk=c.convo_pk
@@ -833,8 +863,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
                       (SELECT MAX(m.sent_at) FROM messages m
                          WHERE m.convo_pk=c.convo_pk AND m.direction='in')
                FROM conversations c
-               ORDER BY c.last_message_at DESC""",
-            null)
+               ORDER BY c.last_message_at DESC""")
         .use { cur ->
           while (cur.moveToNext()) {
             arr.put(
@@ -877,7 +906,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
         if (beforeMsgPk > 0) arrayOf(convoPk.toString(), beforeMsgPk.toString())
         else arrayOf(convoPk.toString())
     readableDatabase
-        .rawQuery(
+        .query(
             "SELECT msg_pk, direction, content, sent_at, status, sender_account, sent_via FROM messages WHERE $where ORDER BY msg_pk DESC LIMIT $limit",
             args)
         .use { cur ->
@@ -929,17 +958,17 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   }
 
   /** Dump every row of [table] as a JSON array of {column: value} objects. */
-  private fun dumpTable(db: SQLiteDatabase, table: String): JSONArray {
+  private fun dumpTable(db: SupportSQLiteDatabase, table: String): JSONArray {
     val arr = JSONArray()
-    db.rawQuery("SELECT * FROM $table", null).use { cur ->
+    db.query("SELECT * FROM $table").use { cur ->
       val cols = cur.columnNames
       while (cur.moveToNext()) {
         val obj = JSONObject()
         for (i in cols.indices) {
           when (cur.getType(i)) {
-            android.database.Cursor.FIELD_TYPE_NULL -> obj.put(cols[i], JSONObject.NULL)
-            android.database.Cursor.FIELD_TYPE_INTEGER -> obj.put(cols[i], cur.getLong(i))
-            android.database.Cursor.FIELD_TYPE_FLOAT -> obj.put(cols[i], cur.getDouble(i))
+            Cursor.FIELD_TYPE_NULL -> obj.put(cols[i], JSONObject.NULL)
+            Cursor.FIELD_TYPE_INTEGER -> obj.put(cols[i], cur.getLong(i))
+            Cursor.FIELD_TYPE_FLOAT -> obj.put(cols[i], cur.getDouble(i))
             else -> obj.put(cols[i], cur.getString(i))
           }
         }
@@ -952,7 +981,7 @@ class ChatDb(context: Context, name: String? = DB_NAME) :
   /** (conversations, messages) row counts — the boot log (JS-independent evidence). */
   fun counts(): Pair<Int, Int> {
     fun count(sql: String): Int =
-        readableDatabase.rawQuery(sql, null).use { it.moveToFirst(); it.getInt(0) }
+        readableDatabase.query(sql).use { it.moveToFirst(); it.getInt(0) }
     return Pair(
         count("SELECT COUNT(*) FROM conversations"), count("SELECT COUNT(*) FROM messages"))
   }
