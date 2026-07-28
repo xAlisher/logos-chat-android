@@ -203,91 +203,64 @@ const REC_AMPLITUDE_FALLBACK_MS = 500;
 // scaleY [floor..1]. getMaxAmplitude peaks are small for speech, so lift with a
 // mild curve (sqrt) to make normal talking fill the bar rather than hug the floor.
 const REC_WAVE_FLOOR = 0.12;
+// #257: max bar height (px) inside the 24px record row — the waveform grows
+// symmetrically from the centre line (recWave alignItems:center).
+const REC_WAVE_HEIGHT = 22;
+// #257: Booth-style live waveform in the composer — a rolling buffer of the recent
+// mic levels (newest on the right, flowing left as you speak), each bar coloured by
+// loudness (green → amber → orange). Driven by the REAL amplitude stream (~10 Hz);
+// if none arrives (older native build / stalled), a gentle synthetic scroll keeps
+// it alive so the row still reads as "listening".
 function RecordingWaveform() {
-  const bars = React.useRef(
-    Array.from({length: REC_WAVE_BARS}, (_, i) => ({
-      v: new Animated.Value(0.2 + ((i * 37) % 60) / 100),
-      min: 0.15 + ((i * 13) % 25) / 100,
-      max: 0.55 + ((i * 29) % 45) / 100,
-      dur: 320 + ((i * 53) % 380), // 320–700 ms per half-cycle
-    })),
-  ).current;
-  // #257: live once real mic levels are streaming; drives the synthetic-vs-real
-  // switch. A ref mirrors it so the amplitude listener (mounted once) reads the
-  // latest value without re-subscribing.
-  const [live, setLive] = useState(false);
+  const [levels, setLevels] = useState<number[]>(() =>
+    new Array(REC_WAVE_BARS).fill(REC_WAVE_FLOOR),
+  );
+  const buf = React.useRef<number[]>(new Array(REC_WAVE_BARS).fill(REC_WAVE_FLOOR));
   const liveRef = React.useRef(false);
 
-  // Synthetic fallback — the original oscillating loops. Runs ONLY while not live,
-  // so real amplitude and the synthetic loop never fight over the same values.
   useEffect(() => {
-    if (live) return;
-    const loops = bars.map(b => {
-      const loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(b.v, {
-            toValue: b.max,
-            duration: b.dur,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-          Animated.timing(b.v, {
-            toValue: b.min,
-            duration: b.dur,
-            easing: Easing.inOut(Easing.sin),
-            useNativeDriver: true,
-          }),
-        ]),
-      );
-      loop.start();
-      return loop;
-    });
-    return () => loops.forEach(l => l.stop());
-  }, [bars, live]);
-
-  // #257: real amplitude — subscribe once for the component's life. Each sample
-  // scrolls the wave one bar to the left and pushes the newest level on the right,
-  // so the bar visibly tracks the mic. useNativeDriver keeps the scaleY tweens off
-  // the JS thread (won't jank the record path). A watchdog flips back to synthetic
-  // if the stream stalls; the next sample flips it live again.
-  useEffect(() => {
-    const heights = new Array(REC_WAVE_BARS).fill(REC_WAVE_FLOOR);
+    const push = (level: number) => {
+      const clamped = Math.max(0, Math.min(1, level));
+      // sqrt lifts quiet speech off the floor so normal talking fills the bar.
+      const h = REC_WAVE_FLOOR + Math.sqrt(clamped) * (1 - REC_WAVE_FLOOR);
+      const b = buf.current;
+      b.shift();
+      b.push(h);
+      setLevels(b.slice());
+    };
     let watchdog: ReturnType<typeof setTimeout> | null = null;
     const unsub = subscribeRecordingAmplitude(level => {
-      if (!liveRef.current) {
-        liveRef.current = true;
-        setLive(true);
-      }
+      liveRef.current = true;
       if (watchdog) clearTimeout(watchdog);
       watchdog = setTimeout(() => {
         liveRef.current = false;
-        setLive(false);
       }, REC_AMPLITUDE_FALLBACK_MS);
-      const clamped = Math.max(0, Math.min(1, level));
-      const h = REC_WAVE_FLOOR + Math.sqrt(clamped) * (1 - REC_WAVE_FLOOR);
-      heights.shift();
-      heights.push(h);
-      for (let i = 0; i < REC_WAVE_BARS; i++) {
-        Animated.timing(bars[i].v, {
-          toValue: heights[i],
-          duration: 90,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }).start();
-      }
+      push(level);
     });
+    // Synthetic scroll — runs ONLY while no real levels are streaming.
+    const synth = setInterval(() => {
+      if (!liveRef.current) push(0.25 + Math.random() * 0.5);
+    }, 100);
     return () => {
       unsub();
+      clearInterval(synth);
       if (watchdog) clearTimeout(watchdog);
     };
-  }, [bars]);
+  }, []);
 
   return (
     <View style={styles.recWave} testID="rec-waveform" pointerEvents="none">
-      {bars.map((b, i) => (
-        <Animated.View
+      {levels.map((lv, i) => (
+        <View
           key={i}
-          style={[styles.recWaveBar, {transform: [{scaleY: b.v}]}]}
+          style={[
+            styles.recWaveBar,
+            {
+              height: Math.max(3, Math.round(lv * REC_WAVE_HEIGHT)),
+              backgroundColor:
+                lv < 0.4 ? '#22C55E' : lv < 0.7 ? '#EAB308' : '#FF7A33',
+            },
+          ]}
         />
       ))}
     </View>
@@ -1956,7 +1929,8 @@ const styles = StyleSheet.create({
     gap: 2,
     overflow: 'hidden',
   },
-  recWaveBar: {flex: 1, height: 20, borderRadius: 1.5, backgroundColor: colors.unread},
+  // #257: width via flex (equal bars); height + colour are set inline per level.
+  recWaveBar: {flex: 1, marginHorizontal: 0.5, borderRadius: 1.5},
   // #167: live char counter shown only for a mesh composer.
   charCount: {...type.caption, color: colors.textFaint},
   send: {
