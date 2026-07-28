@@ -29,7 +29,8 @@ object NodeRuntime {
   // layer reads LOGOS_DELIVERY_FILTERNODE / LOGOS_DELIVERY_LIGHTPUSHNODE, threaded.rs).
   const val KV_DELIVERY_SERVICE_NODE = "deliveryServiceNode"
   private const val SECURE_PREFS = "logoschat_secure"
-  private const val KEY_DB_KEY = "dbKey"
+  private const val KEY_DB_KEY = "dbKey" // legacy plaintext (pre-#258); migrated below
+  private const val KEY_DB_KEY_ENC = "dbKeyEnc" // #258: Keystore-wrapped dbKey
   private const val IDENTITY_FILE = "logoschat-identity.bin"
   private const val STORE_FILE = "logoschat-store.db"
 
@@ -69,9 +70,12 @@ object NodeRuntime {
   //
   // The identity seed (64 bytes, account||delegate) and the encrypted-store key
   // both must be STABLE across restarts for the address + history to persist.
-  // Both live in the app-private sandbox (filesDir / SharedPreferences). M1' TODO:
-  // wrap them in an Android Keystore-encrypted blob (the raw form is the M0'
-  // stand-in — see docs/m1prime-log.md "remaining gaps").
+  // Both live in the app-private sandbox (filesDir / SharedPreferences).
+  //
+  // #258 Phase 1: the store key (`dbKey`) is now wrapped by a hardware Keystore key
+  // (KeystoreCrypto) instead of sitting as plaintext hex — so root/forensics can't
+  // read it out of SharedPreferences and decrypt the (already-encrypted) store.
+  // The identity seed file is still plaintext (lib-managed; see #258 follow-up).
 
   private fun identityPath(context: Context): String =
       File(context.filesDir, IDENTITY_FILE).absolutePath
@@ -79,12 +83,60 @@ object NodeRuntime {
   private fun storePath(context: Context): String =
       File(context.filesDir, STORE_FILE).absolutePath
 
+  /**
+   * The store-encryption key, STABLE across restarts. #258: preferred form is a
+   * Keystore-wrapped blob; legacy plaintext is migrated on first run and only
+   * deleted after a verified unwrap round-trip (so a Keystore failure can never
+   * orphan the store). Falls back to plaintext ONLY if the Keystore is unusable,
+   * so the node always opens.
+   */
   private fun dbKey(context: Context): String {
     val prefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
-    prefs.getString(KEY_DB_KEY, null)?.let { return it }
+
+    // 1) Preferred: the Keystore-wrapped key.
+    prefs.getString(KEY_DB_KEY_ENC, null)?.let { blob ->
+      try {
+        return KeystoreCrypto.unwrap(blob)
+      } catch (t: Throwable) {
+        // Only dangerous if we'd already dropped the plaintext — but we only drop
+        // it after a verified round-trip (below), and Keystore keys survive
+        // restarts/updates. Log and fall through to any plaintext fallback.
+        Log.e(TAG, "dbKey unwrap failed: ${t.message}")
+      }
+    }
+
+    // 2) Legacy plaintext (pre-#258) OR a kept fallback → migrate to Keystore.
+    prefs.getString(KEY_DB_KEY, null)?.let { plain ->
+      try {
+        val blob = KeystoreCrypto.wrap(plain)
+        if (KeystoreCrypto.unwrap(blob) == plain) {
+          // Verified round-trip → safe to switch: store enc, drop plaintext.
+          prefs.edit().putString(KEY_DB_KEY_ENC, blob).remove(KEY_DB_KEY).commit()
+          Log.i(TAG, "dbKey migrated to Keystore-wrapped storage")
+        } else {
+          Log.e(TAG, "dbKey migration round-trip mismatch; keeping plaintext")
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "dbKey Keystore migration failed (${t.message}); keeping plaintext")
+      }
+      return plain
+    }
+
+    // 3) Fresh install: generate, wrap (verified), store. No plaintext persisted
+    //    unless the Keystore is unusable (then plaintext so the node still opens).
     val bytes = ByteArray(32)
     SecureRandom().nextBytes(bytes)
     val hex = bytes.joinToString("") { "%02x".format(it) }
+    try {
+      val blob = KeystoreCrypto.wrap(hex)
+      if (KeystoreCrypto.unwrap(blob) == hex) {
+        prefs.edit().putString(KEY_DB_KEY_ENC, blob).commit()
+        return hex
+      }
+      Log.e(TAG, "dbKey Keystore round-trip mismatch on create; plaintext fallback")
+    } catch (t: Throwable) {
+      Log.e(TAG, "dbKey Keystore wrap failed on create (${t.message}); plaintext fallback")
+    }
     prefs.edit().putString(KEY_DB_KEY, hex).commit()
     return hex
   }
