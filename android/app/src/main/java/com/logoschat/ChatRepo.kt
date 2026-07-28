@@ -34,6 +34,17 @@ object ChatRepo {
    */
   const val CONTINUES_PREFIX = "logos-continues:"
 
+  /**
+   * #252: a JOINER auto-sends this control message to a group right after it
+   * joins/rejoins, so the creator learns it's in — MLS gives the adder NO signal
+   * that an addee accepted the welcome until that member transmits. The SOH
+   * () prefix keeps it from colliding with real text. It renders nothing:
+   * onMessageReceived turns it into a 'member_joined' Outcome (no bubble, no
+   * unread, no notification since the kind isn't "message"), and the joiner sends
+   * it WITHOUT recording a local row.
+   */
+  const val JOIN_ACK = "\u0001peers/join-ack"
+
   @Volatile private var db: ChatDb? = null
   /** App context retained for image file storage (#197); set in [init]. */
   @Volatile private var appContext: Context? = null
@@ -402,6 +413,15 @@ object ChatRepo {
       } else {
         d.setPeerAddress(convoPk, senderAccount)
       }
+    }
+    // #252: a join-ack control message — mark the sender joined and render
+    // NOTHING (no row, no unread, no notification since kind != "message"). This
+    // is the reliable "a member accepted the invite" signal the creator otherwise
+    // never gets. Return before persisting/notifying.
+    if (content == JOIN_ACK) {
+      return if (senderAccount != null)
+        Outcome("member_joined", convoPk, "in", "", senderAccount)
+      else null
     }
     // #250: tag a 1:1 message that just arrived over BLE (a BLE ingest stamped the
     // marker moments ago) so its bubble renders blue (#243), matching the outgoing

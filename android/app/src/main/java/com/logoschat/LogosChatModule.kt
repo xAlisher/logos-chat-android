@@ -452,6 +452,30 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
    * (creating it from the peer address if not yet bound), records the outbound
    * message, sends raw UTF-8 bytes. Resolves '{"msgPk":n,"status":"sent"|"failed"}'.
    */
+  /**
+   * #252: send the join-ack control message to a group — MLS-encrypted like any
+   * message, but recorded as NO local bubble (fire-and-forget). The receivers'
+   * onMessageReceived turns it into a 'member_joined' signal. Resolves 'ok'|'failed'.
+   */
+  @ReactMethod
+  fun sendJoinAck(convoPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("join_ack", "node not started")
+        return@execute
+      }
+      val libConvoId = ChatRepo.requireDb().libConvoIdOf(convoPk.toLong())
+      if (libConvoId == null) {
+        promise.reject("join_ack", "conversation not bound")
+        return@execute
+      }
+      val bytes = ChatRepo.JOIN_ACK.toByteArray(Charsets.UTF_8)
+      val rc = NodeBridge.chatSendMessage(c, libConvoId, bytes)
+      promise.resolve(if (rc == 0) "ok" else "failed")
+    }
+  }
+
   @ReactMethod
   fun sendMessageTo(convoPk: Double, textUtf8: String, promise: Promise) {
     NodeRuntime.executor.execute {

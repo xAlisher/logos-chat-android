@@ -277,6 +277,10 @@ function describePeer(address: string): string {
  */
 const pendingJoins: Record<number, string[]> = {};
 
+/** #252: groups this session has already sent a join-ack for, so `group_ready`
+ *  firing again (e.g. a reload) doesn't re-ack. Cleared entry retried on failure. */
+const ackedGroups = new Set<number>();
+
 // #228: system notes (invited/joined/left/group-ended) persist per conversation in
 // the KV store so they survive an app restart. Bounded so KV never grows unbounded.
 const SYSLINE_CAP = 60;
@@ -1275,6 +1279,27 @@ function notifyJoin(convoPk: number) {
 addLogosChatListener(e => {
   const s = useChatStore.getState();
   if (e.source === 'repo' && e.eventType === 'db_changed') {
+    // #252: a JOINER just joined/rejoined a group (group_ready fires only on the
+    // joiner — the creator makes the group directly). Auto-send a join-ack so the
+    // creator learns immediately; MLS gives the adder no signal until a member
+    // transmits. Delay past the subscription-settle window (#192) so it delivers,
+    // and only once per convo per session.
+    if (e.kind === 'group_ready' && e.convoPk != null) {
+      const convoPk = e.convoPk;
+      if (!ackedGroups.has(convoPk)) {
+        ackedGroups.add(convoPk);
+        setTimeout(() => {
+          LogosChat.sendJoinAck(convoPk).catch(() => ackedGroups.delete(convoPk));
+        }, JOIN_SETTLE_MS + 500);
+      }
+    }
+    // #252: a member's join-ack arrived → mark them joined (ground truth, no
+    // bubble). Clears a stale "invited"/"hasn't joined" the members_changed path
+    // missed for a re-invited same-identity member.
+    if (e.kind === 'member_joined' && e.convoPk != null && e.sender != null) {
+      clearPendingInvite(e.convoPk, e.sender.toLowerCase());
+      s.setMemberStatus(e.convoPk, e.sender, 'joined');
+    }
     // #112: the invitee's join committed — release any message held for it.
     if (e.kind === 'members_changed' && e.convoPk != null) {
       const convoPk = e.convoPk;

@@ -117,6 +117,9 @@ interface LogosChatNative {
   ): Promise<number>;
   /** Send into a conversation (1:1 OR group — same verb). Resolves '{"msgPk":n,"status":…}'. */
   sendMessageTo(convoPk: number, textUtf8: string): Promise<string>;
+  /** #252: send the join-ack control message to a group (no local bubble) so the
+   *  creator learns this device joined. Resolves 'ok' | 'failed'. */
+  sendJoinAck(convoPk: number): Promise<string>;
   /**
    * #235: encrypt `textUtf8` for `convoPk` and return the outbound envelope
    * WITHOUT publishing — JSON `{"deliveryAddress":"…","dataB64":"…"}` — so the
