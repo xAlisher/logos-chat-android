@@ -76,7 +76,11 @@ import {parseVoiceLocal} from '../native/voiceMsg';
 import {parseLocation, formatLatLng, geoUri, type LatLng} from '../native/locMsg';
 import {VoiceBubble} from '../components/VoiceBubble';
 import {CameraIcon, LocationIcon, MicIcon} from '../components/MediaIcons';
-import AudioRecorder, {parseRecording, MAX_RECORDING_MS} from '../native/Audio';
+import AudioRecorder, {
+  parseRecording,
+  MAX_RECORDING_MS,
+  subscribeRecordingAmplitude,
+} from '../native/Audio';
 import {deriveComposerState} from '../stores/groupState';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -184,14 +188,21 @@ function resolveAttribution(
 }
 
 // #257: a live moving waveform in the record area, shown while capturing a voice
-// note. The native recorder does NOT stream the mic level to JS — it buffers
-// getMaxAmplitude() internally and only emits the "maxDuration" cap event (see
-// AudioModule.kt) — so drawing the *true* amplitude would need a native change.
-// Instead we animate a lively synthetic equalizer that signals "listening" without
-// faking a specific level. Each bar owns a looping scaleY oscillation with a
-// varied range/period (native-driven, so it stays smooth); mounting on the
-// recording branch starts the loops, unmounting stops them.
+// note. The native recorder now STREAMS the mic level to JS: it polls
+// getMaxAmplitude() (~every 100 ms) and emits {eventType:"amplitude", level:0..1}
+// on the "AudioRecorderEvent" channel (see AudioModule.kt + subscribeRecording-
+// Amplitude). We scroll those real levels across the bars — a Booth-style
+// equalizer that reacts to how loud you actually speak. If no amplitude arrives
+// (older native build, or the stream stalls), we fall back to a synthetic
+// oscillation so the bar still reads as "listening".
 const REC_WAVE_BARS = 28;
+// #257: if no real mic level lands within this window, drop back to the synthetic
+// loop (and flip straight back to live the moment samples resume).
+const REC_AMPLITUDE_FALLBACK_MS = 500;
+// #257: floor so a quiet room still shows a visible stub; map level 0..1 onto
+// scaleY [floor..1]. getMaxAmplitude peaks are small for speech, so lift with a
+// mild curve (sqrt) to make normal talking fill the bar rather than hug the floor.
+const REC_WAVE_FLOOR = 0.12;
 function RecordingWaveform() {
   const bars = React.useRef(
     Array.from({length: REC_WAVE_BARS}, (_, i) => ({
@@ -201,7 +212,16 @@ function RecordingWaveform() {
       dur: 320 + ((i * 53) % 380), // 320–700 ms per half-cycle
     })),
   ).current;
+  // #257: live once real mic levels are streaming; drives the synthetic-vs-real
+  // switch. A ref mirrors it so the amplitude listener (mounted once) reads the
+  // latest value without re-subscribing.
+  const [live, setLive] = useState(false);
+  const liveRef = React.useRef(false);
+
+  // Synthetic fallback — the original oscillating loops. Runs ONLY while not live,
+  // so real amplitude and the synthetic loop never fight over the same values.
   useEffect(() => {
+    if (live) return;
     const loops = bars.map(b => {
       const loop = Animated.loop(
         Animated.sequence([
@@ -223,7 +243,45 @@ function RecordingWaveform() {
       return loop;
     });
     return () => loops.forEach(l => l.stop());
+  }, [bars, live]);
+
+  // #257: real amplitude — subscribe once for the component's life. Each sample
+  // scrolls the wave one bar to the left and pushes the newest level on the right,
+  // so the bar visibly tracks the mic. useNativeDriver keeps the scaleY tweens off
+  // the JS thread (won't jank the record path). A watchdog flips back to synthetic
+  // if the stream stalls; the next sample flips it live again.
+  useEffect(() => {
+    const heights = new Array(REC_WAVE_BARS).fill(REC_WAVE_FLOOR);
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    const unsub = subscribeRecordingAmplitude(level => {
+      if (!liveRef.current) {
+        liveRef.current = true;
+        setLive(true);
+      }
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        liveRef.current = false;
+        setLive(false);
+      }, REC_AMPLITUDE_FALLBACK_MS);
+      const clamped = Math.max(0, Math.min(1, level));
+      const h = REC_WAVE_FLOOR + Math.sqrt(clamped) * (1 - REC_WAVE_FLOOR);
+      heights.shift();
+      heights.push(h);
+      for (let i = 0; i < REC_WAVE_BARS; i++) {
+        Animated.timing(bars[i].v, {
+          toValue: heights[i],
+          duration: 90,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }).start();
+      }
+    });
+    return () => {
+      unsub();
+      if (watchdog) clearTimeout(watchdog);
+    };
   }, [bars]);
+
   return (
     <View style={styles.recWave} testID="rec-waveform" pointerEvents="none">
       {bars.map((b, i) => (
@@ -1887,7 +1945,8 @@ const styles = StyleSheet.create({
   recTime: {...type.body, color: colors.text, marginLeft: spacing.sm},
   recCap: {...type.caption, color: colors.textFaint},
   recCancel: {paddingHorizontal: spacing.md, justifyContent: 'center'},
-  // #257: synthetic recording waveform — a row of oscillating bars.
+  // #257: live recording waveform — a row of bars scrolling with the real mic
+  // amplitude (synthetic oscillation as fallback).
   recWave: {
     flex: 1,
     flexDirection: 'row',

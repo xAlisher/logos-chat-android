@@ -48,6 +48,10 @@ import org.json.JSONObject
  *                                    auto-finalized, so the UI should flip to the
  *                                    review/send state and call [stopRecording] to
  *                                    collect the already-captured note.
+ *   - {eventType:"amplitude", level:<0..1>} — #257: the live mic peak, emitted on
+ *                                    every poll while recording (~every 100 ms),
+ *                                    normalised 0..1, so the composer can draw a
+ *                                    waveform driven by the REAL amplitude.
  *   - {eventType:"playbackEnded"} — a [playFile] playback finished on its own.
  *
  * TODO(manifest): recording needs RECORD_AUDIO in AndroidManifest.xml (another
@@ -74,6 +78,9 @@ class AudioModule(reactContext: ReactApplicationContext) :
     private const val POLL_INTERVAL_MS = 100L
     // Compact waveform: ~40 evenly-sampled bars, each normalised to 0..100.
     private const val WAVEFORM_POINTS = 40
+    // #257: getMaxAmplitude() returns a 16-bit signed PCM peak (0..32767); divide
+    // by this to normalise the live amplitude stream to 0..1 for the JS waveform.
+    private const val MAX_PCM_AMPLITUDE = 32767.0
 
     private const val MIME = "audio/mp4"
   }
@@ -299,7 +306,12 @@ class AudioModule(reactContext: ReactApplicationContext) :
         override fun run() {
           val rec = recorder ?: return
           try {
-            rawAmplitudes.add(rec.maxAmplitude)
+            val amp = rec.maxAmplitude
+            rawAmplitudes.add(amp)
+            // #257: stream the live mic peak (normalised 0..1) to JS so the
+            // composer's waveform reacts to the REAL amplitude, not a synthetic
+            // animation. Same channel, a new additive {eventType:"amplitude"}.
+            emitAmplitude((amp / MAX_PCM_AMPLITUDE).coerceIn(0.0, 1.0))
           } catch (t: Throwable) {
             Log.w(TAG, "getMaxAmplitude: ${t.message}")
           }
@@ -409,6 +421,24 @@ class AudioModule(reactContext: ReactApplicationContext) :
       Log.w(TAG, "JS not alive; event '$eventType' dropped")
       return
     }
+    ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit(JS_EVENT, params)
+  }
+
+  /**
+   * #257: emit the live mic level (normalised 0..1) on the shared event channel.
+   * Same shape as [emit] plus a numeric `level`; fired on every poll while
+   * recording. Silently dropped (not logged) when JS is not alive — this is a
+   * high-frequency stream, so a stray drop during teardown is benign.
+   */
+  private fun emitAmplitude(level: Double) {
+    val params: WritableMap =
+        Arguments.createMap().apply {
+          putString("eventType", "amplitude")
+          putDouble("level", level)
+        }
+    val ctx = reactApplicationContext
+    if (!ctx.hasActiveReactInstance()) return
     ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
         .emit(JS_EVENT, params)
   }

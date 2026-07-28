@@ -5,7 +5,7 @@
 // plus a compact 0..100 amplitude waveform for the bubble. Recording auto-stops at
 // a 120 s cap (Status's `max-audio-duration-ms`), signalled by a "maxDuration"
 // DeviceEventEmitter event on the "AudioRecorderEvent" channel.
-import {NativeModules} from 'react-native';
+import {DeviceEventEmitter, NativeModules} from 'react-native';
 
 /** Hard recording cap enforced natively (ms) — Status's max-audio-duration-ms. */
 export const MAX_RECORDING_MS = 120_000;
@@ -52,6 +52,27 @@ interface AudioRecorderNative {
 }
 
 const native: AudioRecorderNative = NativeModules.AudioRecorder;
+
+/**
+ * #257: subscribe to the live mic-amplitude stream emitted while recording. The
+ * native recorder polls `getMaxAmplitude()` (~every 100 ms) and emits
+ * `{eventType:"amplitude", level:<0..1>}` on the shared "AudioRecorderEvent"
+ * channel — the SAME channel as the "maxDuration"/"playbackEnded" events, which
+ * this listener ignores. `level` is the normalised peak (0 = silence, 1 = clip),
+ * suitable to drive a live recording waveform. Returns an unsubscribe fn; call it
+ * when the recording UI unmounts. No polling on the JS side — the native poll is
+ * the single source, so this adds no timer churn.
+ */
+export function subscribeRecordingAmplitude(
+  onLevel: (level: number) => void,
+): () => void {
+  const sub = DeviceEventEmitter.addListener('AudioRecorderEvent', (e: any) => {
+    if (e?.eventType === 'amplitude' && typeof e.level === 'number') {
+      onLevel(e.level);
+    }
+  });
+  return () => sub.remove();
+}
 
 /** Parse the JSON {@link stopRecording} resolves with. Returns null if malformed. */
 export function parseRecording(json: string | null): Recording | null {

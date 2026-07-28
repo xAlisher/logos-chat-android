@@ -35,10 +35,15 @@ import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useChatStore, convoDisplayName, knownContacts} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
+import {useBleStore} from '../stores/bleStore';
 import {isAddress, normalizeAddress, shortAddress} from '../native/LogosChat';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
+
+// #147: reuse the BLE-mesh blue used for "nearby" presence elsewhere
+// (ConversationsScreen #246) so the reachability signal reads consistently.
+const BLE_BLUE = '#0EA5E9';
 
 /** A row in the picker: a known contact, or a staged (pasted/scanned) address. */
 interface Row {
@@ -71,6 +76,17 @@ export function AddMembersScreen() {
   const nodeError = useNodeStore(s => s.error);
   const clearNodeError = useNodeStore(s => s.clearError);
 
+  // #147: live BLE-mesh presence. `nearbyContacts` holds the addresses whose
+  // rotating identity is currently heard nearby (resolved in bleStore); it's
+  // only meaningful while the BLE transport is engaged. Consumed read-only —
+  // no new broadcasts/logging here.
+  const bleOn = useBleStore(s => s.status === 'on');
+  const nearbyContacts = useBleStore(s => s.nearbyContacts);
+  const nearbySet = useMemo(
+    () => new Set(nearbyContacts.map(a => a.toLowerCase())),
+    [nearbyContacts],
+  );
+
   useEffect(() => {
     loadMembers(convoPk);
   }, [convoPk, loadMembers]);
@@ -95,6 +111,13 @@ export function AddMembersScreen() {
       })),
     ],
     [staged, contacts],
+  );
+
+  // #147: how many of the M selectable rows are currently reachable over the
+  // mesh — surfaced as a subtle "N of M nearby" count in the header.
+  const nearbyCount = useMemo(
+    () => rows.reduce((n, r) => (nearbySet.has(r.address.toLowerCase()) ? n + 1 : n), 0),
+    [rows, nearbySet],
   );
 
   const toggle = useCallback((address: string) => {
@@ -182,13 +205,22 @@ export function AddMembersScreen() {
 
   const renderRow = ({item}: {item: Row}) => {
     const isChecked = checked.has(item.address);
+    // #147: dim members not currently heard over BLE/mesh. Only when the BLE
+    // transport is engaged — with it off we have no reachability signal, so
+    // dimming everyone would be misleading rather than honest.
+    const isNearby = nearbySet.has(item.address.toLowerCase());
+    const dimmed = bleOn && !isNearby;
     return (
       <Pressable
         style={styles.row}
         testID={`add-member-row-${item.address}`}
         onPress={() => toggle(item.address)}>
-        <HexAvatar seed={item.address} kind="contact" size={32} />
-        <View style={styles.rowText}>
+        {/* Dim the identity (avatar + label), never the checkbox — the row must
+            stay clearly tappable even for an out-of-range member. */}
+        <View style={dimmed && styles.dimmed}>
+          <HexAvatar seed={item.address} kind="contact" size={32} />
+        </View>
+        <View style={[styles.rowText, dimmed && styles.dimmed]}>
           {item.label ? (
             <>
               <View style={styles.nameRow}>
@@ -216,6 +248,18 @@ export function AddMembersScreen() {
             </View>
           )}
         </View>
+        {/* #147: per-row reachability caption — a quiet "nearby" (BLE blue) or a
+            grayed "not nearby", shown only while the BLE transport is engaged. */}
+        {bleOn && (
+          <Text
+            style={[
+              type.caption,
+              styles.presence,
+              {color: isNearby ? BLE_BLUE : colors.textFaint},
+            ]}>
+            {isNearby ? 'nearby' : 'not nearby'}
+          </Text>
+        )}
         <View style={[styles.checkbox, isChecked && styles.checkboxOn]}>
           {isChecked && <Text style={styles.checkmark}>✓</Text>}
         </View>
@@ -229,6 +273,17 @@ export function AddMembersScreen() {
         <Text style={[type.title, {color: colors.text}]} numberOfLines={1}>
           Add to {groupName}
         </Text>
+        {/* #147: subtle live reachability count — "via mesh · N of M nearby".
+            Only while the BLE transport is engaged and there is at least one
+            selectable member to count. Updates as peers enter/leave range. */}
+        {bleOn && rows.length > 0 && (
+          <View style={styles.nearbyHeader}>
+            <View style={[styles.nearbyDot, {backgroundColor: BLE_BLUE}]} />
+            <Text style={[type.caption, {color: colors.textDim}]}>
+              via mesh · {nearbyCount} of {rows.length} nearby
+            </Text>
+          </View>
+        )}
 
         <View style={styles.pasteRow}>
           <View style={styles.fieldWrap}>
@@ -364,6 +419,12 @@ const styles = StyleSheet.create({
   },
   rowText: {flex: 1, gap: 0},
   nameRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  // #147: presence styling — dimmed identity for out-of-range members, a small
+  // reachability caption per row, and the header "N of M nearby" line.
+  dimmed: {opacity: 0.4},
+  presence: {marginRight: spacing.sm},
+  nearbyHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  nearbyDot: {width: 6, height: 6, borderRadius: 3},
   checkbox: {
     width: 24,
     height: 24,
