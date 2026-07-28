@@ -87,12 +87,10 @@ export function AboutScreen() {
         </View>
 
         <Text style={styles.blurb}>
-          A private, peer-to-peer messenger. Your identity lives on this device and
-          every message is end-to-end encrypted (MLS). Reach people three ways —
-          over <Text style={styles.blurbLogos}>Logos</Text> (the network node),{' '}
-          <Text style={styles.blurbMesh}>MeshCore</Text> (LoRa radio), and{' '}
-          <Text style={styles.blurbBle}>Bluetooth mesh</Text> when you're offline
-          and nearby.
+          A private, peer-to-peer messenger. Your identity lives on this device —
+          reach people over <Text style={styles.blurbLogos}>Logos</Text>,{' '}
+          <Text style={styles.blurbMesh}>MeshCore</Text>, or{' '}
+          <Text style={styles.blurbBle}>Bluetooth mesh</Text>.
         </Text>
 
         {myAddress != null && (
