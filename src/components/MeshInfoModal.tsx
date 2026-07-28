@@ -56,12 +56,13 @@ export function MeshInfoModal({
             absolute-fill Pressable — a Pressable WRAPPING the content steals the
             ScrollView's vertical pan (so it never scrolled). */}
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        {/* onStartShouldSetResponder absorbs taps on the card (so they don't close
-            it) WITHOUT claiming the drag, so the ScrollView still scrolls. */}
-        <View
-          style={styles.card}
-          onStartShouldSetResponder={() => true}
-          testID="mesh-info-modal">
+        {/* #182: the card is a plain View sitting ABOVE the backdrop Pressable
+            (siblings, not ancestor→child), so taps inside it don't reach the
+            backdrop (no close) and — crucially — nothing at the JS layer claims the
+            touch, so a real finger DRAG is handed straight to the ScrollView. (An
+            onStartShouldSetResponder here held slow finger drags; only fast flings —
+            like an adb swipe — bypassed it, which masked the bug.) */}
+        <View style={styles.card} testID="mesh-info-modal">
           <View style={styles.headingRow}>
             <MeshLogo size={28} color={MESH_GREEN} />
             <Text style={styles.heading}>Mesh mirroring</Text>

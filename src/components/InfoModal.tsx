@@ -57,10 +57,11 @@ export function InfoModal({
             content steals the ScrollView's pan). Card is a View that absorbs taps
             via onStartShouldSetResponder without blocking the scroll. */}
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View
-          style={styles.card}
-          onStartShouldSetResponder={() => true}
-          testID={testID}>
+        {/* #182: plain View above the backdrop sibling — taps inside don't reach the
+            backdrop (no close) and no JS responder claims the touch, so a real
+            finger drag reaches the ScrollView (a responder claim held slow drags;
+            only fast flings/adb swipes bypassed it). */}
+        <View style={styles.card} testID={testID}>
           <View style={styles.headingRow}>
             <InfoIcon size={24} color={colors.accent} />
             <Text style={styles.heading}>{title}</Text>
