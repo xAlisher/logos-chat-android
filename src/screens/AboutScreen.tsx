@@ -56,10 +56,17 @@ export function AboutScreen() {
     try {
       const res = await LogosChat.pinIdentityShortcut();
       if (res === 'unsupported') {
-        ToastAndroid.show('Your launcher doesn’t support pinning', ToastAndroid.SHORT);
+        // MIUI/some launchers gate pinned shortcuts behind a per-app permission.
+        ToastAndroid.show(
+          'Can’t add — allow home-screen shortcuts for Peers in system settings',
+          ToastAndroid.LONG,
+        );
       }
     } catch {
-      ToastAndroid.show('Couldn’t add the shortcut', ToastAndroid.SHORT);
+      ToastAndroid.show(
+        'Couldn’t add — allow home-screen shortcuts for Peers in system settings',
+        ToastAndroid.LONG,
+      );
     }
   };
 
@@ -80,9 +87,12 @@ export function AboutScreen() {
         </View>
 
         <Text style={styles.blurb}>
-          A private, peer-to-peer messenger — stable addresses and MLS groups over
-          a pure-Rust node. Your identity lives on this device; messages are end-to-end
-          encrypted.
+          A private, peer-to-peer messenger. Your identity lives on this device and
+          every message is end-to-end encrypted (MLS). Reach people three ways —
+          over <Text style={styles.blurbLogos}>Logos</Text> (the network node),{' '}
+          <Text style={styles.blurbMesh}>MeshCore</Text> (LoRa radio), and{' '}
+          <Text style={styles.blurbBle}>Bluetooth mesh</Text> when you're offline
+          and nearby.
         </Text>
 
         {myAddress != null && (
@@ -148,6 +158,10 @@ const styles = StyleSheet.create({
   name: {...type.brand, color: colors.text, fontSize: 24},
   version: {...type.label, color: colors.textDim},
   blurb: {...type.body, color: colors.textDim, textAlign: 'center', lineHeight: 20},
+  // #243 transport colors, so the three names read at a glance.
+  blurbLogos: {color: colors.accent},
+  blurbMesh: {color: '#22C55E'},
+  blurbBle: {color: '#0EA5E9'},
   card: {
     backgroundColor: colors.panel,
     borderColor: colors.border,
