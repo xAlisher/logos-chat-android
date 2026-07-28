@@ -940,10 +940,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       infoAddress,
     };
     set(s => {
+      const existing = s.systemLines[convoPk] ?? [];
+      // #252: don't stack a consecutive duplicate plain note — e.g. two
+      // "Group re-created" back-to-back (recreate firing on both the local
+      // action and a members_changed reload). Member lines (member != null)
+      // upsert elsewhere, so only guard ordinary notes.
+      const last = existing[existing.length - 1];
+      if (last != null && last.text === text && last.member == null && info == null) {
+        return {};
+      }
       // #228: cap + PERSIST so invited/joined lines survive an app restart (they
       // were UI-only before, so every reinstall/relaunch wiped them — which read
       // as "no invite ever happened").
-      const next = [...(s.systemLines[convoPk] ?? []), note].slice(-SYSLINE_CAP);
+      const next = [...existing, note].slice(-SYSLINE_CAP);
       persistSystemLines(convoPk, next);
       return {systemLines: {...s.systemLines, [convoPk]: next}};
     });
@@ -1363,6 +1372,25 @@ addLogosChatListener(e => {
             // a relay failure must not break local handling of the message
           },
         );
+      }
+    }
+    // #252: a group member who SENDS a message has unambiguously joined — resolve
+    // any stale "invited"/"hasn't joined" line for them. This is the reliable
+    // ground-truth signal a re-invited member's join needs: on recreate the
+    // creator pre-loads invitees into the roster (no roster diff) and the #195
+    // window may have already flipped them to "hasn't joined", so the members_changed
+    // path can miss a late same-identity rejoin — but their first message can't.
+    // Idempotent (setMemberStatus upserts by member).
+    if (
+      e.kind === 'message' &&
+      e.direction === 'in' &&
+      e.convoPk != null &&
+      e.sender != null
+    ) {
+      const convo = s.conversations[e.convoPk];
+      if (convo?.isGroup) {
+        clearPendingInvite(e.convoPk, e.sender.toLowerCase());
+        s.setMemberStatus(e.convoPk, e.sender, 'joined');
       }
     }
     s.refreshConversations();

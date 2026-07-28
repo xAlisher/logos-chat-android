@@ -95,8 +95,8 @@ describe('convoDisplayName', () => {
     expect(convoDisplayName(row({peerAddress: ADDR}))).toBe('88d76d…8953');
   });
 
-  it('labels an address-less conversation as peer #pk', () => {
-    expect(convoDisplayName(row({convoPk: 7}))).toBe('peer #7');
+  it('labels an address-less conversation as contact #pk', () => {
+    expect(convoDisplayName(row({convoPk: 7}))).toBe('contact #7');
   });
 
   it('uses the group name for a group', () => {
