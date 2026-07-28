@@ -82,8 +82,8 @@ android {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 48
-        versionName "0.7.36"
+        versionCode 49
+        versionName "0.7.37"
         ndk {
             // liblogoschat.so is built for arm64 only (emulators can't run the Nim node anyway)
             abiFilters "arm64-v8a"

@@ -1292,6 +1292,23 @@ addLogosChatListener(e => {
           LogosChat.sendJoinAck(convoPk).catch(() => ackedGroups.delete(convoPk));
         }, JOIN_SETTLE_MS + 500);
       }
+      // #252: everyone already in the group when I join is an established member
+      // (the welcome carries the current roster). Mark them "joined" now — the
+      // CREATOR never sends a join-ack (it doesn't get group_ready), so this is
+      // how a joiner learns the creator + pre-existing members are in, instead of
+      // waiting for each of them to send a message.
+      const me = useNodeStore.getState().myAddress?.toLowerCase();
+      s.loadMembers(convoPk)
+        .then(() => {
+          const st = useChatStore.getState();
+          const roster = st.members[convoPk] ?? [];
+          for (const m of roster) {
+            if (m.address.toLowerCase() !== me) {
+              st.setMemberStatus(convoPk, m.address, 'joined');
+            }
+          }
+        })
+        .catch(() => {});
     }
     // #252: a member's join-ack arrived → mark them joined (ground truth, no
     // bubble). Clears a stale "invited"/"hasn't joined" the members_changed path
