@@ -51,9 +51,17 @@ export function MeshInfoModal({
       animationType="fade"
       onRequestClose={onClose}
       statusBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        {/* Stop taps inside the card from closing the modal. */}
-        <Pressable style={styles.card} onPress={() => {}} testID="mesh-info-modal">
+      <View style={styles.root}>
+        {/* #182: the backdrop close layer sits BEHIND the card as a separate
+            absolute-fill Pressable — a Pressable WRAPPING the content steals the
+            ScrollView's vertical pan (so it never scrolled). */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        {/* onStartShouldSetResponder absorbs taps on the card (so they don't close
+            it) WITHOUT claiming the drag, so the ScrollView still scrolls. */}
+        <View
+          style={styles.card}
+          onStartShouldSetResponder={() => true}
+          testID="mesh-info-modal">
           <View style={styles.headingRow}>
             <MeshLogo size={28} color={MESH_GREEN} />
             <Text style={styles.heading}>Mesh mirroring</Text>
@@ -99,14 +107,14 @@ export function MeshInfoModal({
               <Text style={[type.title, {color: colors.onAccent}]}>Got it</Text>
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  root: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',

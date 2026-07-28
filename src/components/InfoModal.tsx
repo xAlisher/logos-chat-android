@@ -52,8 +52,15 @@ export function InfoModal({
       animationType="fade"
       onRequestClose={onClose}
       statusBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => {}} testID={testID}>
+      <View style={styles.root}>
+        {/* #182: backdrop close layer BEHIND the card (a Pressable wrapping the
+            content steals the ScrollView's pan). Card is a View that absorbs taps
+            via onStartShouldSetResponder without blocking the scroll. */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+        <View
+          style={styles.card}
+          onStartShouldSetResponder={() => true}
+          testID={testID}>
           <View style={styles.headingRow}>
             <InfoIcon size={24} color={colors.accent} />
             <Text style={styles.heading}>{title}</Text>
@@ -72,14 +79,14 @@ export function InfoModal({
               <Text style={[type.title, {color: colors.onAccent}]}>Got it</Text>
             </Pressable>
           </View>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  root: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
