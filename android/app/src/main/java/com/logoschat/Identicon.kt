@@ -60,6 +60,10 @@ object Identicon {
     val off = (size - grid) / 2f
     val cell = grid / N
     val cellPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // #247: round the OUTER corner of a filled cell that sits at a grid corner,
+    // matching the launcher art's rounded "head". Radius ~half the cell.
+    val cr = cell * 0.45f
+    val path = android.graphics.Path()
     for (x in 0 until 3) {
       for (y in 0 until N) {
         if (rnd() > 0.5) continue // empty cell -> ground shows
@@ -70,7 +74,23 @@ object Identicon {
           val left = off + xx * cell
           val top = off + y * cell
           // +0.5 overlap so anti-aliasing never leaves a seam between cells.
-          c.drawRect(left, top, left + cell + 0.5f, top + cell + 0.5f, cellPaint)
+          val right = left + cell + 0.5f
+          val bottom = top + cell + 0.5f
+          if ((xx == 0 || xx == N - 1) && (y == 0 || y == N - 1)) {
+            // grid-corner cell → round its outer corner only.
+            val tl = if (xx == 0 && y == 0) cr else 0f
+            val tr = if (xx == N - 1 && y == 0) cr else 0f
+            val br = if (xx == N - 1 && y == N - 1) cr else 0f
+            val bl = if (xx == 0 && y == N - 1) cr else 0f
+            path.reset()
+            path.addRoundRect(
+                RectF(left, top, right, bottom),
+                floatArrayOf(tl, tl, tr, tr, br, br, bl, bl),
+                android.graphics.Path.Direction.CW)
+            c.drawPath(path, cellPaint)
+          } else {
+            c.drawRect(left, top, right, bottom, cellPaint)
+          }
         }
       }
     }

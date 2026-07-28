@@ -240,7 +240,10 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       }
       // Adaptive bitmap: full square ground + inset sigil, so the launcher mask
       // shapes it consistently with the app icon.
-      val bmp = Identicon.render(addr, 288, fill = 0.66f, rounded = false)
+      // fill 0.38 — createWithAdaptiveBitmap applies its own ~1.6x zoom-crop, so
+      // the identicon must be inset well past the launcher's fill to end up with a
+      // matching dark border (and to keep the rounded head from clipping).
+      val bmp = Identicon.render(addr, 288, fill = 0.38f, rounded = false)
       val launch =
           ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)
               ?: run {
@@ -251,7 +254,7 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       val shortcut =
           ShortcutInfo.Builder(ctx, "peers-identity")
               .setShortLabel("Peers")
-              .setLongLabel("My Peers identity")
+              .setLongLabel("Peers")
               .setIcon(Icon.createWithAdaptiveBitmap(bmp))
               .setIntent(launch)
               .build()

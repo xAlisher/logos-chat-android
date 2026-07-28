@@ -67,7 +67,12 @@ export function AboutScreen() {
     <SafeAreaView edges={['bottom']} style={styles.root}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.hero}>
-          <Logo size={56} color={colors.accent} strokeWidth={2} />
+          {/* Your own identity sigil, not a generic mark — this is Peers. */}
+          {myAddress != null ? (
+            <HexAvatar seed={myAddress} kind="contact" size={56} />
+          ) : (
+            <Logo size={56} color={colors.accent} strokeWidth={2} />
+          )}
           <Text style={styles.name}>peers</Text>
           <Text style={styles.version}>
             {version != null ? `v${version.name} (${version.code})` : '…'}
