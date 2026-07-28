@@ -204,6 +204,10 @@ interface ChatState {
     convoPk: number,
     address: string,
     status: 'invited' | 'not-joined' | 'joined' | 'left',
+    /** #252: override the note's timestamp. A join learned via a (late) join-ack
+     *  should sort at the group's start, not when the ack landed — else the line
+     *  interleaves AFTER messages the member already sent. Defaults to now. */
+    at?: number,
   ) => void;
   /** #230: drop all per-member status lines for a thread (e.g. on group re-create,
    *  so the fresh invite round starts clean). Non-membership notes are kept. */
@@ -968,13 +972,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  setMemberStatus: (convoPk, address, status) => {
+  setMemberStatus: (convoPk, address, status, at) => {
     const fields = memberStatusFields(address, status, describePeer(address));
     // Inferred type keeps `member` required (from fields), so upsertMemberNote's
     // `member: string` bound is satisfied.
     const note = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      at: Date.now(),
+      at: at ?? Date.now(),
       ...fields,
     };
     set(s => {
@@ -1308,9 +1312,10 @@ addLogosChatListener(e => {
         .then(() => {
           const st = useChatStore.getState();
           const roster = st.members[convoPk] ?? [];
+          const at = st.conversations[convoPk]?.createdAt;
           for (const m of roster) {
             if (m.address.toLowerCase() !== me) {
-              st.setMemberStatus(convoPk, m.address, 'joined');
+              st.setMemberStatus(convoPk, m.address, 'joined', at);
             }
           }
         })
@@ -1323,7 +1328,13 @@ addLogosChatListener(e => {
       const convoPk = e.convoPk;
       const sender = e.sender.toLowerCase();
       clearPendingInvite(convoPk, sender);
-      s.setMemberStatus(convoPk, e.sender, 'joined');
+      // On a JOINER (!createdByMe), sort the "joined" line at the group's start
+      // (not ack-arrival time) — a late creator ack must not land AFTER messages
+      // that member already sent. On the CREATOR, keep now-time (its timeline is
+      // already correct: it saw the invitee join in real order).
+      const convo = s.conversations[convoPk];
+      const at = convo != null && !convo.createdByMe ? convo.createdAt : undefined;
+      s.setMemberStatus(convoPk, e.sender, 'joined', at);
       // Re-announce ourselves to this newly-seen member so they learn we're in —
       // this is how a fresh joiner discovers the CREATOR (which sent no initial
       // ack). Once per new member, throttled per group to avoid an ack storm.
