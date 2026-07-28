@@ -281,6 +281,12 @@ const pendingJoins: Record<number, string[]> = {};
  *  firing again (e.g. a reload) doesn't re-ack. Cleared entry retried on failure. */
 const ackedGroups = new Set<number>();
 
+/** #252: per-group state for re-announcing our own presence when a NEW member
+ *  appears — so a fresh joiner learns every EXISTING member (esp. the CREATOR,
+ *  which never sends an initial group_ready ack). `seen` prevents ping-pong;
+ *  `at` throttles the re-broadcast so simultaneous joins don't storm. */
+const rebroadcast: Record<number, {seen: Set<string>; at: number}> = {};
+
 // #228: system notes (invited/joined/left/group-ended) persist per conversation in
 // the KV store so they survive an app restart. Bounded so KV never grows unbounded.
 const SYSLINE_CAP = 60;
@@ -1314,8 +1320,23 @@ addLogosChatListener(e => {
     // bubble). Clears a stale "invited"/"hasn't joined" the members_changed path
     // missed for a re-invited same-identity member.
     if (e.kind === 'member_joined' && e.convoPk != null && e.sender != null) {
-      clearPendingInvite(e.convoPk, e.sender.toLowerCase());
-      s.setMemberStatus(e.convoPk, e.sender, 'joined');
+      const convoPk = e.convoPk;
+      const sender = e.sender.toLowerCase();
+      clearPendingInvite(convoPk, sender);
+      s.setMemberStatus(convoPk, e.sender, 'joined');
+      // Re-announce ourselves to this newly-seen member so they learn we're in —
+      // this is how a fresh joiner discovers the CREATOR (which sent no initial
+      // ack). Once per new member, throttled per group to avoid an ack storm.
+      const me = useNodeStore.getState().myAddress?.toLowerCase();
+      const g = (rebroadcast[convoPk] ??= {seen: new Set<string>(), at: 0});
+      if (sender !== me && !g.seen.has(sender)) {
+        g.seen.add(sender);
+        const now = Date.now();
+        if (now - g.at > 4000) {
+          g.at = now;
+          LogosChat.sendJoinAck(convoPk).catch(() => {});
+        }
+      }
     }
     // #112: the invitee's join committed — release any message held for it.
     if (e.kind === 'members_changed' && e.convoPk != null) {
