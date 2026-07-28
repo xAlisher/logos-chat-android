@@ -9,7 +9,7 @@
 // a badge is present so the modules the badge covers stay recoverable.
 import React, {useMemo} from 'react';
 import {View, StyleSheet} from 'react-native';
-import Svg, {Path, Rect} from 'react-native-svg';
+import Svg, {Path, Rect, Text as SvgText} from 'react-native-svg';
 import qrcode from 'qrcode-generator';
 import {colors, radii} from '../theme';
 import {identiconCells, AVATAR_N} from './HexAvatar';
@@ -22,6 +22,7 @@ export function QrCard({
   badgeSeed,
   badgeKind = 'contact',
   svgRef,
+  caption,
 }: {
   data: string;
   size?: number;
@@ -30,6 +31,9 @@ export function QrCard({
   badgeKind?: 'contact' | 'group';
   /** #241: ref to the inner <Svg> so a parent can capture it (toDataURL). */
   svgRef?: React.Ref<React.ElementRef<typeof Svg>>;
+  /** #260: a caption baked UNDER the QR (e.g. "peers.tech") so it travels with a
+   *  shared/captured image — drawn inside the Svg on the white ground. */
+  caption?: string;
 }) {
   const badged = badgeSeed != null && badgeSeed.length > 0;
   const {path, total} = useMemo(() => {
@@ -62,11 +66,30 @@ export function QrCard({
   const i0 = (total - inner) / 2; // identicon origin
   const cells = badged ? identiconCells(badgeSeed!, badgeKind) : [];
 
+  // #260: caption band under the QR, inside the same Svg (so a captured PNG
+  // includes it). Extend the viewBox height + the rendered height to match.
+  const hasCaption = caption != null && caption.length > 0;
+  const capUnits = hasCaption ? total * 0.18 : 0;
+  const vbH = total + capUnits;
+  const svgH = hasCaption ? Math.round((size * vbH) / total) : size;
+
   return (
-    <View style={[styles.card, {width: size, height: size}]}>
-      <Svg ref={svgRef} width={size} height={size} viewBox={`0 0 ${total} ${total}`}>
-        <Rect x={0} y={0} width={total} height={total} fill={colors.qrBg} />
+    <View style={[styles.card, {width: size, height: svgH}]}>
+      <Svg ref={svgRef} width={size} height={svgH} viewBox={`0 0 ${total} ${vbH}`}>
+        <Rect x={0} y={0} width={total} height={vbH} fill={colors.qrBg} />
         <Path d={path} fill={colors.qrFg} />
+        {hasCaption && (
+          <SvgText
+            x={total / 2}
+            y={total + capUnits * 0.62}
+            fontSize={capUnits * 0.5}
+            fontWeight="bold"
+            fontFamily="monospace"
+            fill={colors.qrFg}
+            textAnchor="middle">
+            {caption}
+          </SvgText>
+        )}
         {badged && (
           <>
             {/* White outer stroke — separates the tile from the modules. */}

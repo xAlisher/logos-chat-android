@@ -129,6 +129,7 @@ export function MyAddressScreen() {
                 badgeSeed={myAddress}
                 badgeKind="contact"
                 svgRef={qrSvgRef}
+                caption="peers.tech"
               />
               <Text style={styles.code} selectable>
                 {myAddress}

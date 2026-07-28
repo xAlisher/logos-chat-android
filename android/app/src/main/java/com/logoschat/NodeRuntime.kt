@@ -2,6 +2,7 @@ package com.logoschat
 
 import android.content.Context
 import android.system.Os
+import android.util.Base64
 import android.util.Log
 import java.io.File
 import java.security.SecureRandom
@@ -32,6 +33,9 @@ object NodeRuntime {
   private const val KEY_DB_KEY = "dbKey" // legacy plaintext (pre-#258); migrated below
   private const val KEY_DB_KEY_ENC = "dbKeyEnc" // #258: Keystore-wrapped dbKey
   private const val IDENTITY_FILE = "logoschat-identity.bin"
+  // #258: the identity seed encrypted at rest (Keystore-wrapped). The plaintext
+  // IDENTITY_FILE exists only transiently, while the node is opening.
+  private const val IDENTITY_ENC_FILE = "logoschat-identity.enc"
   private const val STORE_FILE = "logoschat-store.db"
 
   @Volatile var ctx: Long = 0L; private set
@@ -141,6 +145,42 @@ object NodeRuntime {
     return hex
   }
 
+  // #258: decrypt the sealed identity to the plaintext path the wrapper reads at
+  // open. No-op on a fresh install (the wrapper then generates + writes the seed,
+  // which sealIdentity encrypts right after). Best-effort: on failure we leave any
+  // existing plaintext in place so the node can still open.
+  private fun prepareIdentity(context: Context) {
+    val enc = File(context.filesDir, IDENTITY_ENC_FILE)
+    if (!enc.exists()) return
+    try {
+      val b64 = KeystoreCrypto.unwrap(enc.readText())
+      File(identityPath(context)).writeBytes(Base64.decode(b64, Base64.NO_WRAP))
+    } catch (t: Throwable) {
+      Log.e(TAG, "prepareIdentity failed: ${t.message}")
+    }
+  }
+
+  // #258: encrypt the plaintext identity seed at rest and remove the plaintext, so
+  // a powered-off device holds only the Keystore-wrapped copy. Only deletes the
+  // plaintext after a verified wrap round-trip. Best-effort: on failure we keep the
+  // plaintext (no worse than pre-#258).
+  private fun sealIdentity(context: Context) {
+    val plain = File(identityPath(context))
+    if (!plain.exists()) return
+    try {
+      val b64 = Base64.encodeToString(plain.readBytes(), Base64.NO_WRAP)
+      val blob = KeystoreCrypto.wrap(b64)
+      if (KeystoreCrypto.unwrap(blob) == b64) {
+        File(context.filesDir, IDENTITY_ENC_FILE).writeText(blob)
+        plain.delete()
+      } else {
+        Log.e(TAG, "sealIdentity round-trip mismatch; keeping plaintext")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "sealIdentity failed (${t.message}); keeping plaintext")
+    }
+  }
+
   // -- lifecycle (runs ON the node executor) ---------------------------------
 
   /**
@@ -186,6 +226,7 @@ object NodeRuntime {
       setupDone = true
     }
     setStatus("starting")
+    prepareIdentity(context) // #258: decrypt the sealed seed to the path the wrapper reads
     val handle =
         NodeBridge.chatOpenPersistent(
             storePath(context), dbKey(context), null, identityPath(context))
@@ -199,6 +240,7 @@ object NodeRuntime {
     NodeBridge.chatSetEventCallback(ctx)
     address = NodeBridge.chatGetAddress(ctx)
     installationName = NodeBridge.chatInstallationName(ctx)
+    sealIdentity(context) // #258: encrypt the seed at rest, drop the plaintext
     Log.i(TAG, "node up: address=${address ?: "?"} installation=${installationName ?: "?"}")
     setStatus("running")
     return null
@@ -298,11 +340,14 @@ object NodeRuntime {
         }
         stopBlocking()
         deleteWithSiblings(File(context.filesDir, IDENTITY_FILE))
+        deleteWithSiblings(File(context.filesDir, IDENTITY_ENC_FILE)) // #258 sealed seed
         deleteWithSiblings(File(context.filesDir, STORE_FILE))
+        // #258: drop ALL wrapped crypto material (dbKey + dbKeyEnc + ChatDb key +
+        // migration flag) so the fresh identity starts with fresh keys.
         context
             .getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
             .edit()
-            .remove(KEY_DB_KEY)
+            .clear()
             .commit()
         // Chat images (#197) live outside the DB — clear them too.
         deleteRecursively(File(context.filesDir, "chat-images"))
