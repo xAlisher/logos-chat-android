@@ -3,7 +3,15 @@
 // invited-wait (#192). MeshInfoModal (#168) predates this and keeps its own
 // mesh-branded header; new explainers should use this.
 import React from 'react';
-import {Modal, Pressable, ScrollView, Text, View, StyleSheet} from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {InfoIcon} from './InfoIcon';
 
@@ -35,6 +43,8 @@ export function InfoModal({
   testID?: string;
   children: React.ReactNode;
 }) {
+  // #182: definite scroll-region height so tall content scrolls instead of clipping.
+  const {height} = useWindowDimensions();
   return (
     <Modal
       visible={visible}
@@ -51,7 +61,7 @@ export function InfoModal({
           {/* Show the scrollbar so a long explainer (e.g. "Restarting a group")
               reads as scrollable — hiding it made it look cut off at "Got it". */}
           <ScrollView
-            style={styles.scroll}
+            style={[styles.scroll, {maxHeight: height * 0.6}]}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={true}
             persistentScrollbar={true}>

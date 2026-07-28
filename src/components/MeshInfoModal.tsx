@@ -7,7 +7,15 @@
 // than MLS — one shared key, plaintext sender name — so a user opting into the
 // mesh mirror understands the trade before they do.
 import React from 'react';
-import {Modal, Pressable, ScrollView, Text, View, StyleSheet} from 'react-native';
+import {
+  Modal,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 import {colors, type, spacing, radii, layout} from '../theme';
 import {MeshLogo} from './MeshLogo';
 
@@ -31,6 +39,11 @@ export function MeshInfoModal({
   visible: boolean;
   onClose: () => void;
 }) {
+  // #182: a ScrollView needs a DEFINITE height to scroll its overflow. Inside a
+  // maxHeight card, flexShrink alone didn't give Yoga a definite bound, so tall
+  // content clipped instead of scrolling. Cap the scroll region at a fraction of
+  // the window → it scrolls; the card still sizes to content when it's short.
+  const {height} = useWindowDimensions();
   return (
     <Modal
       visible={visible}
@@ -50,7 +63,7 @@ export function MeshInfoModal({
               as scrollable and reaches the bottom cleanly — the header + "Got it"
               stay fixed outside this bounded, shrinkable scroll region. */}
           <ScrollView
-            style={styles.scroll}
+            style={[styles.scroll, {maxHeight: height * 0.6}]}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={true}
             persistentScrollbar={true}>

@@ -75,7 +75,7 @@ class AudioModule(reactContext: ReactApplicationContext) :
     private const val MAX_DURATION_MS = 120_000L
     // Amplitude polling cadence for the waveform (Status metered every 25-50 ms;
     // 100 ms is plenty for a 40-point bar waveform and lighter on the main pipe).
-    private const val POLL_INTERVAL_MS = 100L
+    private const val POLL_INTERVAL_MS = 70L // #257: faster mic sampling → smoother waveform scroll
     // Compact waveform: ~40 evenly-sampled bars, each normalised to 0..100.
     private const val WAVEFORM_POINTS = 40
     // #257: getMaxAmplitude() returns a 16-bit signed PCM peak (0..32767); divide

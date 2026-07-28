@@ -195,7 +195,7 @@ function resolveAttribution(
 // equalizer that reacts to how loud you actually speak. If no amplitude arrives
 // (older native build, or the stream stalls), we fall back to a synthetic
 // oscillation so the bar still reads as "listening".
-const REC_WAVE_BARS = 28;
+const REC_WAVE_BARS = 48;
 // #257: if no real mic level lands within this window, drop back to the synthetic
 // loop (and flip straight back to live the moment samples resume).
 const REC_AMPLITUDE_FALLBACK_MS = 500;
@@ -205,7 +205,7 @@ const REC_AMPLITUDE_FALLBACK_MS = 500;
 const REC_WAVE_FLOOR = 0.12;
 // #257: max bar height (px) inside the 24px record row — the waveform grows
 // symmetrically from the centre line (recWave alignItems:center).
-const REC_WAVE_HEIGHT = 22;
+const REC_WAVE_HEIGHT = 26;
 // #257: Booth-style live waveform in the composer — a rolling buffer of the recent
 // mic levels (newest on the right, flowing left as you speak), each bar coloured by
 // loudness (green → amber → orange). Driven by the REAL amplitude stream (~10 Hz);
@@ -240,7 +240,7 @@ function RecordingWaveform() {
     // Synthetic scroll — runs ONLY while no real levels are streaming.
     const synth = setInterval(() => {
       if (!liveRef.current) push(0.25 + Math.random() * 0.5);
-    }, 100);
+    }, 70);
     return () => {
       unsub();
       clearInterval(synth);
@@ -1415,29 +1415,32 @@ export function ChatScreen() {
           )}
         </View>
       ) : recording ? (
-        // #205: recording a voice note — replace the composer with a rec bar.
-        <View style={styles.composer}>
-          <View style={styles.recDot} />
-          <Text style={styles.recTime} testID="rec-timer">
-            {Math.floor(recElapsed / 60)}:{(recElapsed % 60).toString().padStart(2, '0')}
-            <Text style={styles.recCap}>
-              {' '}/ {Math.floor(MAX_RECORDING_MS / 60000)}:00
-            </Text>
-          </Text>
-          {/* #257: live (synthetic) moving waveform fills the middle of the bar. */}
+        // #205/#257: recording a voice note — the live waveform gets its own full-
+        // width line above a controls row (timer · Cancel · Send).
+        <View style={styles.recBar}>
           <RecordingWaveform />
-          <Pressable
-            style={styles.recCancel}
-            onPress={() => finishRecord(false)}
-            testID="rec-cancel">
-            <Text style={{color: colors.textDim}}>Cancel</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.send, {backgroundColor: sendColor}]}
-            onPress={() => finishRecord(true)}
-            testID="rec-send">
-            <SendIcon mesh={false} color={colors.onAccent} />
-          </Pressable>
+          <View style={styles.recControls}>
+            <View style={styles.recDot} />
+            <Text style={styles.recTime} testID="rec-timer">
+              {Math.floor(recElapsed / 60)}:{(recElapsed % 60).toString().padStart(2, '0')}
+              <Text style={styles.recCap}>
+                {' '}/ {Math.floor(MAX_RECORDING_MS / 60000)}:00
+              </Text>
+            </Text>
+            <View style={{flex: 1}} />
+            <Pressable
+              style={styles.recCancel}
+              onPress={() => finishRecord(false)}
+              testID="rec-cancel">
+              <Text style={{color: colors.textDim}}>Cancel</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.send, {backgroundColor: sendColor}]}
+              onPress={() => finishRecord(true)}
+              testID="rec-send">
+              <SendIcon mesh={false} color={colors.onAccent} />
+            </Pressable>
+          </View>
         </View>
       ) : isMesh ? (
         // Mesh: single-line, char-capped, text only.
@@ -1920,11 +1923,21 @@ const styles = StyleSheet.create({
   recCancel: {paddingHorizontal: spacing.md, justifyContent: 'center'},
   // #257: live recording waveform — a row of bars scrolling with the real mic
   // amplitude (synthetic oscillation as fallback).
+  // #257: the record bar is now a column — a full-width waveform line + a controls row.
+  recBar: {
+    backgroundColor: colors.pane,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    gap: spacing.sm,
+  },
+  recControls: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   recWave: {
-    flex: 1,
+    alignSelf: 'stretch', // #257: span the full composer width on its own line
     flexDirection: 'row',
     alignItems: 'center',
-    height: 24,
+    height: 30,
     marginHorizontal: spacing.sm,
     gap: 2,
     overflow: 'hidden',
