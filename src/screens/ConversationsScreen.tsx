@@ -1,7 +1,7 @@
 // Conversations list. Rows come from the DURABLE store (SQLite) so history is
 // visible across restarts. Leading element = a HexAvatar generated from the
 // identity (orange for a contact, azure for a group — #117); unread badge.
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useMemo, useState} from 'react';
 import {Text, View, Pressable, FlatList, StyleSheet, Vibration} from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useFocusEffect, useNavigation} from '@react-navigation/native';
@@ -10,7 +10,14 @@ import {colors, type, spacing, layout} from '../theme';
 import {UnreadBadge} from '../components/UnreadBadge';
 import {SwipeRow} from '../components/SwipeRow';
 import {ErrorToast} from '../components/ErrorToast';
-import {SpeedDialFab, GroupGlyph} from '../components/SpeedDialFab';
+import {
+  SpeedDialFab,
+  GroupGlyph,
+  ContactGlyph,
+  ChannelGlyph,
+  BluetoothGlyph,
+  type FabAction,
+} from '../components/SpeedDialFab';
 import {HexAvatar, avatarSeed, convoKind} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {SideMenu, type MenuView} from '../components/SideMenu';
@@ -122,6 +129,29 @@ const VIEW_TITLE: Record<MenuView, string> = {
   'ble-dms': 'Bluetooth DMs',
 };
 
+// #253: transport-section colors for the context-aware FAB (mirrors the #243
+// transport-color system). Logos reuses the brand accent; MeshCore/BLE are the
+// green/blue given in the issue (no theme token exists for them yet).
+const FAB_COLOR = {
+  logos: colors.accent, // Logos orange #FF5000
+  mesh: '#22C55E', // MeshCore green
+  ble: '#0EA5E9', // Bluetooth mesh blue
+} as const;
+
+// #253: which transport section a filter view belongs to. 'all' is a mixed view
+// and defaults to Logos (orange + Contact/Group), per the issue.
+function sectionForView(view: MenuView): 'logos' | 'mesh' | 'ble' {
+  switch (view) {
+    case 'mesh-channels':
+    case 'mesh-dms':
+      return 'mesh';
+    case 'ble-dms':
+      return 'ble';
+    default:
+      return 'logos';
+  }
+}
+
 export function ConversationsScreen() {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
@@ -232,6 +262,82 @@ export function ConversationsScreen() {
     }, [refreshConversations]),
   );
 
+  // #253: context-aware FAB — color + action list follow the active section.
+  // Logos actions reuse the existing Scan / NewGroup routes. MeshCore channel
+  // actions + "New MeshCore contact" route to the MeshCore page (where the
+  // join-public / join-channel / roster controls already live, #167/#170) — a
+  // faster entry point without duplicating that backend logic here. BLE Groups
+  // is a disabled "coming soon" placeholder.
+  const {fabColor, fabActions} = useMemo(() => {
+    const section = sectionForView(view);
+    if (section === 'mesh') {
+      const green = FAB_COLOR.mesh;
+      const actions: FabAction[] = [
+        {
+          key: 'mesh-contact',
+          label: 'New MeshCore contact',
+          testID: 'fab-mesh-contact',
+          icon: <ContactGlyph size={20} color={green} />,
+          onPress: () => navigation.navigate('MeshCore'),
+        },
+        {
+          key: 'mesh-create',
+          label: 'Create private channel',
+          testID: 'fab-mesh-create',
+          icon: <ChannelGlyph size={20} color={green} />,
+          onPress: () => navigation.navigate('MeshCore'),
+        },
+        {
+          key: 'mesh-join',
+          label: 'Join private channel',
+          testID: 'fab-mesh-join',
+          icon: <ChannelGlyph size={20} color={green} />,
+          onPress: () => navigation.navigate('MeshCore'),
+        },
+        {
+          key: 'mesh-public',
+          label: 'Public channel',
+          testID: 'fab-mesh-public',
+          icon: <GroupGlyph size={20} color={green} />,
+          onPress: () => navigation.navigate('MeshCore'),
+        },
+      ];
+      return {fabColor: green, fabActions: actions};
+    }
+    if (section === 'ble') {
+      const blue = FAB_COLOR.ble;
+      const actions: FabAction[] = [
+        {
+          key: 'ble-groups',
+          label: 'BLE Groups (coming soon)',
+          testID: 'fab-ble-groups',
+          icon: <BluetoothGlyph size={20} color={blue} />,
+          disabled: true,
+        },
+      ];
+      return {fabColor: blue, fabActions: actions};
+    }
+    // Logos (all / chats / groups): orange + Contact/Group.
+    const orange = FAB_COLOR.logos;
+    const actions: FabAction[] = [
+      {
+        key: 'contact',
+        label: 'Contact',
+        testID: 'fab-contact',
+        icon: <ContactGlyph size={20} color={colors.contact} />,
+        onPress: () => navigation.navigate('Scan'),
+      },
+      {
+        key: 'group',
+        label: 'Group',
+        testID: 'fab-group',
+        icon: <GroupGlyph size={20} color={colors.accent} />,
+        onPress: () => navigation.navigate('NewGroup'),
+      },
+    ];
+    return {fabColor: orange, fabActions: actions};
+  }, [view, navigation]);
+
   return (
     <SafeAreaView edges={['top']} style={styles.root}>
       {/* Header (#125): [my avatar → side menu] · [centered view title]. The QR /
@@ -288,10 +394,11 @@ export function ConversationsScreen() {
           ItemSeparatorComponent={() => <View style={styles.separator} />}
         />
       )}
+      {/* #253: context-aware FAB — tint + actions follow the active section. */}
       <SpeedDialFab
         bottomInset={insets.bottom}
-        onContact={() => navigation.navigate('Scan')}
-        onGroup={() => navigation.navigate('NewGroup')}
+        color={fabColor}
+        actions={fabActions}
       />
       <SideMenu
         visible={menuOpen}

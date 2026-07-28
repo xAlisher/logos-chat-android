@@ -46,10 +46,14 @@ export function MeshInfoModal({
             <Text style={styles.heading}>Mesh mirroring</Text>
           </View>
 
+          {/* #182: show a persistent scrollbar so the long mesh explainer reads
+              as scrollable and reaches the bottom cleanly — the header + "Got it"
+              stay fixed outside this bounded, shrinkable scroll region. */}
           <ScrollView
             style={styles.scroll}
             contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}>
+            showsVerticalScrollIndicator={true}
+            persistentScrollbar={true}>
             <Text style={styles.intro}>
               Mesh mirroring opens an encrypted MeshCore channel shared among the
               group members you've mapped to mesh identities. While it's on,

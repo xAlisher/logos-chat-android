@@ -9,12 +9,15 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
 import {QrCard} from '../components/QrCard';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
+import {useSettingsStore} from '../stores/settingsStore';
+import {encodeAddressPayload} from '../lib/addressPayload';
 
 export function MyAddressScreen() {
   const status = useNodeStore(s => s.status);
@@ -22,6 +25,12 @@ export function MyAddressScreen() {
   const error = useNodeStore(s => s.error);
   const fetchAddress = useNodeStore(s => s.fetchAddress);
   const clearError = useNodeStore(s => s.clearError);
+  // #240: the user's own local label — read-only here; when set, we offer to
+  // embed it in the QR so a peer scanning me back can prefill their contact name.
+  const myLabel = useSettingsStore(s => s.displayName);
+  const hasLabel = myLabel.trim().length > 0;
+  // Opt-in, OFF by default — a bare-address QR stays the interoperable form.
+  const [includeLabel, setIncludeLabel] = useState(false);
   const [copied, setCopied] = useState(false);
   const running = status === 'running';
 
@@ -54,8 +63,14 @@ export function MyAddressScreen() {
             </Text>
           ) : (
             <>
+              {/* #240: the QR carries the bare address unless the user opts to
+                  embed their label; Copy always copies the bare hex. */}
               <QrCard
-                data={myAddress}
+                data={
+                  includeLabel && hasLabel
+                    ? encodeAddressPayload(myAddress, myLabel)
+                    : myAddress
+                }
                 size={260}
                 badgeSeed={myAddress}
                 badgeKind="contact"
@@ -74,6 +89,27 @@ export function MyAddressScreen() {
                   {copied ? 'Copied' : 'Copy'}
                 </Text>
               </Pressable>
+              {/* #240: opt-in to embed the local label. Only offered when the
+                  user has actually set one; off by default. */}
+              {hasLabel && (
+                <View style={styles.labelRow}>
+                  <View style={styles.labelText}>
+                    <Text style={[type.label, {color: colors.text}]}>
+                      Include my label in QR
+                    </Text>
+                    <Text style={[type.caption, {color: colors.textDim}]}>
+                      Might be incompatible with other apps using Logos Messaging.
+                    </Text>
+                  </View>
+                  <Switch
+                    testID="include-label-switch"
+                    value={includeLabel}
+                    onValueChange={setIncludeLabel}
+                    trackColor={{false: colors.border, true: colors.accent}}
+                    thumbColor={colors.text}
+                  />
+                </View>
+              )}
             </>
           )}
         </View>
@@ -105,6 +141,13 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   code: {...type.code, color: colors.text, textAlign: 'center'},
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    alignSelf: 'stretch',
+  },
+  labelText: {flex: 1, gap: spacing.xs},
   copyBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,

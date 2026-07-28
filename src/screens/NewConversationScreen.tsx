@@ -26,10 +26,11 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 export function NewConversationScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<RouteProp<RootStackParamList, 'NewConversation'>>();
-  const {address} = route.params;
+  const {address, label} = route.params;
   const status = useNodeStore(s => s.status);
   const startConversation = useChatStore(s => s.startConversation);
-  const [name, setName] = useState('');
+  // #240: a scanned QR may carry the sender's label — prefill it (still editable).
+  const [name, setName] = useState(label ?? '');
   // #153: verification is ALWAYS an explicit, unchecked-by-default choice — a QR
   // can be scanned off a web page, so scanning is not proof of a real identity.
   const [verified, setVerified] = useState(false);

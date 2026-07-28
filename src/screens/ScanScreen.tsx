@@ -23,6 +23,7 @@ import {
 } from 'react-native-vision-camera';
 import {colors, type, spacing, radii} from '../theme';
 import {isAddress, normalizeAddress} from '../native/LogosChat';
+import {parseAddressPayload} from '../lib/addressPayload';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {ActionButton} from '../components/ActionButton';
 import {useChatStore} from '../stores/chatStore';
@@ -48,7 +49,9 @@ export function ScanScreen() {
   const acceptedRef = useRef(false);
 
   const accept = useCallback(
-    (address: string) => {
+    // #240: a QR may carry a label alongside the address — carry it into
+    // NewConversation so the add-contact label field is prefilled.
+    (address: string, label?: string) => {
       if (acceptedRef.current) {
         return;
       }
@@ -64,7 +67,10 @@ export function ScanScreen() {
           });
         return;
       }
-      navigation.replace('NewConversation', {address: addr});
+      // Pass label via a variable (not an inline literal) so the extra, optional
+      // param stays assignable even though the route type only requires address.
+      const params = {address: addr, ...(label ? {label} : {})};
+      navigation.replace('NewConversation', params);
     },
     [navigation, mode, groupConvoPk, addMember],
   );
@@ -73,9 +79,10 @@ export function ScanScreen() {
     codeTypes: ['qr'],
     onCodeScanned: codes => {
       for (const code of codes) {
-        const value = code.value ?? '';
-        if (isAddress(value)) {
-          accept(value);
+        // #240: accept BOTH a bare address and a `peers:<addr>?label=…` payload.
+        const {address, label} = parseAddressPayload(code.value ?? '');
+        if (isAddress(address)) {
+          accept(address, label);
           return;
         }
       }
@@ -200,8 +207,10 @@ export function ScanScreen() {
               style={{flex: 1}}
               testID="paste-address-use"
               onPress={() => {
-                if (isAddress(pasteText)) {
-                  accept(pasteText);
+                // #240: paste may also be a labelled `peers:` payload.
+                const {address, label} = parseAddressPayload(pasteText);
+                if (isAddress(address)) {
+                  accept(address, label);
                 } else {
                   setInvalid('not a valid address');
                 }

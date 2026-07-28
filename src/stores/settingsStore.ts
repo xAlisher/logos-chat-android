@@ -17,6 +17,13 @@ export const KV_BLE_CONFIGURED = 'bleConfigured';
 /** KV key: opt-in to broadcasting a (rotating, contact-resolvable) BLE identity (#214). */
 export const KV_BLE_ADVERTISE_IDENTITY = 'bleAdvertiseIdentity';
 
+/**
+ * #259: KV key — was the BLE-mesh transport engaged when the app last quit? The
+ * engine state (bleStore.status) is runtime-only and starts 'off' each launch;
+ * this persists the user's last engage/disengage intent so boot can restore it.
+ */
+export const KV_BLE_ENGAGED_PREF = 'bleEngagedPref';
+
 // #232: notification preferences. All default ON. Persisted per device.
 export const KV_NOTIF_LOCAL = 'notifLocal'; // OS notifications while backgrounded
 export const KV_NOTIF_INAPP = 'notifInApp'; // in-app banners while foregrounded
@@ -58,6 +65,12 @@ interface SettingsState {
    * contacts can see you're nearby. Off = anonymous presence count only.
    */
   bleAdvertiseIdentity: boolean;
+  /**
+   * #259: was BLE-mesh engaged when the app last quit? Persisted so boot can
+   * re-engage the transport (with {@link bleAdvertiseIdentity}) if it was on.
+   * Only ever restores what was ON — off stays off.
+   */
+  bleEngagedPref: boolean;
   /** #232: OS notifications while the app is backgrounded. Default on. */
   localNotifications: boolean;
   /** #232: in-app banners for other chats while foregrounded. Default on. */
@@ -76,6 +89,8 @@ interface SettingsState {
   setBleConfigured: (configured: boolean) => Promise<void>;
   /** #214: toggle broadcasting a contact-resolvable BLE identity; persisted. */
   setBleAdvertiseIdentity: (on: boolean) => Promise<void>;
+  /** #259: record whether BLE-mesh is currently engaged (persisted for boot restore). */
+  setBleEngagedPref: (on: boolean) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -83,6 +98,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   meshConfigured: false,
   bleConfigured: false,
   bleAdvertiseIdentity: false,
+  bleEngagedPref: false,
   localNotifications: true,
   inAppNotifications: true,
   messageSound: true,
@@ -110,6 +126,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const ai = await LogosChat.getSetting(KV_BLE_ADVERTISE_IDENTITY);
       if (ai === 'true') set({bleAdvertiseIdentity: true});
+    } catch {
+      // keep default
+    }
+    // #259: last BLE-engaged intent — only flip on when explicitly stored 'true'.
+    try {
+      const be = await LogosChat.getSetting(KV_BLE_ENGAGED_PREF);
+      if (be === 'true') set({bleEngagedPref: true});
     } catch {
       // keep default
     }
@@ -161,6 +184,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({bleAdvertiseIdentity: on});
     try {
       await LogosChat.setSetting(KV_BLE_ADVERTISE_IDENTITY, on ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setBleEngagedPref: async (on: boolean) => {
+    // #259: idempotent — persist the last engage/disengage intent so a restart can
+    // restore it. Written from App.tsx as bleStore.status settles on/off.
+    if (get().bleEngagedPref === on) return;
+    set({bleEngagedPref: on});
+    try {
+      await LogosChat.setSetting(KV_BLE_ENGAGED_PREF, on ? 'true' : 'false');
     } catch {
       // best-effort
     }

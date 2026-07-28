@@ -9,6 +9,8 @@ import {LockScreen} from './src/screens/LockScreen';
 import {useSettingsStore} from './src/stores/settingsStore';
 import {useSecurityStore} from './src/stores/securityStore';
 import {useNodeStore} from './src/stores/nodeStore';
+import {useBleStore} from './src/stores/bleStore';
+import {shouldRestoreBleEngage} from './src/stores/bleState';
 
 /**
  * Android 13+ blocks every notification until POST_NOTIFICATIONS is granted at
@@ -28,6 +30,39 @@ async function requestNotificationPermission() {
   }
 }
 
+/**
+ * #259: restore the BLE-mesh engaged state on boot. `bleStore.status` is
+ * runtime-only and starts 'off' each launch; if the user LEFT it engaged
+ * (settingsStore.bleEngagedPref) and the adapter/permissions allow, re-engage.
+ * `engage()` reads settingsStore.bleAdvertiseIdentity internally (via myAdvId),
+ * so the persisted broadcast-identity flag is applied automatically. Only
+ * restores what was ON — never force-engages if the user turned BLE off; and it
+ * refuses to double-engage (guarded by shouldRestoreBleEngage + engage() itself).
+ */
+async function restoreBleEngaged() {
+  if (!useSettingsStore.getState().bleEngagedPref) {
+    return;
+  }
+  try {
+    // Hydrate device capability (supported + adapterOn) before deciding.
+    await useBleStore.getState().refreshAvailability();
+    const {availability, status} = useBleStore.getState();
+    if (
+      shouldRestoreBleEngage({
+        engagedPref: true,
+        status,
+        supported: availability.supported,
+        adapterOn: availability.adapterOn,
+      })
+    ) {
+      // engage() requests BLE perms and fails quietly if denied.
+      await useBleStore.getState().engage();
+    }
+  } catch {
+    // BLE restore is best-effort — a failure must never block boot.
+  }
+}
+
 function App() {
   // #232: gate the app behind the PIN lock on cold launch. `locked` is true only
   // when a PIN is set AND this session hasn't been unlocked yet.
@@ -38,6 +73,21 @@ function App() {
 
   useEffect(() => {
     requestNotificationPermission();
+    // #259: persist the user's BLE-engage intent whenever the transport status
+    // settles, so the next launch can restore it. 'on' = engaged, 'off' =
+    // disengaged; 'starting' is transient and ignored. bleStore is a plain zustand
+    // store (no subscribeWithSelector), so we diff status off the (state, prev)
+    // callback. This is the write side the boot restore below reads back.
+    const unsubBle = useBleStore.subscribe((state, prev) => {
+      if (state.status === prev.status) {
+        return;
+      }
+      if (state.status === 'on') {
+        useSettingsStore.getState().setBleEngagedPref(true);
+      } else if (state.status === 'off') {
+        useSettingsStore.getState().setBleEngagedPref(false);
+      }
+    });
     // Load the local label + security prefs, then AUTO-START the node. The
     // identity is persistent, so the address is fetched on the 'running'
     // node_status event (nodeStore).
@@ -49,7 +99,11 @@ function App() {
       // before the node finishes booting (#119).
       await useNodeStore.getState().hydrateAddress();
       await useNodeStore.getState().autoStart();
+      // #259: re-engage BLE-mesh if the user left it on last session (applies the
+      // persisted broadcast-identity flag). Runs after load() so the pref is read.
+      await restoreBleEngaged();
     })();
+    return () => unsubBle();
   }, []);
 
   return (

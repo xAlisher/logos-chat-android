@@ -33,3 +33,23 @@ export function bleStatusLabel(status: BleStatus, peerCount: number): string {
       return 'Off';
   }
 }
+
+/**
+ * #259: pure guard for restoring the BLE-mesh engaged state on app boot. We
+ * re-engage only when the user LEFT it engaged (`engagedPref`, persisted in
+ * settingsStore), the engine is currently 'off' (double-engage guard — never
+ * restart an already-live/starting session), and the adapter is present + on.
+ * Runtime permissions are handled by `bleStore.engage()` itself (it requests
+ * them and fails quietly if denied), so they're intentionally NOT part of this
+ * check. Kept here (RN-free) so the boot decision is unit-testable in jest.logic.
+ */
+export function shouldRestoreBleEngage(opts: {
+  engagedPref: boolean;
+  status: BleStatus;
+  supported: boolean;
+  adapterOn: boolean;
+}): boolean {
+  return (
+    opts.engagedPref && opts.status === 'off' && opts.supported && opts.adapterOn
+  );
+}

@@ -407,10 +407,17 @@ export function ChatScreen() {
   const [mapTarget, setMapTarget] = useState<{address: string; label: string | null} | null>(null);
   const mapMeshIdentity = useChatStore(s => s.mapMeshIdentity);
   const unmapMeshIdentity = useChatStore(s => s.unmapMeshIdentity);
-  const meshMemberPubkey = (address: string): string | null =>
-    (groupMembers ?? []).find(
-      m => m.address.toLowerCase() === address.toLowerCase(),
-    )?.meshPubkey ?? null;
+  // #210: resolve the current mesh mapping for an address — the roster covers
+  // group members, and the explicit meshMap cache covers 1:1 peers (whose
+  // groupMembers roster is empty) so the menu label + modal pre-fill stay honest.
+  const meshMemberPubkey = (address: string): string | null => {
+    const key = address.toLowerCase();
+    const fromRoster = (groupMembers ?? []).find(
+      m => m.address.toLowerCase() === key,
+    )?.meshPubkey;
+    if (fromRoster != null) return fromRoster;
+    return meshMapCache[key]?.pubkey ?? null;
+  };
   // #112: set after a successful re-create so the thread can report what happened.
   const [reviving, setReviving] = useState(false);
   // #168: the "About mesh mirroring" explainer (banner (i) + ⋮ menu).

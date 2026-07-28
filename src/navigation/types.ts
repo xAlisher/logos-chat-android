@@ -9,7 +9,7 @@ export type RootStackParamList = {
    */
   Scan: {mode?: 'newChat' | 'addMember'; groupConvoPk?: number} | undefined;
   /** Confirm a scanned/pasted peer address + optional nickname. */
-  NewConversation: {address: string};
+  NewConversation: {address: string; label?: string};
   /** Create an MLS group (name + optional description). */
   NewGroup: undefined;
   /** Group roster + add-member affordance. */

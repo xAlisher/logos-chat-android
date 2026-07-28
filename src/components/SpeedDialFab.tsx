@@ -1,8 +1,12 @@
 // SpeedDialFab (#5) — a single "+" FAB that toggles a Material-style speed dial.
-// Open reveals two labelled mini-actions stacked above (Contact · Group), fades/
-// translates them in, and rotates the "+" into an "×". Tapping the FAB or the dim
-// backdrop toggles/closes. Self-contained: caller supplies the safe-area bottom
-// inset and the two navigation callbacks.
+// Open reveals labelled mini-actions stacked above, fades/translates them in, and
+// rotates the "+" into an "×". Tapping the FAB or the dim backdrop toggles/closes.
+// Self-contained: caller supplies the safe-area bottom inset and the actions.
+//
+// #253: the FAB is now CONTEXT-AWARE. Its tint (`color`) and its action list
+// (`actions`) are driven by the caller so they can follow the active section's
+// transport color (Logos orange / MeshCore green / Bluetooth blue, per #243).
+// It renders a variable-length action list instead of the hardcoded Contact/Group.
 import React, {useRef, useState, useCallback} from 'react';
 import {Animated, Pressable, Text, View, StyleSheet, Easing} from 'react-native';
 import Svg, {Circle, Path} from 'react-native-svg';
@@ -64,6 +68,60 @@ export function GroupGlyph({
   );
 }
 
+/** #253: "#" channel glyph — MeshCore channels (public / private). */
+export function ChannelGlyph({
+  size = 20,
+  color = colors.accent,
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M9 4L7 20M17 4l-2 16M4 9h16M3 15h16"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
+/** #253: Bluetooth rune glyph — the BLE-mesh section. */
+export function BluetoothGlyph({
+  size = 20,
+  color = colors.accent,
+}: {
+  size?: number;
+  color?: string;
+}) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M7 7.5L17 16l-5 4V4l5 4L7 16.5"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
+// --- action model ---------------------------------------------------------
+
+// #253: a single speed-dial action. `disabled` renders a dimmed "coming soon"
+// placeholder (e.g. BLE Groups) that closes the dial but performs no navigation.
+export type FabAction = {
+  key: string;
+  label: string;
+  testID: string;
+  icon: React.ReactNode;
+  onPress?: () => void;
+  disabled?: boolean;
+};
+
 // --- mini action ----------------------------------------------------------
 
 function MiniAction({
@@ -72,6 +130,7 @@ function MiniAction({
   testID,
   bottom,
   onPress,
+  disabled,
   children,
 }: {
   anim: Animated.Value;
@@ -79,6 +138,7 @@ function MiniAction({
   testID: string;
   bottom: number;
   onPress: () => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -99,10 +159,12 @@ function MiniAction({
         },
       ]}>
       {/* #120: the whole row — label pill AND icon — is one tap target. */}
+      {/* #253: a disabled ("coming soon") action is dimmed and non-interactive. */}
       <Pressable
         testID={testID}
         hitSlop={6}
-        style={styles.miniPress}
+        disabled={disabled}
+        style={[styles.miniPress, disabled && styles.miniDisabled]}
         onPress={onPress}>
         <View style={styles.labelPill}>
           <Text style={styles.labelText}>{label}</Text>
@@ -117,12 +179,14 @@ function MiniAction({
 
 export function SpeedDialFab({
   bottomInset,
-  onContact,
-  onGroup,
+  color = colors.accent,
+  actions,
 }: {
   bottomInset: number;
-  onContact: () => void;
-  onGroup: () => void;
+  // #253: section transport color (Logos orange / MeshCore green / BLE blue).
+  color?: string;
+  // #253: section-appropriate action list, nearest-the-FAB first.
+  actions: FabAction[];
 }) {
   const [open, setOpen] = useState(false);
   const anim = useRef(new Animated.Value(0)).current;
@@ -153,9 +217,9 @@ export function SpeedDialFab({
   }, [animateTo]);
 
   const pick = useCallback(
-    (fn: () => void) => {
+    (fn?: () => void) => {
       close();
-      fn();
+      fn?.();
     },
     [close],
   );
@@ -180,31 +244,29 @@ export function SpeedDialFab({
       </Animated.View>
 
       {/* Mini actions — mounted always, tappable only while open. */}
+      {/* #253: render the caller-supplied action list; index 0 sits nearest the
+          FAB and each subsequent action stacks one slot higher. */}
       <View
         pointerEvents={open ? 'box-none' : 'none'}
         style={StyleSheet.absoluteFill}>
-        <MiniAction
-          anim={anim}
-          label="Group"
-          testID="fab-group"
-          bottom={base + 56 + 12 + 44 + 12}
-          onPress={() => pick(onGroup)}>
-          <GroupGlyph size={20} color={colors.accent} />
-        </MiniAction>
-        <MiniAction
-          anim={anim}
-          label="Contact"
-          testID="fab-contact"
-          bottom={base + 56 + 12}
-          onPress={() => pick(onContact)}>
-          <ContactGlyph size={20} color={colors.contact} />
-        </MiniAction>
+        {actions.map((action, i) => (
+          <MiniAction
+            key={action.key}
+            anim={anim}
+            label={action.label}
+            testID={action.testID}
+            disabled={action.disabled}
+            bottom={base + 56 + 12 + i * (44 + 12)}
+            onPress={() => pick(action.onPress)}>
+            {action.icon}
+          </MiniAction>
+        ))}
       </View>
 
-      {/* Main FAB — "+" that rotates into "×". */}
+      {/* Main FAB — "+" that rotates into "×". #253: tinted by the section color. */}
       <Pressable
         testID="new-fab"
-        style={[styles.fab, {bottom: base}]}
+        style={[styles.fab, {bottom: base, backgroundColor: color}]}
         onPress={toggle}>
         <Animated.Text style={[styles.fabPlus, {transform: [{rotate}]}]}>
           +
@@ -250,6 +312,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
+  // #253: "coming soon" placeholder — visibly present but dimmed + inert.
+  miniDisabled: {opacity: 0.45},
   labelPill: {
     backgroundColor: colors.panel,
     borderColor: colors.border,
