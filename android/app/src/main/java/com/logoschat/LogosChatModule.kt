@@ -1115,6 +1115,17 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /** #263: delete a single message from local history (this device only). */
+  @ReactMethod
+  fun deleteMessage(msgPk: Double, promise: Promise) {
+    try {
+      ChatRepo.requireDb().deleteMessage(msgPk.toLong())
+      promise.resolve(null)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   // -- DB query surface — reads are fast, run inline --------------------------
 
   @ReactMethod

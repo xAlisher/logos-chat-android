@@ -762,6 +762,14 @@ class ChatDb(
     }
   }
 
+  /**
+   * #263: delete a single message from local history by its stable primary key.
+   * Local-only — there is no remote unsend; this just removes THIS device's copy.
+   */
+  fun deleteMessage(msgPk: Long) {
+    writableDatabase.execSQL("DELETE FROM messages WHERE msg_pk=?", arrayOf(msgPk))
+  }
+
   fun deleteConversation(convoPk: Long) {
     val db = writableDatabase
     db.beginTransaction()

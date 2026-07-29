@@ -19,6 +19,7 @@ import {
   View,
   Pressable,
   FlatList,
+  ScrollView,
   KeyboardAvoidingView,
   Modal,
   PermissionsAndroid,
@@ -61,7 +62,7 @@ import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {ForwardPicker} from '../components/ForwardPicker';
 import {MeshMapModal} from '../components/MeshMapModal';
-import ImagePickerNative from '../native/ImagePicker';
+import ImagePickerNative, {type PickedImage} from '../native/ImagePicker';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import {formatLastSeen} from '../stores/conversationView';
 import {meshPresence} from '../stores/meshPresence';
@@ -83,6 +84,7 @@ import AudioRecorder, {
 } from '../native/Audio';
 import {deriveComposerState} from '../stores/groupState';
 import {composerBudget} from '../mesh/composerBudget';
+import {linkify} from '../text/linkify';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -105,6 +107,11 @@ function fitImage(w: number, h: number): {width: number; height: number} {
 // Mesh transport accent — theme has no green token (brand is orange), so the
 // literal lives here per the mesh-transport design (docs/mesh-transport.md).
 const MESH_GREEN = '#22C55E';
+// #262: link color inside received bubbles (readable blue on the dark fill); own
+// (orange) bubbles keep the white onAccent text, distinguished by the underline.
+const LINK_BLUE = '#4EA3FF';
+// #261: how many images may be staged in the composer at once.
+const MAX_STAGED_IMAGES = 10;
 // #243: Bluetooth transport accent. A message that rode the BLE mesh (sentVia
 // 'ble', Logos off/paused or peer nearby) is blue — own bubble filled blue, the
 // send button blue — so "this went over Bluetooth" reads at a glance.
@@ -399,7 +406,21 @@ function Bubble({
           </View>
         ) : (
           <Text style={[type.body, {color: own ? colors.onAccent : colors.text}]}>
-            {displayText}
+            {/* #262: split into plain + tappable link runs. Links are underlined
+                and open on tap; own-bubble links stay white, peer links go blue. */}
+            {linkify(displayText).map((run, i) =>
+              run.url != null ? (
+                <Text
+                  key={i}
+                  style={[styles.link, {color: own ? colors.onAccent : LINK_BLUE}]}
+                  onPress={() => Linking.openURL(run.url!).catch(() => {})}
+                  testID="msg-link">
+                  {run.text}
+                </Text>
+              ) : (
+                run.text
+              ),
+            )}
           </Text>
         )}
       </Pressable>
@@ -440,8 +461,9 @@ export function ChatScreen() {
   const addMember = useChatStore(s => s.addMember);
   const send = useChatStore(s => s.send);
   const sendImage = useChatStore(s => s.sendImage);
-  const sendImages = useChatStore(s => s.sendImages); // #207
-  const sendCameraPhoto = useChatStore(s => s.sendCameraPhoto); // #203
+  const stageImages = useChatStore(s => s.stageImages); // #261
+  const stageCameraPhoto = useChatStore(s => s.stageCameraPhoto); // #261
+  const sendStagedImages = useChatStore(s => s.sendStagedImages); // #261
   const fetchLocation = useChatStore(s => s.fetchLocation); // #255
   const sendLocationValue = useChatStore(s => s.sendLocationValue); // #255
   const sendVoice = useChatStore(s => s.sendVoice); // #205
@@ -452,6 +474,7 @@ export function ChatScreen() {
   const wipe = useChatStore(s => s.wipe);
   const leaveGroup = useChatStore(s => s.leaveGroup);
   const remove = useChatStore(s => s.remove);
+  const deleteMessage = useChatStore(s => s.deleteMessage); // #263
   const startConversation = useChatStore(s => s.startConversation);
   const probeGroup = useChatStore(s => s.probeGroup);
   const hydrateSystemLines = useChatStore(s => s.hydrateSystemLines);
@@ -472,6 +495,9 @@ export function ChatScreen() {
   const [text, setText] = useState('');
   // #255: a location fix staged in the composer, previewed before the user sends.
   const [pendingLoc, setPendingLoc] = useState<LatLng | null>(null);
+  // #261: images picked/captured but not yet sent — previewed as removable
+  // thumbnails above the composer, dispatched on Send (like the location chip).
+  const [pendingImages, setPendingImages] = useState<PickedImage[]>([]);
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [recording, setRecording] = useState(false); // #205 voice
@@ -913,9 +939,11 @@ export function ChatScreen() {
     bleReachable,
   });
   const {running, connecting, overMesh, meshLive, dead, canRevive} = cs;
-  // #255: a staged location counts as sendable payload even with no typed text.
+  // #255/#261: a staged location OR image counts as sendable payload even with no text.
   const canSend =
-    cs.canSendBase && (text.trim().length > 0 || pendingLoc != null) && !busy;
+    cs.canSendBase &&
+    (text.trim().length > 0 || pendingLoc != null || pendingImages.length > 0) &&
+    !busy;
   const sendColor =
     cs.sendColorKind === 'mesh'
       ? MESH_GREEN
@@ -929,7 +957,8 @@ export function ChatScreen() {
   // #206: the send button is only active when there's text to send; gray otherwise.
   // #255: …or a location is staged in the composer.
   const canSendText = text.trim().length > 0;
-  const canSendComposer = canSendText || pendingLoc != null;
+  const canSendComposer =
+    canSendText || pendingLoc != null || pendingImages.length > 0;
   // #150: MTU-aware composer. A LoRa text packet is byte-capped (UTF-8), so the
   // budget only applies when the send will ACTUALLY leave over the radio — which
   // is exactly sendColorKind==='mesh' (BLE fragments; Logos has no radio MTU).
@@ -1027,8 +1056,10 @@ export function ChatScreen() {
     }
     const t = text.trim();
     const loc = pendingLoc; // #255: staged location, if any
+    const imgs = pendingImages; // #261: staged images, if any
     setText('');
     setPendingLoc(null);
+    setPendingImages([]);
     try {
       setBusy(true);
       // #191: no more silent revive-on-send. A dead group is restarted only via
@@ -1036,6 +1067,10 @@ export function ChatScreen() {
       // composer isn't even reachable while dead — a plain send is all this is.
       if (t) {
         await send(convoPk, t);
+      }
+      // #261: send the staged images (each its own message), after any text.
+      if (imgs.length > 0) {
+        await sendStagedImages(convoPk, imgs);
       }
       // #255: send the confirmed location as its own message (after any text).
       if (loc != null) {
@@ -1073,8 +1108,22 @@ export function ChatScreen() {
       setAttaching(false);
     }
   };
-  const onPickImages = () => withAttaching(() => sendImages(convoPk));
-  const onCamera = () => withAttaching(() => sendCameraPhoto(convoPk));
+  // #261: pick/capture STAGES the images (appended to the tray) — nothing is sent
+  // until the user taps Send, mirroring the location flow.
+  const onPickImages = () =>
+    withAttaching(async () => {
+      const picked = await stageImages(convoPk);
+      if (picked.length > 0) {
+        setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
+      }
+    });
+  const onCamera = () =>
+    withAttaching(async () => {
+      const picked = await stageCameraPhoto(convoPk);
+      if (picked.length > 0) {
+        setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
+      }
+    });
   // #255: acquire a fix and STAGE it in the composer (preview + confirm) instead
   // of sending on the first tap.
   const onLocation = () =>
@@ -1331,6 +1380,7 @@ export function ChatScreen() {
               onLongPress={pageY => {
                 setBubbleY(pageY);
                 setBubbleTarget({
+                  msgPk: m.msgPk,
                   own: m.direction === 'out',
                   isGroup,
                   text: m.text,
@@ -1484,6 +1534,34 @@ export function ChatScreen() {
               {budget.over ? budget.label : `over radio · ${budget.label}`}
             </Text>
           )}
+          {/* #261: staged image thumbnails — a removable row above the input, sent
+              on Send (mirrors the staged-location chip). */}
+          {pendingImages.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.pendingImages}
+              testID="pending-images"
+              keyboardShouldPersistTaps="handled">
+              {pendingImages.map((img, i) => (
+                <View key={i} style={styles.pendingImageWrap}>
+                  <Image
+                    source={{uri: `data:${img.mime};base64,${img.base64}`}}
+                    style={styles.pendingImage}
+                  />
+                  <Pressable
+                    style={styles.pendingImageX}
+                    onPress={() =>
+                      setPendingImages(prev => prev.filter((_, j) => j !== i))
+                    }
+                    hitSlop={8}
+                    testID={`pending-image-clear-${i}`}>
+                    <Text style={styles.pendingImageXText}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          )}
           {/* #255: staged location preview — the user confirms with Send or clears it. */}
           {pendingLoc != null && (
             <View style={styles.pendingLoc} testID="pending-location">
@@ -1579,6 +1657,26 @@ export function ChatScreen() {
           } catch {
             ToastAndroid.show('Save failed', ToastAndroid.SHORT);
           }
+        }}
+        onDelete={msgPk => {
+          setBubbleTarget(null);
+          // #263: short confirm — local-only delete, no remote unsend.
+          Alert.alert(
+            'Delete for me?',
+            'This removes the message from this device only. The other person still has their copy.',
+            [
+              {text: 'Cancel', style: 'cancel'},
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () => {
+                  deleteMessage(convoPk, msgPk).catch(() =>
+                    ToastAndroid.show('Delete failed', ToastAndroid.SHORT),
+                  );
+                },
+              },
+            ],
+          );
         }}
       />
       <ForwardPicker
@@ -1927,6 +2025,30 @@ const styles = StyleSheet.create({
   },
   pendingLocText: {...type.label, color: colors.text, flexShrink: 1},
   pendingLocClear: {...type.label, color: colors.textDim, paddingHorizontal: spacing.xs},
+  // #261 staged-image thumbnails
+  pendingImages: {gap: spacing.sm, paddingBottom: spacing.xs},
+  pendingImageWrap: {width: 64, height: 64},
+  pendingImage: {
+    width: 64,
+    height: 64,
+    borderRadius: radii.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+  },
+  pendingImageX: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.canvas,
+    borderColor: colors.border,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingImageXText: {color: colors.text, fontSize: 11, lineHeight: 13},
   actionRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingLeft: spacing.xs},
   actionBtn: {padding: spacing.xs},
   // #205: recording bar.
@@ -1960,6 +2082,7 @@ const styles = StyleSheet.create({
   // #167: live char counter shown only for a mesh composer.
   charCount: {...type.caption, color: colors.textFaint},
   charCountOver: {color: colors.unread}, // #150: oversize for the radio
+  link: {textDecorationLine: 'underline'}, // #262: tappable message links
   radioBudget: {
     ...type.caption,
     color: colors.textFaint,

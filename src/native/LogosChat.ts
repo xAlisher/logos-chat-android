@@ -226,6 +226,8 @@ interface LogosChatNative {
   /** Delete a conversation's messages but KEEP the conversation (#107 wipe). */
   wipeConversationContent(convoPk: number): Promise<null>;
   deleteConversation(convoPk: number): Promise<null>;
+  /** #263: delete one message from local history by its msgPk (this device only). */
+  deleteMessage(msgPk: number): Promise<null>;
   consumeLaunchConvo(): Promise<number>;
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<null>;

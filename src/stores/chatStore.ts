@@ -13,7 +13,11 @@ import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
-import ImagePicker, {parsePicked, parsePickedArray} from '../native/ImagePicker';
+import ImagePicker, {
+  parsePicked,
+  parsePickedArray,
+  type PickedImage,
+} from '../native/ImagePicker';
 import LocationNative, {parseLocation as parseNativeLocation} from '../native/Location';
 import {buildLocation, type LatLng} from '../native/locMsg';
 import AudioRecorder, {parseRecording} from '../native/Audio';
@@ -163,10 +167,12 @@ interface ChatState {
    * No-op if the user cancels the picker.
    */
   sendImage: (convoPk: number) => Promise<void>;
-  /** #207: pick up to {@link MAX_ALBUM} images and send them (each its own message). */
-  sendImages: (convoPk: number) => Promise<void>;
-  /** #203: capture a photo with the camera and send it. */
-  sendCameraPhoto: (convoPk: number) => Promise<void>;
+  /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send). */
+  stageImages: (convoPk: number) => Promise<PickedImage[]>;
+  /** #261: capture a photo to STAGE (guards + camera permission, no send). */
+  stageCameraPhoto: (convoPk: number) => Promise<PickedImage[]>;
+  /** #261: send previously-staged images (each its own message, in order). */
+  sendStagedImages: (convoPk: number, images: PickedImage[]) => Promise<void>;
   /** #204: share the current location as clickable coordinates. */
   sendLocation: (convoPk: number) => Promise<void>;
   /**
@@ -239,6 +245,8 @@ interface ChatState {
   reviveAndSend: (convoPk: number, text: string) => Promise<{invited: number; total: number}>;
   /** Delete a conversation + its messages and drop it from the list. */
   remove: (convoPk: number) => Promise<void>;
+  /** #263: delete a single message from local history (this device only). */
+  deleteMessage: (convoPk: number, msgPk: number) => Promise<void>;
   /** #167: get-or-create a MeshCore channel conversation (by idx). Resolves convoPk. */
   openMeshChannel: (idx: number, name: string) => Promise<number>;
   /** #167 (Phase 1b): get-or-create a MeshCore ECDH DM conversation (by pubkey). Resolves convoPk. */
@@ -626,68 +634,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
     get().refreshConversations();
   },
 
-  sendImages: async (convoPk: number) => {
+  // #261: guard + pick, but DON'T send — return the picked images so the composer
+  // can stage them as removable thumbnails and send on the user's confirm.
+  stageImages: async (convoPk: number) => {
     const convo = get().conversations[convoPk];
     if ((convo?.transport ?? 'logos') === 'mesh') {
       useNodeStore.setState({error: 'images are not supported on mesh'});
-      return;
+      return [];
     }
     if (useNodeStore.getState().status !== 'running') {
       useNodeStore.setState({error: 'start the node to send images'});
-      return;
+      return [];
     }
-    let arr;
     try {
-      arr = parsePickedArray(
-        await ImagePicker.pickImages(1024, 60_000, MAX_ALBUM),
-      );
+      return parsePickedArray(await ImagePicker.pickImages(1024, 60_000, MAX_ALBUM));
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
-      return;
+      return [];
     }
-    if (arr.length === 0) return; // cancelled
-    for (const p of arr) {
-      try {
-        await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64);
-      } catch (e: any) {
-        useNodeStore.setState({error: String(e?.message ?? e)});
-      }
-    }
-    await get().loadMessages(convoPk);
-    get().refreshConversations();
   },
 
-  sendCameraPhoto: async (convoPk: number) => {
+  stageCameraPhoto: async (convoPk: number) => {
     const convo = get().conversations[convoPk];
     if ((convo?.transport ?? 'logos') === 'mesh') {
       useNodeStore.setState({error: 'images are not supported on mesh'});
-      return;
+      return [];
     }
     if (useNodeStore.getState().status !== 'running') {
       useNodeStore.setState({error: 'start the node to send a photo'});
-      return;
+      return [];
     }
     if (!(await ensurePerm(PermissionsAndroid.PERMISSIONS.CAMERA))) {
       useNodeStore.setState({error: 'camera permission denied'});
-      return;
+      return [];
     }
-    let p;
     try {
-      p = parsePicked(await ImagePicker.capturePhoto(1024, 60_000));
+      const p = parsePicked(await ImagePicker.capturePhoto(1024, 60_000));
+      return p != null ? [p] : [];
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
-      return;
+      return [];
     }
-    if (p == null) return; // cancelled
-    try {
-      const res = JSON.parse(
-        await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64),
-      );
-      if (res.status === 'failed') {
-        useNodeStore.setState({error: 'photo send failed — tap to retry'});
+  },
+
+  // #261: send images the user staged in the composer, each its own message.
+  sendStagedImages: async (convoPk: number, images: PickedImage[]) => {
+    for (const p of images) {
+      try {
+        const res = JSON.parse(
+          await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64),
+        );
+        if (res.status === 'failed') {
+          useNodeStore.setState({error: 'image send failed — tap to retry'});
+        }
+      } catch (e: any) {
+        useNodeStore.setState({error: String(e?.message ?? e)});
       }
-    } catch (e: any) {
-      useNodeStore.setState({error: String(e?.message ?? e)});
     }
     await get().loadMessages(convoPk);
     get().refreshConversations();
@@ -1098,6 +1100,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // delete the thread and leave the user believing they left.
     await LogosChat.leaveGroup(convoPk);
     await get().remove(convoPk);
+  },
+
+  deleteMessage: async (convoPk: number, msgPk: number) => {
+    // Local-only delete (no remote unsend). Drop from the DB, then from the
+    // in-memory timeline so the bubble disappears immediately.
+    await LogosChat.deleteMessage(msgPk);
+    set(s => ({
+      messages: {
+        ...s.messages,
+        [convoPk]: (s.messages[convoPk] ?? []).filter(m => m.msgPk !== msgPk),
+      },
+    }));
   },
 
   remove: async (convoPk: number) => {

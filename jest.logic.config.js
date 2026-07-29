@@ -30,5 +30,6 @@ module.exports = {
     '<rootDir>/__tests__/bleFrag.test.ts',
     '<rootDir>/__tests__/pinSecurity.test.ts',
     '<rootDir>/__tests__/composerBudget.test.ts',
+    '<rootDir>/__tests__/linkify.test.ts',
   ],
 };

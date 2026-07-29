@@ -126,6 +126,23 @@ export function EraserIcon({size = S, color = colors.textDim}: IconProps) {
   );
 }
 
+/** lucide `trash-2` — delete a message (#263). */
+export function TrashIcon({size = S, color = colors.textDim}: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M3 6h18" stroke={color} strokeWidth={SW} strokeLinecap="round" />
+      <Path
+        d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"
+        stroke={color}
+        strokeWidth={SW}
+        strokeLinejoin="round"
+      />
+      <Line x1={10} y1={11} x2={10} y2={17} stroke={color} strokeWidth={SW} strokeLinecap="round" />
+      <Line x1={14} y1={11} x2={14} y2={17} stroke={color} strokeWidth={SW} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 /** lucide `copy` — copy an address. */
 export function CopyIcon({size = S, color = colors.textDim}: IconProps) {
   return (

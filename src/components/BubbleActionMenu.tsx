@@ -20,6 +20,7 @@ import {
   ClipboardIcon,
   MessageCircleIcon,
   MeshIcon,
+  TrashIcon,
   type MenuItem,
 } from './OverflowMenu';
 import {parseImageLocal, isImageContent} from '../native/imageMsg';
@@ -33,6 +34,8 @@ import {
 
 /** The bubble the menu was opened on. */
 export interface BubbleTarget {
+  /** #263: local primary key of this message, for delete. */
+  msgPk: number;
   /** True for our own outgoing bubble. */
   own: boolean;
   /** True when the thread is a group (enables "Send message"). */
@@ -59,6 +62,7 @@ export function BubbleActionMenu({
   onForward,
   onSaveImage,
   onMapMesh,
+  onDelete,
   isMeshMapped,
 }: {
   target: BubbleTarget | null;
@@ -73,6 +77,8 @@ export function BubbleActionMenu({
   onForward: (content: string) => void;
   /** #201: save an image message to the gallery (path from the local marker). */
   onSaveImage: (path: string) => void;
+  /** #263: delete this message from local history (this device only). */
+  onDelete: (msgPk: number) => void;
   /** #210: map this sender to a mesh identity (local, works offline). */
   onMapMesh?: (address: string, label: string | null) => void;
   /** #210: whether this address is already mesh-mapped (label wording). */
@@ -167,6 +173,14 @@ export function BubbleActionMenu({
         onPress: () => onMapMesh(address, t.label),
       });
     }
+    // #263: delete locally — last + destructive. Works on any bubble (own or peer).
+    items.push({
+      key: 'delete',
+      label: 'Delete for me',
+      icon: <TrashIcon color={colors.unread} />,
+      destructive: true,
+      onPress: () => onDelete(t.msgPk),
+    });
   }
 
   return (
