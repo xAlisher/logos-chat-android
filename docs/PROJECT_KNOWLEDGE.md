@@ -445,6 +445,49 @@ them.
   `convoPk:-1` placeholder → "no peer address / send failed"), but it sends over **Logos**;
   routing over the BLE mesh itself remains the #213 work.
 
+## 10e. Back-navigation, reactions, message interactions (2026-07-29 batch, 0.7.65–0.7.67)
+
+**Android back navigation (#267).** `android:enableOnBackInvokedCallback="true"` (manifest)
+opted the whole app into Android's predictive-back API, but RN back handling still uses the
+legacy `onBackPressed` path — so the OS default (finish the Activity → **exit to home**)
+fired from every nested screen (back button AND edge-swipe). Fix: set it **`false`**. Then,
+because native-stack has **no in-app swipe on Android** (its `gestureEnabled`/`fullScreenGestureEnabled`
+are iOS-only) and 3-button nav has no OS edge-swipe at all, we added a **zero-dependency
+`SwipeBackGesture`** (`src/components/SwipeBackGesture.tsx`, built-in `PanResponder`) wired via
+the navigator's v7 **`screenLayout`** — a left-edge rightward drag pops the screen on every
+nav mode. Only claims left-edge, mostly-horizontal drags (non-capture) so taps/scroll pass through.
+
+**Reactions (#264) — architecture.** Reactions are **normal messages** whose body is a
+`react1:<+|-><emoji>:<targetKey>` marker (`src/messages/reactions.ts`). They ride the same
+transports as any message; on load the timeline **folds** markers into per-message aggregates
+and never renders them as bubbles. Native keeps them out of the **list preview** (ChatDb
+`listConversationsJson` `NOT LIKE 'react1:%'`), **unread** (`ChatRepo.onMessageReceived`), and
+**notifications** (`LogosChatModule.notifyIfNeeded`). No new native table — the messages table
+is the store.
+
+- **Cross-device message identity = `hash(author + body)`** — NOT timestamp-based. The wire
+  does **not** preserve send-time: `ChatRepo.onMessageReceived` stamps inbound with
+  `System.currentTimeMillis()` and the FFI event carries no timestamp; `msg_pk` is per-device.
+  So `(author, body)` is the only identity both sides share. `author` = own → myAddress, else
+  `senderAccount` (both resolve to the sender's stable address → keys match). Collision only on
+  identical author+body (documented, accepted for v1). **Verified cross-device RedMe↔Samsung.**
+- **The fold must be CHRONOLOGICAL.** `messages` is newest-first, but `foldReactions` replays
+  `+`/`-` in order — so sort ascending (`at`, then `msgPk`) before folding, or a remove is
+  replayed before its add and cancels nothing. (This was the toggle-off bug.)
+
+**Ended-group member view (#113).** A member of a group that ended (#103, creator's node
+restarted) now sees the known-limitation explanation on top + a secondary **"Ping creator"**
+that opens a DM prefilled asking the creator to re-create it (new `Chat` `draft` route param).
+Creator targeted as the first non-self member (heuristic — #280 to track the real address).
+**#281**: this screen isn't reactive — a re-create arriving while it's open doesn't flip
+`dead`→live (liveness is a one-shot `useFocusEffect` probe); needs back+return.
+
+**On-device (adb) gotchas** (full list in the `/peers-ops` skill): `adb input text` silently
+drops the whole string if it contains `( )` and can't type emoji — keep typed messages
+ASCII/paren-free, pick emoji by tapping; focus the RN composer (tap) before typing; long-press
+= `input swipe x y x y 600`; get exact bounds via `uiautomator dump`; uiautomator2-MCP fails on
+the GrapheneOS Pixel.
+
 ## 10. Issue map
 
 | Area | Issues |
@@ -462,3 +505,9 @@ them.
 | My-address | #119 (instant QR from cache), #120 (tappable speed-dial labels) |
 | **Offline epic (mesh/BLE)** | **#133** → foundation #134–#141, BLE #142–#144, LoRa #145, UI #146–#151. Research synthesis in #132. **Not started — needs ≥2 devices/radio (wetware).** |
 | Exploration | #132 (offline transports research — Reticulum/qaul/bitchat/Meshtastic/MeshCore patterns) |
+| **Message interactions (0.7.61→0.7.67)** | #255 (location staging), #261 (image staging), #262 (tappable links), #263 (delete-for-me), **#264 (reactions — cross-device verified)**, #150 (MTU composer) |
+| Navigation | **#267 (back-nav exit + swipe-back, ×#158)** |
+| Ended groups | **#113 (member "Ping creator")**, #280 (track creator address), #281 (screen not reactive to re-create) |
+| Mesh config (shipped) | #254 (node-config parity), #186 (radio picker), #257 (waveform), #240/#241/#260 (QR label/share/caption) |
+| Self-hosted / transports | #219 (delivery node epic), #221 (WSS), #265 (custom node — UI), #268 (Wi-Fi/LAN transport) |
+| **LogosMesh (epic)** | **#269** → #270–#279 (Logos-native mesh firmware for ESP32/LoRa; all 5 Bitle pillars). Not started. |

@@ -193,3 +193,58 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   `_index/triggers.md` (symptom→skill) + `_index/by-type.md`; wired into INDEX/README.
 - Infra → **`~/infra/msg.logos.live/`** (patched run_node.sh + redacted .env.example + runbook).
 - Closed #218 (dup → logos-libdelivery-android#1). Shipped v0.7.6.
+
+## Week of 2026-07-29 — releases 0.7.65→0.7.67 (back-nav #267, reactions #264, ended-group #113) + tester engagement + LogosMesh epic
+
+### Wins
+- **[process] The on-device toggle test caught a bug the unit tests had already "passed."**
+  Reacting worked on RedMe (pill appeared), but tapping the pill to remove it didn't. That
+  forced a re-read of `foldReactions` — it processed `messages` in array order (newest-first),
+  so a `-` was replayed BEFORE its `+` and cancelled nothing. Fixed to sort chronological.
+  "Green tests + drive it anyway" earned its keep.
+- **[process] Cross-device proof on two real phones (RedMe↔Samsung via adb).** Sent a
+  uniquely-named message from RedMe, polled Samsung's UI until it arrived, reacted there,
+  polled RedMe — the ❤️ landed on the correct message with correct not-mine styling. This
+  is what validated the risky `messageKey(author,body)` cross-device identity end-to-end.
+- **[process] Codified the workflow into reusable skills.** `/release-peers` (the release
+  sequence) + `/peers-ops` (the operations manual: repos, device roster, adb technique +
+  gotchas, tester engagement, filing discipline) + a memory pointer → a fresh agent is
+  oriented and the release is one command.
+- **[process] investigate-then-file held under a live tester load.** A tester's GitHub
+  feature request became a well-scoped, cross-linked #265 (custom self-hosted node → the
+  client half of the #219 epic); posted the feedback→issue→roadmap loop back to the group.
+- **[project] #267 root cause was a manifest flag, not JS.** `enableOnBackInvokedCallback="true"`
+  made Android's predictive-back finish the Activity (→ home) instead of popping the JS stack,
+  because RN back still uses the legacy onBackPressed path. Set it false → back pops. And
+  native-stack has NO Android swipe, so a zero-dep `SwipeBackGesture` (PanResponder via the
+  navigator's `screenLayout`) gave swipe-back on every nav mode incl. 3-button.
+
+### Fails
+- **[process] `adb input text` silently dropped the ENTIRE message when it contained
+  parentheses.** Moment: posting the v0.7.67 what's-new to the testers group. Wrong action:
+  tapped send on a composer that looked empty, twice, before diagnosing. Root cause: didn't
+  know `input text` chokes on `( )`; my earlier successful posts happened to be paren-free,
+  so I never isolated the variable. → `/peers-ops`.
+- **[process] Chased the reaction toggle via blind taps instead of suspecting the code.**
+  Moment: pill wouldn't toggle off. Wrong action: `uiautomator dump` confirmed I was tapping
+  the pill's exact center, so I re-tapped rather than reading the fold. Root cause: read
+  "pill still there" as "tap missed" instead of "the remove didn't cancel." A confirmed-center
+  tap that no-ops = suspect the LOGIC, not the tap. (bisect-the-layer / verify-before-claiming.)
+- **[process] Sent the cross-device test to a STALE identity.** Moment: first cross-device
+  attempt. Wrong action: sent `RXKEY` to the RedMe DM labelled "Sam Sung" and polled for 2 min.
+  Root cause: assumed "Sam Sung" (`27f9de…`) was current Samsung without checking; the live
+  identity is "New Sam" (`380bfe…`). The user had to correct me. → `/peers-ops` device roster.
+- **[project] Wrote a literal NUL byte into MeshCoreModule.kt.** An Edit's replacement string
+  put `'\x00'` where a space belonged in `asciiZ` (`.substringBefore(' ')`), turning the file
+  "binary" and breaking the follow-up Edit's exact-match. Root cause: errant char in the
+  replacement; caught by `rg` reporting "binary file matches"; fixed via a Python rewrite.
+- **[project] Placed an XML comment inside the `<application>` tag's attribute list** (invalid
+  XML). Caught on re-read; moved it above the tag. Minor, but a reminder to re-read structural
+  edits.
+
+### Skills / doc updates from this batch
+- Ops → **new `/peers-ops` skill** (`~/.claude/skills/peers-ops/SKILL.md`) + `/release-peers`
+  command + `reference_peers_ops` memory + MEMORY.md pointer. Repo renamed → `xAlisher/peers`.
+- Project → **PROJECT_KNOWLEDGE §10e** (back-nav fix, reactions architecture + message-key).
+- Filed: #268 (Wi-Fi/LAN transport), #269 EPIC LogosMesh + #270–#279, #280 (creator address),
+  #281 (ended-group not reactive). Shipped v0.7.65 / v0.7.66 / v0.7.67.
