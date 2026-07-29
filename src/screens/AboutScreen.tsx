@@ -18,7 +18,7 @@ import {HexAvatar} from '../components/HexAvatar';
 import {useNodeStore} from '../stores/nodeStore';
 import LogosChat, {shortAddress} from '../native/LogosChat';
 
-const REPO_URL = 'https://github.com/xAlisher/logos-chat-android';
+const REPO_URL = 'https://github.com/xAlisher/peers';
 
 export function AboutScreen() {
   const myAddress = useNodeStore(s => s.myAddress);
@@ -81,9 +81,15 @@ export function AboutScreen() {
             <Logo size={56} color={colors.accent} strokeWidth={2} />
           )}
           <Text style={styles.name}>peers</Text>
-          <Text style={styles.version}>
-            {version != null ? `v${version.name} (${version.code})` : '…'}
-          </Text>
+          <View style={styles.versionRow}>
+            <Text style={styles.version}>
+              {version != null ? `v${version.name} (${version.code})` : '…'}
+            </Text>
+            {/* This is pre-release software — say so plainly next to the version. */}
+            <View style={styles.alphaPill}>
+              <Text style={styles.alphaText}>ALPHA</Text>
+            </View>
+          </View>
         </View>
 
         <Text style={styles.blurb}>
@@ -154,7 +160,16 @@ const styles = StyleSheet.create({
   content: {padding: spacing.lg, gap: spacing.lg},
   hero: {alignItems: 'center', gap: spacing.sm, paddingVertical: spacing.lg},
   name: {...type.brand, color: colors.text, fontSize: 24},
+  versionRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   version: {...type.label, color: colors.textDim},
+  alphaPill: {
+    borderColor: colors.accent,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 1,
+  },
+  alphaText: {...type.caption, color: colors.accent, letterSpacing: 1, fontWeight: '700'},
   blurb: {...type.body, color: colors.textDim, textAlign: 'center', lineHeight: 20},
   // #243 transport colors, so the three names read at a glance.
   blurbLogos: {color: colors.accent},
