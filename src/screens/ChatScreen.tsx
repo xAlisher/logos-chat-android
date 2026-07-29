@@ -93,6 +93,7 @@ import {
   REACTION_PALETTE,
   type ReactionState,
 } from '../messages/reactions';
+import {isPinContent, parsePin, foldPins} from '../messages/pins';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -489,6 +490,7 @@ export function ChatScreen() {
   const addMember = useChatStore(s => s.addMember);
   const send = useChatStore(s => s.send);
   const sendReaction = useChatStore(s => s.sendReaction); // #264
+  const pinMessage = useChatStore(s => s.pinMessage); // #266
   const sendImage = useChatStore(s => s.sendImage);
   const stageImages = useChatStore(s => s.stageImages); // #261
   const stageCameraPhoto = useChatStore(s => s.stageCameraPhoto); // #261
@@ -543,6 +545,7 @@ export function ChatScreen() {
     verified: boolean;
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
+  const listRef = React.useRef<FlatList<Row>>(null); // #266: scroll to the pinned msg
   const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
   const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
   const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
@@ -1284,11 +1287,35 @@ export function ChatScreen() {
     return foldReactions(events, myAddress ?? '');
   }, [messages, authorOf, myAddress]);
 
+  // #266: fold pin1: markers (chronological) → the currently-pinned message key.
+  const pinnedKey = useMemo(() => {
+    const events = messages
+      .filter(m => isPinContent(m.text))
+      .slice()
+      .sort((a, b) => a.at - b.at || a.msgPk - b.msgPk)
+      .map(m => parsePin(m.text))
+      .filter((p): p is NonNullable<typeof p> => p != null);
+    return foldPins(events);
+  }, [messages]);
+  // The pinned message itself (for the top bar), matched by its cross-device key.
+  const pinnedMsg = useMemo(
+    () =>
+      pinnedKey == null
+        ? null
+        : messages.find(
+            m =>
+              !isReactionContent(m.text) &&
+              !isPinContent(m.text) &&
+              messageKey(authorOf(m), m.text) === pinnedKey,
+          ) ?? null,
+    [pinnedKey, messages, authorOf],
+  );
+
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [
-      // #264: reaction markers are folded above, not rendered as bubbles.
+      // #264/#266: reaction + pin markers are folded above, not rendered as bubbles.
       ...messages
-        .filter(m => !isReactionContent(m.text))
+        .filter(m => !isReactionContent(m.text) && !isPinContent(m.text))
         .map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
       ...(systemLines ?? []).map(sn => ({
         at: sn.at,
@@ -1393,9 +1420,57 @@ export function ChatScreen() {
           </Pressable>
         </View>
       )}
+      {/* #266: pinned-message bar — tap to jump to it; the creator can unpin. */}
+      {pinnedMsg != null && (
+        <Pressable
+          style={styles.pinBar}
+          testID="pin-bar"
+          onPress={() => {
+            const idx = rows.findIndex(
+              r => r.kind === 'msg' && r.msg.msgPk === pinnedMsg.msgPk,
+            );
+            if (idx >= 0) {
+              listRef.current?.scrollToIndex({index: idx, viewPosition: 0.5, animated: true});
+            }
+          }}>
+          <Text style={styles.pinBarPin}>📌</Text>
+          <View style={styles.pinBarText}>
+            <Text style={styles.pinBarLabel}>Pinned</Text>
+            <Text style={styles.pinBarMsg} numberOfLines={1}>
+              {parseImageLocal(pinnedMsg.text) != null
+                ? '📷 Photo'
+                : parseVoiceLocal(pinnedMsg.text) != null
+                ? '🎤 Voice message'
+                : parseLocation(pinnedMsg.text) != null
+                ? '📍 Location'
+                : parseRelay(pinnedMsg.text)?.text ?? pinnedMsg.text}
+            </Text>
+          </View>
+          {isGroup && (convo?.createdByMe ?? false) && (
+            <Pressable
+              onPress={() =>
+                pinMessage(convoPk, pinnedKey!, '-').catch(() =>
+                  useNodeStore.setState({error: 'unpin failed'}),
+                )
+              }
+              hitSlop={10}
+              testID="pin-bar-unpin">
+              <Text style={styles.pinBarClear}>✕</Text>
+            </Pressable>
+          )}
+        </Pressable>
+      )}
       <FlatList
+        ref={listRef}
         inverted
         data={rows}
+        onScrollToIndexFailed={info => {
+          // Inverted + variable heights: nudge, then retry once measured.
+          listRef.current?.scrollToOffset({
+            offset: info.averageItemLength * info.index,
+            animated: false,
+          });
+        }}
         keyExtractor={r =>
           r.kind === 'msg' ? `m${r.msg.msgPk}` : `s${r.sys.id}`
         }
@@ -1732,6 +1807,16 @@ export function ChatScreen() {
           sendReaction(convoPk, t.reactionKey, emoji, '+').catch(() =>
             useNodeStore.setState({error: 'reaction failed'}),
           )
+        }
+        pinnedKey={pinnedKey}
+        onPin={
+          // #266 v1: only the group creator may pin/unpin.
+          isGroup && (convo?.createdByMe ?? false)
+            ? (t, pinned) =>
+                pinMessage(convoPk, t.reactionKey, pinned ? '-' : '+').catch(() =>
+                  useNodeStore.setState({error: 'pin failed'}),
+                )
+            : undefined
         }
         onMapMesh={(address, label) => {
           setBubbleTarget(null);
@@ -2182,6 +2267,22 @@ const styles = StyleSheet.create({
   charCount: {...type.caption, color: colors.textFaint},
   charCountOver: {color: colors.unread}, // #150: oversize for the radio
   link: {textDecorationLine: 'underline'}, // #262: tappable message links
+  // #266 pinned-message bar
+  pinBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.panel,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  pinBarPin: {fontSize: 14},
+  pinBarText: {flex: 1, gap: 1},
+  pinBarLabel: {...type.caption, color: colors.accent},
+  pinBarMsg: {...type.label, color: colors.text},
+  pinBarClear: {...type.title, color: colors.textDim, paddingHorizontal: spacing.xs},
   // #264 reaction strip
   reactStrip: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 2},
   reactStripOwn: {justifyContent: 'flex-end', alignSelf: 'flex-end'},

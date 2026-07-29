@@ -11,6 +11,7 @@ import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {encodeReaction} from '../messages/reactions';
+import {encodePin} from '../messages/pins';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
@@ -171,6 +172,9 @@ interface ChatState {
     emoji: string,
     op: '+' | '-',
   ) => Promise<void>;
+  /** #266: pin ('+') or unpin ('-') a message by its cross-device key. Sends a
+   *  `pin1:` marker (folded into the pin bar on load; never shown as a bubble). */
+  pinMessage: (convoPk: number, targetKey: string, op: '+' | '-') => Promise<void>;
   /**
    * #197: pick an image from the gallery and send it over Logos (1:1 or group).
    * Images are Logos-only — never mirrored to the mesh (LoRa can't carry them).
@@ -814,6 +818,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // send path (transport routing, optimistic bubble, dedup). The optimistic row
     // is a marker, so it's filtered from the timeline + folded into reactions.
     await get().send(convoPk, encodeReaction(op, emoji, targetKey));
+  },
+
+  pinMessage: async (convoPk, targetKey, op) => {
+    await get().send(convoPk, encodePin(op, targetKey));
   },
 
   send: async (convoPk: number, text: string) => {

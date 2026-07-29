@@ -860,13 +860,13 @@ class ChatDb(
         .query(
             """SELECT c.convo_pk, c.peer_address, c.nickname, c.lib_convo_id,
                       c.created_at, c.last_message_at, c.unread,
-                      -- #264: reactions (react1:) are folded-in markers, not chat
-                      -- messages — never surface them as the list preview.
+                      -- #264/#266: reactions (react1:) + pins (pin1:) are folded-in
+                      -- markers, not chat messages — never surface them as the preview.
                       (SELECT content FROM messages m WHERE m.convo_pk=c.convo_pk
-                         AND m.content NOT LIKE 'react1:%'
+                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%'
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       (SELECT direction FROM messages m WHERE m.convo_pk=c.convo_pk
-                         AND m.content NOT LIKE 'react1:%'
+                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%'
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),

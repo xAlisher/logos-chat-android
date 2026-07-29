@@ -67,6 +67,8 @@ export function BubbleActionMenu({
   onMapMesh,
   onDelete,
   onReact,
+  onPin,
+  pinnedKey,
   isMeshMapped,
 }: {
   target: BubbleTarget | null;
@@ -85,6 +87,10 @@ export function BubbleActionMenu({
   onDelete: (msgPk: number) => void;
   /** #264: react to this message with an emoji (opens as a row atop the menu). */
   onReact?: (target: BubbleTarget, emoji: string) => void;
+  /** #266: pin/unpin this message (only provided when the user may pin — creator). */
+  onPin?: (target: BubbleTarget, currentlyPinned: boolean) => void;
+  /** #266: the currently-pinned message key, to label Pin vs Unpin. */
+  pinnedKey?: string | null;
   /** #210: map this sender to a mesh identity (local, works offline). */
   onMapMesh?: (address: string, label: string | null) => void;
   /** #210: whether this address is already mesh-mapped (label wording). */
@@ -179,6 +185,16 @@ export function BubbleActionMenu({
         onPress: () => onMapMesh(address, t.label),
       });
     }
+    // #266: pin/unpin — only when the caller allows it (group creator). Media + text alike.
+    if (onPin != null) {
+      const pinned = t.reactionKey === pinnedKey;
+      items.push({
+        key: 'pin',
+        label: pinned ? 'Unpin' : 'Pin',
+        icon: <Text style={styles.pinGlyph}>📌</Text>,
+        onPress: () => onPin(t, pinned),
+      });
+    }
     // #263: delete locally — last + destructive. Works on any bubble (own or peer).
     items.push({
       key: 'delete',
@@ -230,4 +246,5 @@ const styles = StyleSheet.create({
   },
   reactBtn: {paddingHorizontal: spacing.xs, paddingVertical: spacing.xs},
   reactBtnText: {fontSize: 26},
+  pinGlyph: {fontSize: 16},
 });
