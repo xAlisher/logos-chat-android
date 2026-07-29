@@ -251,6 +251,13 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   index lists the APK regardless. Fix: `git add -A` + curl the **APK URL** for 200. Hardened in
   `/release-peers` + `/peers-ops`. Lesson: verify the artifact users fetch, not a manifest of it.
 
+- **[process] Used the 📌 emoji as an icon in #266 — a REPEATED miss of a standing rule.**
+  Moment: the pin bar + Pin menu item. Wrong action: shipped `<Text>📌</Text>` as the icon.
+  Root cause: reached for the quickest glyph instead of hand-porting a Lucide SVG; the user
+  had already said "only Lucide icons, never emoji for icons" more than once. Fix tracked in
+  #282; rule captured in `feedback_lucide_icons_only` + `/peers-ops`. Lesson: emoji are
+  content (reactions), never icons.
+
 ### Skills / doc updates from this batch
 - Ops → **new `/peers-ops` skill** (`~/.claude/skills/peers-ops/SKILL.md`) + `/release-peers`
   command + `reference_peers_ops` memory + MEMORY.md pointer. Repo renamed → `xAlisher/peers`.
