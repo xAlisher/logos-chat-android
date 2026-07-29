@@ -1033,17 +1033,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setMemberStatus: (convoPk, address, status, at) => {
     const fields = memberStatusFields(address, status, describePeer(address));
-    // Inferred type keeps `member` required (from fields), so upsertMemberNote's
-    // `member: string` bound is satisfied.
-    const note = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      at: at ?? Date.now(),
-      ...fields,
-    };
+    const member = address.toLowerCase();
     set(s => {
+      const cur = s.systemLines[convoPk] ?? [];
+      const prior = cur.find(n => n.member === member);
+      // #285/#288: the same status can be re-fired repeatedly (members_changed
+      // + member_joined arrive per commit/message during group formation). An
+      // identical re-fire must NOT touch the note — otherwise it re-stamps `at`
+      // and the single "joined" line jumps below every new message. Only a real
+      // status change (different text) or an explicit `at` override updates it.
+      if (prior != null && prior.text === fields.text && at == null) {
+        return {};
+      }
+      const note = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        // Keep the member's original timestamp when advancing its line
+        // (invited → joined) so it stays anchored in history instead of
+        // floating to the bottom; an explicit `at` (#252) still wins.
+        at: at ?? prior?.at ?? Date.now(),
+        ...fields,
+      };
       // Upsert by member so the status advances in place (invited → hasn't
       // joined → joined) with no stacking.
-      const next = upsertMemberNote(s.systemLines[convoPk] ?? [], note, SYSLINE_CAP);
+      const next = upsertMemberNote(cur, note, SYSLINE_CAP);
       persistSystemLines(convoPk, next);
       return {systemLines: {...s.systemLines, [convoPk]: next}};
     });

@@ -51,6 +51,7 @@ import {
   EraserIcon,
   LogOutIcon,
   MeshIcon,
+  PinIcon,
   type MenuItem,
 } from '../components/OverflowMenu';
 import {AddressModal} from '../components/AddressModal';
@@ -1433,7 +1434,7 @@ export function ChatScreen() {
               listRef.current?.scrollToIndex({index: idx, viewPosition: 0.5, animated: true});
             }
           }}>
-          <Text style={styles.pinBarPin}>📌</Text>
+          <PinIcon size={16} color={colors.accent} />
           <View style={styles.pinBarText}>
             <Text style={styles.pinBarLabel}>Pinned</Text>
             <Text style={styles.pinBarMsg} numberOfLines={1}>

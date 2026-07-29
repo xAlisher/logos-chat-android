@@ -222,22 +222,19 @@ export function AddMembersScreen() {
 
   const renderRow = ({item}: {item: Row}) => {
     const isChecked = checked.has(item.address);
-    // #147: dim members not currently heard over BLE/mesh. Only when the BLE
-    // transport is engaged — with it off we have no reachability signal, so
-    // dimming everyone would be misleading rather than honest.
+    // #284: don't dim "not nearby" contacts — a contact is addable over Logos
+    // regardless of BLE proximity, so dimming wrongly implied it was unselectable.
+    // We keep only the *positive* "nearby" cue below (blue), never a grayed-out row.
     const isNearby = nearbySet.has(item.address.toLowerCase());
-    const dimmed = bleOn && !isNearby;
     return (
       <Pressable
         style={styles.row}
         testID={`add-member-row-${item.address}`}
         onPress={() => toggle(item.address)}>
-        {/* Dim the identity (avatar + label), never the checkbox — the row must
-            stay clearly tappable even for an out-of-range member. */}
-        <View style={dimmed && styles.dimmed}>
+        <View>
           <HexAvatar seed={item.address} kind="contact" size={32} />
         </View>
-        <View style={[styles.rowText, dimmed && styles.dimmed]}>
+        <View style={styles.rowText}>
           {item.label ? (
             <>
               <View style={styles.nameRow}>
@@ -265,16 +262,12 @@ export function AddMembersScreen() {
             </View>
           )}
         </View>
-        {/* #147: per-row reachability caption — a quiet "nearby" (BLE blue) or a
-            grayed "not nearby", shown only while the BLE transport is engaged. */}
-        {bleOn && (
-          <Text
-            style={[
-              type.caption,
-              styles.presence,
-              {color: isNearby ? BLE_BLUE : colors.textFaint},
-            ]}>
-            {isNearby ? 'nearby' : 'not nearby'}
+        {/* #284: positive-only reachability cue — show "nearby" (BLE blue) when a
+            contact is heard over mesh; show nothing otherwise (no "not nearby",
+            since it's addable over Logos anyway). */}
+        {bleOn && isNearby && (
+          <Text style={[type.caption, styles.presence, {color: BLE_BLUE}]}>
+            nearby
           </Text>
         )}
         <View style={[styles.checkbox, isChecked && styles.checkboxOn]}>

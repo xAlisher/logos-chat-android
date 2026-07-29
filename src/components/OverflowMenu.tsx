@@ -165,6 +165,29 @@ export function CopyIcon({size = S, color = colors.textDim}: IconProps) {
 }
 
 /** lucide `clipboard` — copy message text. */
+// #282: Lucide `pin` (lucide.dev) — monochrome, tintable. Replaces the 📌 emoji
+// used for pinned messages (icons are Lucide SVGs, never emoji-as-icon).
+export function PinIcon({size = S, color = colors.textDim}: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 17v5"
+        stroke={color}
+        strokeWidth={SW}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
+        stroke={color}
+        strokeWidth={SW}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 export function ClipboardIcon({size = S, color = colors.textDim}: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

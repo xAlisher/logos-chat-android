@@ -22,6 +22,7 @@ import {
   MessageCircleIcon,
   MeshIcon,
   TrashIcon,
+  PinIcon,
   type MenuItem,
 } from './OverflowMenu';
 import {parseImageLocal, isImageContent} from '../native/imageMsg';
@@ -191,7 +192,7 @@ export function BubbleActionMenu({
       items.push({
         key: 'pin',
         label: pinned ? 'Unpin' : 'Pin',
-        icon: <Text style={styles.pinGlyph}>📌</Text>,
+        icon: <PinIcon color={colors.textDim} />,
         onPress: () => onPin(t, pinned),
       });
     }
