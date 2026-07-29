@@ -242,6 +242,15 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   XML). Caught on re-read; moved it above the tag. Minor, but a reminder to re-read structural
   edits.
 
+- **[process] Shipped 3 F-Droid releases that 404'd for testers.** Moment: a tester's
+  download of `peers-0.7.67-arm64.apk` failed 404. Wrong action: published 0.7.65/66/67 with
+  `git commit -am` in the fdroid repo, and "verified live" by grepping `index-v2.json` for the
+  APK name. Root cause: **`-a` stages only modified TRACKED files — the NEW APK is untracked,
+  so it was never committed**, while the regenerated (tracked) index committed fine and
+  referenced a file that isn't in the repo. My verify checked the *index*, not the *file* — the
+  index lists the APK regardless. Fix: `git add -A` + curl the **APK URL** for 200. Hardened in
+  `/release-peers` + `/peers-ops`. Lesson: verify the artifact users fetch, not a manifest of it.
+
 ### Skills / doc updates from this batch
 - Ops → **new `/peers-ops` skill** (`~/.claude/skills/peers-ops/SKILL.md`) + `/release-peers`
   command + `reference_peers_ops` memory + MEMORY.md pointer. Repo renamed → `xAlisher/peers`.
