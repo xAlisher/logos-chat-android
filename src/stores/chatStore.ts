@@ -9,6 +9,7 @@ import LogosChat, {addLogosChatListener, shortAddress} from '../native/LogosChat
 import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat';
 import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
+import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
@@ -853,18 +854,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else if (transport === 'mesh') {
         // #167: a mesh conversation is either a channel ("mesh:chan:<idx>") or an
         // ECDH DM ("mesh:dm:<pubkeyHex>"). Route to the matching MeshCore verb.
+        // #150: a LoRa text packet is byte-capped — send the first part that fits
+        // (never split a multi-byte char) rather than overflow the radio.
+        const meshText = truncateToBytes(text, MESH_TEXT_MTU_BYTES);
         const libId = convo?.libConvoId ?? '';
         const chan = libId.match(/^mesh:chan:(\d+)$/);
         const dm = libId.match(/^mesh:dm:([0-9a-fA-F]+)$/);
         if (chan != null) {
-          await MeshCore.sendChannelText(parseInt(chan[1], 10), text);
+          await MeshCore.sendChannelText(parseInt(chan[1], 10), meshText);
         } else if (dm != null) {
-          await MeshCore.sendDm(dm[1], text);
+          await MeshCore.sendDm(dm[1], meshText);
         } else {
           throw new Error('unsupported mesh conversation');
         }
-        // Persist to the shared timeline (the optimistic bubble is replaced below).
-        await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+        // Persist to the shared timeline what actually went over the radio (the
+        // optimistic bubble is replaced below).
+        await LogosChat.recordMeshMessage(convoPk, 'out', meshText, Date.now(), null);
       } else if (meshMirror) {
         // #168 (dual-send): mirroring is ADDITIVE — send on EVERY *live* transport
         // so Logos-only AND mesh-only members both receive. The mesh leg is
@@ -873,10 +878,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // and the Logos send never ran → "no radio connected", nothing delivered).
         const idx = convo!.meshChannelIdx!;
         const meshConnected = useMeshStore.getState().status === 'connected';
+        // #150: the LoRa leg is byte-capped; the Logos leg below carries the FULL
+        // text (no radio MTU), so Logos members get everything and radio-only
+        // members get the first part that fits.
+        const meshText = truncateToBytes(text, MESH_TEXT_MTU_BYTES);
         let meshOk = false;
         if (meshConnected) {
           try {
-            await MeshCore.sendChannelText(idx, text);
+            await MeshCore.sendChannelText(idx, meshText);
             meshOk = true;
           } catch {
             // radio hiccup — Logos still carries below if the node is up
@@ -888,8 +897,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             useNodeStore.setState({error: 'send failed — tap the message to retry'});
           }
         } else if (meshOk) {
-          // Node down but the mesh leg went — record the mesh-only outbound.
-          await LogosChat.recordMeshMessage(convoPk, 'out', text, Date.now(), null);
+          // Node down but the mesh leg went — record the mesh-only outbound (what
+          // actually left over the radio).
+          await LogosChat.recordMeshMessage(convoPk, 'out', meshText, Date.now(), null);
         } else {
           // Neither transport carried it (onSubmit normally gates this).
           throw new Error('no transport available — connect the radio or the node');

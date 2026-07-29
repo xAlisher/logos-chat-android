@@ -11,6 +11,10 @@ export const DEFAULT_DISPLAY_NAME = '';
 /** KV key: has the user ever completed a MeshCore connect on this device? (#146) */
 export const KV_MESH_CONFIGURED = 'meshConfigured';
 
+/** #186: KV key — BLE address of the last radio the user connected to, so the
+ *  device picker can offer it first / auto-reconnect to it. */
+export const KV_LAST_RADIO = 'lastRadioAddress';
+
 /** KV key: has the user ever engaged the BLE-mesh transport on this device? (#133) */
 export const KV_BLE_CONFIGURED = 'bleConfigured';
 
@@ -60,6 +64,8 @@ interface SettingsState {
    * the transports modal offers "Set up MeshCore" instead of a live toggle.
    */
   meshConfigured: boolean;
+  /** #186: BLE address of the last radio connected to (null if none yet). */
+  lastRadioAddress: string | null;
   /**
    * True once the BLE-mesh transport has been engaged at least once on this
    * device. Gates the BLE transport indicator: until it's set the pill shows only
@@ -106,11 +112,14 @@ interface SettingsState {
   setBleEngagedPref: (on: boolean) => Promise<void>;
   /** #236: toggle auto-lock (re-lock when the app backgrounds); persisted. */
   setLockOnBackground: (on: boolean) => Promise<void>;
+  /** #186: remember the last radio's BLE address (persisted; null clears it). */
+  setLastRadioAddress: (address: string | null) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   displayName: DEFAULT_DISPLAY_NAME,
   meshConfigured: false,
+  lastRadioAddress: null,
   bleConfigured: false,
   bleAdvertiseIdentity: false,
   bleEngagedPref: false,
@@ -130,6 +139,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const m = await LogosChat.getSetting(KV_MESH_CONFIGURED);
       if (m === 'true') set({meshConfigured: true});
+    } catch {
+      // keep default
+    }
+    // #186: last-connected radio address (empty string / missing → null).
+    try {
+      const r = await LogosChat.getSetting(KV_LAST_RADIO);
+      if (r && r.trim().length > 0) set({lastRadioAddress: r});
     } catch {
       // keep default
     }
@@ -186,6 +202,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({meshConfigured: configured});
     try {
       await LogosChat.setSetting(KV_MESH_CONFIGURED, configured ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setLastRadioAddress: async (address: string | null) => {
+    if (get().lastRadioAddress === address) return;
+    set({lastRadioAddress: address});
+    try {
+      await LogosChat.setSetting(KV_LAST_RADIO, address ?? '');
     } catch {
       // best-effort
     }

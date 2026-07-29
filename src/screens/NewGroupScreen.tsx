@@ -17,6 +17,8 @@ import {ErrorToast} from '../components/ErrorToast';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
 import {useChatStore} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
+import {useMeshStore} from '../stores/meshStore';
+import {radioRefusesGroupSetup} from '../mesh/composerBudget';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -24,12 +26,22 @@ type Nav = NativeStackNavigationProp<RootStackParamList>;
 export function NewGroupScreen() {
   const navigation = useNavigation<Nav>();
   const status = useNodeStore(s => s.status);
+  const meshStatus = useMeshStore(s => s.status);
   const createGroup = useChatStore(s => s.createGroup);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = status === 'running';
+  // #150: a group is an MLS operation over Logos — a LoRa radio can't run a key
+  // exchange. When the ONLY live transport is the radio (node off, radio up),
+  // refuse with a clear reason instead of the generic "node not running".
+  const overLoraOnly =
+    meshStatus === 'connected' &&
+    status !== 'running' &&
+    status !== 'initializing' &&
+    status !== 'starting';
+  const radioRefusal = radioRefusesGroupSetup(overLoraOnly, 'new-group');
   const canCreate = running && !busy && name.trim().length > 0;
 
   const onCreate = async () => {
@@ -55,7 +67,7 @@ export function NewGroupScreen() {
       <KeyboardAwareScreen contentContainerStyle={styles.content}>
         {!running && (
           <Text style={[type.label, {color: colors.unread}]}>
-            Node not running — start it in settings first
+            {radioRefusal ?? 'Node not running — start it in settings first'}
           </Text>
         )}
         {/* Fields laid directly on the page (no modal-looking card), white

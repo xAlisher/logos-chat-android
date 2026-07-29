@@ -33,6 +33,8 @@ import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
+import {useMeshStore} from '../stores/meshStore';
+import {radioRefusesGroupSetup} from '../mesh/composerBudget';
 import {useChatStore, convoDisplayName, knownContacts} from '../stores/chatStore';
 import type {KnownContact} from '../stores/chatStore';
 import {useBleStore} from '../stores/bleStore';
@@ -75,6 +77,8 @@ export function AddMembersScreen() {
   const insets = useSafeAreaInsets();
   const nodeError = useNodeStore(s => s.error);
   const clearNodeError = useNodeStore(s => s.clearError);
+  const nodeStatus = useNodeStore(s => s.status);
+  const meshStatus = useMeshStore(s => s.status);
 
   // #147: live BLE-mesh presence. `nearbyContacts` holds the addresses whose
   // rotating identity is currently heard nearby (resolved in bleStore); it's
@@ -156,6 +160,19 @@ export function AddMembersScreen() {
     if (checked.size === 0 || submitting) {
       return;
     }
+    // #150: adding a member is an MLS op over Logos — refuse gracefully when the
+    // only live transport is the LoRa radio (node off, radio up) instead of
+    // letting each addMember fail opaquely.
+    const overLoraOnly =
+      meshStatus === 'connected' &&
+      nodeStatus !== 'running' &&
+      nodeStatus !== 'initializing' &&
+      nodeStatus !== 'starting';
+    const refusal = radioRefusesGroupSetup(overLoraOnly, 'add-member');
+    if (refusal != null) {
+      useNodeStore.setState({error: refusal});
+      return;
+    }
     setSubmitting(true);
     let added = 0;
     const failures: string[] = [];
@@ -197,7 +214,7 @@ export function AddMembersScreen() {
         navigation.goBack();
       }
     }
-  }, [checked, submitting, addMember, convoPk, navigation, postCreate, groupName]);
+  }, [checked, submitting, addMember, convoPk, navigation, postCreate, groupName, meshStatus, nodeStatus]);
 
   const skip = useCallback(() => {
     navigation.replace('Chat', {convoPk, convoName: groupName, isGroup: true});

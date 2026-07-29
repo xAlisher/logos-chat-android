@@ -24,6 +24,7 @@ import {ContactsScreen} from '../screens/ContactsScreen';
 import {AboutScreen} from '../screens/AboutScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {MeshCoreScreen} from '../screens/MeshCoreScreen';
+import {MeshConfigScreen} from '../screens/MeshConfigScreen';
 import {NearbyScreen} from '../screens/NearbyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -168,6 +169,11 @@ export function RootNavigator() {
           name="MeshCore"
           component={MeshCoreScreen}
           options={{title: 'MeshCore'}}
+        />
+        <Stack.Screen
+          name="MeshConfig"
+          component={MeshConfigScreen}
+          options={{title: 'Radio config'}}
         />
         <Stack.Screen
           name="Nearby"

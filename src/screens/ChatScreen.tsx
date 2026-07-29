@@ -82,6 +82,7 @@ import AudioRecorder, {
   subscribeRecordingAmplitude,
 } from '../native/Audio';
 import {deriveComposerState} from '../stores/groupState';
+import {composerBudget} from '../mesh/composerBudget';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -89,9 +90,6 @@ import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
-// #167: MeshCore packet text cap. Payload is single-shot (~133–160 chars,
-// no fragmentation exposed); 140 keeps a safe margin under the datagram cap.
-const MESH_MAX_CHARS = 140;
 /** #199: an image bubble fits inside this box (aspect-preserved), so a tall
  * screenshot doesn't clog the thread. */
 const IMG_MAX_W = 230;
@@ -932,6 +930,10 @@ export function ChatScreen() {
   // #255: …or a location is staged in the composer.
   const canSendText = text.trim().length > 0;
   const canSendComposer = canSendText || pendingLoc != null;
+  // #150: MTU-aware composer. A LoRa text packet is byte-capped (UTF-8), so the
+  // budget only applies when the send will ACTUALLY leave over the radio — which
+  // is exactly sendColorKind==='mesh' (BLE fragments; Logos has no radio MTU).
+  const budget = composerBudget({text, overLora: cs.sendColorKind === 'mesh'});
 
   // #168 (Phase 2b): mesh-mirror banner state. Shown on a Logos group when a radio
   // is connected and the group is either already mirrored or has mapped members.
@@ -1443,7 +1445,8 @@ export function ChatScreen() {
           </View>
         </View>
       ) : isMesh ? (
-        // Mesh: single-line, char-capped, text only.
+        // Mesh: single-line, text only. #150: no hard char cap — the send is
+        // byte-budgeted (LoRa MTU) and oversize is handled honestly on send.
         <View style={styles.composer}>
           <TextInput
             style={styles.input}
@@ -1452,12 +1455,13 @@ export function ChatScreen() {
             placeholder="Message…"
             placeholderTextColor={colors.textFaint}
             multiline
-            maxLength={MESH_MAX_CHARS}
             testID="composer-input"
           />
           <View style={styles.sendCol}>
-            <Text style={styles.charCount} testID="composer-charcount">
-              {text.length}/{MESH_MAX_CHARS}
+            <Text
+              style={[styles.charCount, budget.over && styles.charCountOver]}
+              testID="composer-charcount">
+              {budget.label}
             </Text>
             <Pressable
               style={[styles.send, {backgroundColor: canSendText ? sendColor : colors.border}]}
@@ -1471,6 +1475,15 @@ export function ChatScreen() {
       ) : (
         // #206: 2-line composer — a growing text row + an action-icon row.
         <View style={styles.composerV}>
+          {/* #150: a mesh-mirrored group whose live transport is the LoRa radio
+              is byte-budgeted too — show the same honest budget/oversize line. */}
+          {budget.show && (
+            <Text
+              style={[styles.radioBudget, budget.over && styles.charCountOver]}
+              testID="composer-radio-budget">
+              {budget.over ? budget.label : `over radio · ${budget.label}`}
+            </Text>
+          )}
           {/* #255: staged location preview — the user confirms with Send or clears it. */}
           {pendingLoc != null && (
             <View style={styles.pendingLoc} testID="pending-location">
@@ -1946,6 +1959,13 @@ const styles = StyleSheet.create({
   recWaveBar: {flex: 1, marginHorizontal: 0.5, borderRadius: 1.5},
   // #167: live char counter shown only for a mesh composer.
   charCount: {...type.caption, color: colors.textFaint},
+  charCountOver: {color: colors.unread}, // #150: oversize for the radio
+  radioBudget: {
+    ...type.caption,
+    color: colors.textFaint,
+    paddingHorizontal: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
   send: {
     // #184: a perfect circle in every chat/group — fixed square + 50% radius, so
     // the icon/spinner inside never stretches it into a pill.

@@ -16,6 +16,40 @@ export interface MeshSelfInfo {
   pubkeyHex: string;
   /** The radio's broadcast advert label (node_name), decoupled from the keypair. */
   name: string;
+  /** #186: BLE address of the connected radio (for remembering the last-chosen). */
+  address?: string | null;
+  // #254: live radio params carried in the SELF_INFO tail (read-before-edit).
+  freqMHz?: number;
+  bwKHz?: number;
+  sf?: number;
+  cr?: number;
+  txPowerDbm?: number;
+  maxTxPowerDbm?: number;
+}
+
+/** #254: node/device info from getNodeConfig (DEVICE_QUERY + battery). */
+export interface MeshNodeConfig {
+  firmwareVerCode?: number;
+  firmwareVersion?: string;
+  buildDate?: string;
+  manufacturer?: string;
+  maxContacts?: number;
+  maxChannels?: number;
+  /** Current device PIN (0 = none). */
+  blePin?: number;
+  batteryMv?: number;
+  storageUsedKb?: number;
+  storageTotalKb?: number;
+}
+
+/** #186: one radio surfaced by a scanForRadios sweep (for the device picker). */
+export interface MeshRadio {
+  /** BLE MAC address — the stable handle passed to connectTo. */
+  address: string;
+  /** Advertised radio name, or null if it wasn't in the advert record. */
+  name: string | null;
+  /** Signal strength in dBm (higher = closer). */
+  rssi: number;
 }
 
 /** A MeshCore channel slot (Phase 1): pre-shared 16-byte symmetric key + label. */
@@ -73,12 +107,40 @@ interface MeshCoreNative {
    * or a connection failure before SELF_INFO.
    */
   scanAndConnect(): Promise<string>;
+  /**
+   * #186: Scan for `timeoutMs` and resolve with EVERY MeshCore radio seen (a
+   * stringified {@link MeshRadio}[], parse with {@link parseRadios}), sorted by
+   * RSSI. Does not connect. Lets the UI show a picker when several are in range.
+   */
+  scanForRadios(timeoutMs: number): Promise<string>;
+  /**
+   * #186: Connect to a specific radio (from {@link scanForRadios}) by BLE address,
+   * running the same handshake as {@link scanAndConnect}. Resolves with self-info.
+   */
+  connectTo(address: string): Promise<string>;
   disconnect(): Promise<null>;
   getStatus(): Promise<MeshStatus>;
   /** Set the radio's broadcast advert label. Resolves on BLE write-ack. */
   setAdvertName(name: string): Promise<null>;
-  /** Broadcast a self-advert now. Resolves on BLE write-ack. */
-  sendSelfAdvert(): Promise<null>;
+  /**
+   * Broadcast a self-advert now. `flood` = true floods (scoped, multi-hop); false
+   * is a zero-hop advert. Resolves on BLE write-ack.
+   */
+  sendSelfAdvert(flood: boolean): Promise<null>;
+
+  // -- #254: node/radio configuration (docs/meshcore-config-protocol.md) -------
+  /** Read device info + battery. Resolves a stringified {@link MeshNodeConfig}. */
+  getNodeConfig(): Promise<string>;
+  /** Set freq (MHz), bandwidth (kHz), spreading factor, coding rate in one frame. */
+  setRadioParams(freqMHz: number, bwKHz: number, sf: number, cr: number): Promise<null>;
+  /** Set TX power in dBm. */
+  setTxPower(dbm: number): Promise<null>;
+  /** Set the advert lat/lon (decimal degrees). */
+  setAdvertLatLon(lat: number, lon: number): Promise<null>;
+  /** Sync the radio clock to the phone's current time. */
+  setDeviceTime(): Promise<null>;
+  /** Reboot the radio (link will drop). Resolves on write-ack. */
+  rebootRadio(): Promise<null>;
 
   // -- Phase 1: channels ------------------------------------------------------
   /**
@@ -149,12 +211,53 @@ export function parseSelfInfo(json: string): MeshSelfInfo | null {
   try {
     const o = JSON.parse(json);
     if (typeof o?.pubkeyHex === 'string' && typeof o?.name === 'string') {
-      return {pubkeyHex: o.pubkeyHex, name: o.name};
+      const num = (v: any) => (typeof v === 'number' ? v : undefined);
+      return {
+        pubkeyHex: o.pubkeyHex,
+        name: o.name,
+        address: typeof o.address === 'string' ? o.address : null,
+        freqMHz: num(o.freqMHz),
+        bwKHz: num(o.bwKHz),
+        sf: num(o.sf),
+        cr: num(o.cr),
+        txPowerDbm: num(o.txPowerDbm),
+        maxTxPowerDbm: num(o.maxTxPowerDbm),
+      };
     }
   } catch {
     // fall through
   }
   return null;
+}
+
+/** #254: parse the JSON getNodeConfig resolves with. Returns {} if malformed. */
+export function parseNodeConfig(json: string): MeshNodeConfig {
+  try {
+    const o = JSON.parse(json);
+    if (o && typeof o === 'object') return o as MeshNodeConfig;
+  } catch {
+    // fall through
+  }
+  return {};
+}
+
+/** #186: parse the JSON scanForRadios resolves with. Returns [] if malformed. */
+export function parseRadios(json: string): MeshRadio[] {
+  try {
+    const arr = JSON.parse(json);
+    if (Array.isArray(arr)) {
+      return arr
+        .filter((o: any) => typeof o?.address === 'string' && typeof o?.rssi === 'number')
+        .map((o: any) => ({
+          address: o.address,
+          name: typeof o.name === 'string' ? o.name : null,
+          rssi: o.rssi,
+        }));
+    }
+  } catch {
+    // fall through
+  }
+  return [];
 }
 
 /** Parse the JSON getChannels resolves with. Returns [] if malformed. */

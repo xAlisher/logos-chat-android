@@ -9,6 +9,7 @@ import {
   View,
   Pressable,
   ActivityIndicator,
+  Modal,
   Platform,
   PermissionsAndroid,
   ScrollView,
@@ -21,8 +22,9 @@ import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {HexAvatar} from '../components/HexAvatar';
 import {useMeshStore} from '../stores/meshStore';
+import {useSettingsStore} from '../stores/settingsStore';
 import {useChatStore} from '../stores/chatStore';
-import MeshCore, {type MeshChannel} from '../native/MeshCore';
+import MeshCore, {type MeshChannel, type MeshRadio} from '../native/MeshCore';
 import {shortAddress} from '../native/LogosChat';
 import type {RootStackParamList} from '../navigation/types';
 
@@ -42,6 +44,12 @@ function channelDisplayName(ch: MeshChannel): string {
     return ch.name;
   }
   return isPublicChannel(ch.secretHex) ? 'Public' : `Channel ${ch.idx}`;
+}
+
+// #186: a tiny textual signal-strength meter for the radio picker (no icons).
+function rssiBars(rssi: number): string {
+  const level = rssi >= -60 ? 4 : rssi >= -70 ? 3 : rssi >= -80 ? 2 : rssi >= -90 ? 1 : 0;
+  return '▂▄▆█'.slice(0, level).padEnd(4, '·');
 }
 
 // Android 12+ needs BLUETOOTH_SCAN + BLUETOOTH_CONNECT granted at runtime.
@@ -67,6 +75,8 @@ export function MeshCoreScreen() {
   const contacts = useMeshStore(s => s.contacts);
   const error = useMeshStore(s => s.error);
   const connect = useMeshStore(s => s.connect);
+  const scanForRadios = useMeshStore(s => s.scanForRadios);
+  const connectTo = useMeshStore(s => s.connectTo);
   const disconnect = useMeshStore(s => s.disconnect);
   const setName = useMeshStore(s => s.setName);
   const addChannel = useMeshStore(s => s.addChannel);
@@ -149,13 +159,45 @@ export function MeshCoreScreen() {
     }
   };
 
+  // #186: scan-and-choose. 0 radios → honest "none found"; exactly 1 → connect
+  // straight through (no needless tap); >1 → a picker (remembered radio pinned to
+  // the top). void connect() (the auto-connect convenience) is kept as a fallback.
+  const [radioPicker, setRadioPicker] = useState<MeshRadio[] | null>(null);
+  const [scanning, setScanning] = useState(false);
+
   const onConnect = async () => {
     const ok = await ensureBlePermissions();
     if (!ok) {
       useMeshStore.setState({error: 'Bluetooth permission denied'});
       return;
     }
-    connect();
+    setScanning(true);
+    try {
+      const found = await scanForRadios();
+      if (found.length === 0) {
+        useMeshStore.setState({error: 'No MeshCore radio found nearby'});
+        return;
+      }
+      if (found.length === 1) {
+        await connectTo(found[0].address);
+        return;
+      }
+      // Several in range: pin the last-used radio first, then show the picker.
+      const last = useSettingsStore.getState().lastRadioAddress;
+      const ordered = last
+        ? [...found].sort((a, b) =>
+            a.address === last ? -1 : b.address === last ? 1 : 0,
+          )
+        : found;
+      setRadioPicker(ordered);
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  const onPickRadio = async (address: string) => {
+    setRadioPicker(null);
+    await connectTo(address);
   };
 
   const statusColor = connected
@@ -313,6 +355,12 @@ export function MeshCoreScreen() {
               </Pressable>
             </View>
 
+            {/* #254: configure the radio (freq/bw/sf/cr, TX power, advert, reboot). */}
+            <Pressable
+              style={styles.secondaryBtn}
+              onPress={() => navigation.navigate('MeshConfig')}>
+              <Text style={[type.title, {color: colors.text}]}>Configure radio…</Text>
+            </Pressable>
             <Pressable style={styles.secondaryBtn} onPress={() => disconnect()}>
               <Text style={[type.title, {color: colors.textDim}]}>Disconnect</Text>
             </Pressable>
@@ -324,10 +372,10 @@ export function MeshCoreScreen() {
               exclusive — disconnect the official MeshCore app from it first.
             </Text>
             <Pressable
-              style={[styles.btn, connecting && styles.btnDisabled]}
-              disabled={connecting}
+              style={[styles.btn, (connecting || scanning) && styles.btnDisabled]}
+              disabled={connecting || scanning}
               onPress={onConnect}>
-              {connecting ? (
+              {connecting || scanning ? (
                 <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text style={[type.title, {color: colors.onAccent}]}>
@@ -338,6 +386,48 @@ export function MeshCoreScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* #186: pick which radio to connect when several are in range. */}
+      <Modal
+        visible={radioPicker != null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRadioPicker(null)}>
+        <Pressable style={styles.pickerBackdrop} onPress={() => setRadioPicker(null)}>
+          <Pressable style={styles.pickerCard} onPress={() => {}}>
+            <Text style={styles.pickerTitle}>Choose a radio</Text>
+            <Text style={styles.pickerSub}>
+              {radioPicker?.length ?? 0} MeshCore radios in range
+            </Text>
+            <ScrollView style={styles.pickerList}>
+              {(radioPicker ?? []).map((r, i) => {
+                const isLast =
+                  useSettingsStore.getState().lastRadioAddress === r.address;
+                return (
+                  <Pressable
+                    key={r.address}
+                    style={styles.radioRow}
+                    onPress={() => onPickRadio(r.address)}
+                    testID={`radio-pick-${i}`}>
+                    <View style={styles.radioText}>
+                      <Text style={styles.radioName} numberOfLines={1}>
+                        {r.name && r.name.trim().length > 0
+                          ? r.name
+                          : shortAddress(r.address)}
+                        {isLast ? '  · last used' : ''}
+                      </Text>
+                      <Text style={styles.radioMeta}>
+                        {r.address} · {rssiBars(r.rssi)} {r.rssi} dBm
+                      </Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <ErrorToast message={error} onDismiss={clearError} />
     </SafeAreaView>
   );
@@ -357,6 +447,36 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cardLabel: {...type.caption, color: colors.textFaint, textTransform: 'uppercase'},
+  // #186 radio picker
+  pickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  pickerCard: {
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    padding: spacing.lg,
+    gap: spacing.xs,
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '70%',
+  },
+  pickerTitle: {...type.title, color: colors.text},
+  pickerSub: {...type.caption, color: colors.textDim, marginBottom: spacing.sm},
+  pickerList: {flexGrow: 0},
+  radioRow: {
+    paddingVertical: spacing.md,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+  },
+  radioText: {gap: 2},
+  radioName: {...type.body, color: colors.text},
+  radioMeta: {...type.caption, color: colors.textFaint, fontVariant: ['tabular-nums']},
   chRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xs},
   joinBox: {gap: spacing.sm, marginTop: spacing.sm},
   input: {

@@ -106,9 +106,23 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     // MyMesh.cpp:37 CMD_SET_CHANNEL           32 (0x20)
     private const val CMD_SET_CHANNEL: Byte = 32
 
-    // Defined for completeness (docs/mesh-transport.md "MeshCore facts"); not yet
-    // wired to a public method in Phase 0.
-    @Suppress("unused") private const val CMD_DEVICE_QUERY: Byte = 22
+    // -- #254 CONFIG command bytes (firmware MyMesh.cpp, verified — see
+    //    docs/meshcore-config-protocol.md). All multi-byte ints little-endian. --
+    private const val CMD_DEVICE_QUERY: Byte = 22 // → RESP_CODE_DEVICE_INFO(13)
+    private const val CMD_GET_DEVICE_TIME: Byte = 5 // → RESP_CODE_CURR_TIME(9)
+    private const val CMD_SET_DEVICE_TIME: Byte = 6 // epoch u32LE → OK (>= RTC)
+    private const val CMD_SET_RADIO_PARAMS: Byte = 11 // freq(kHz)+bw(Hz)+sf+cr
+    private const val CMD_SET_RADIO_TX_POWER: Byte = 12 // int8 dBm
+    private const val CMD_SET_ADVERT_LATLON: Byte = 14 // lat/lon int32LE ×1e6
+    private const val CMD_REBOOT: Byte = 19 // + ASCII "reboot"
+    private const val CMD_GET_BATT_AND_STORAGE: Byte = 20 // → RESP_CODE_BATT_AND_STORAGE(12)
+    // DEVICE_QUERY carries the app's protocol version; we parse v3 recv frames.
+    private const val APP_TARGET_VER: Byte = 3
+
+    // Config response codes (firmware RESP_CODE_*).
+    private const val RESP_CODE_DEVICE_INFO: Int = 13
+    private const val RESP_CODE_CURR_TIME: Int = 9
+    private const val RESP_CODE_BATT_AND_STORAGE: Int = 12
 
     // -- Response codes (MyMesh.cpp RESP_CODE_* / PUSH_CODE_* #defines) --------
     // Reply to CMD_APP_START: carries the node's 32-byte Ed25519 pubkey + advert name.
@@ -195,6 +209,18 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
   /** The scanAndConnect promise, held until CMD_APP_START's SELF_INFO resolves it
    *  (or an early failure rejects it). Guarded so it settles exactly once. */
   private var connectPromise: SettleOnce? = null
+
+  /** #186: BLE address of the radio we're connected/connecting to, echoed back in
+   *  SELF_INFO so JS can remember the last-chosen radio and offer it first. */
+  @Volatile private var connectedAddress: String? = null
+
+  // #186: a scanForRadios sweep accumulates ALL nearby NUS radios (not first-hit).
+  private class RadioHit(var name: String?, var rssi: Int)
+
+  private var radioScanCallback: ScanCallback? = null
+  private var radioScanResults: MutableMap<String, RadioHit>? = null
+  private var radioScanSettle: SettleOnce? = null
+  private val radioScanTimeout = Runnable { finishRadioScan() }
 
   // -- command queue ---------------------------------------------------------
 
@@ -297,6 +323,80 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #186: Scan for `timeoutMs` and resolve with EVERY MeshCore radio seen (not the
+   * first hit), so JS can present a picker when more than one is in range. Does NOT
+   * connect and does NOT change status. Resolves a JSON array
+   * `[{"address":<mac>,"name":<advert name|null>,"rssi":<dBm>}]` sorted by RSSI
+   * (strongest first), deduped by address (keeping the strongest RSSI + any name).
+   */
+  @ReactMethod
+  fun scanForRadios(timeoutMs: Double, promise: Promise) {
+    handler.post {
+      if (status != STATUS_DISCONNECTED) {
+        promise.reject("busy", "already $status")
+        return@post
+      }
+      if (radioScanSettle != null) {
+        promise.reject("busy", "a radio scan is already running")
+        return@post
+      }
+      val perm = missingPermission()
+      if (perm != null) {
+        promise.reject("permission", "missing runtime permission: $perm")
+        return@post
+      }
+      val adapter = bluetoothAdapter()
+      if (adapter == null || !adapter.isEnabled) {
+        promise.reject("bt_off", "Bluetooth is off or unavailable")
+        return@post
+      }
+      val leScanner = adapter.bluetoothLeScanner
+      if (leScanner == null) {
+        promise.reject("no_scanner", "BLE scanner unavailable")
+        return@post
+      }
+      radioScanResults = HashMap()
+      radioScanSettle = SettleOnce(promise)
+      startRadioScan(leScanner, timeoutMs.toLong())
+    }
+  }
+
+  /**
+   * #186: Connect to a SPECIFIC radio chosen from [scanForRadios] by BLE address,
+   * running the same connect → MTU → APP_START → SELF_INFO handshake as
+   * [scanAndConnect]. Resolves with the self-info JSON (incl. "address").
+   */
+  @ReactMethod
+  fun connectTo(address: String, promise: Promise) {
+    handler.post {
+      if (status != STATUS_DISCONNECTED) {
+        promise.reject("busy", "already $status")
+        return@post
+      }
+      val perm = missingPermission()
+      if (perm != null) {
+        promise.reject("permission", "missing runtime permission: $perm")
+        return@post
+      }
+      val adapter = bluetoothAdapter()
+      if (adapter == null || !adapter.isEnabled) {
+        promise.reject("bt_off", "Bluetooth is off or unavailable")
+        return@post
+      }
+      val device =
+          try {
+            adapter.getRemoteDevice(address)
+          } catch (e: IllegalArgumentException) {
+            promise.reject("bad_address", "invalid radio address: $address")
+            return@post
+          }
+      connectPromise = SettleOnce(promise)
+      setStatus(STATUS_CONNECTING)
+      connectToDevice(device)
+    }
+  }
+
   @ReactMethod
   fun disconnect(promise: Promise) {
     handler.post {
@@ -342,28 +442,203 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * Broadcast a self-advert now (flood the mesh with our signed advert). Frame: [7].
-   * Resolves once the write is acknowledged.
+   * Broadcast a self-advert now. Frame: `[7]` (zero-hop) or `[7][1]` (flood).
+   * Verified against firmware (MyMesh.cpp:1236-1255): an optional 1-byte flag —
+   * 1 = flood (scoped, multi-hop), 0/omitted = zero-hop. Resolves on write-ack.
    */
   @ReactMethod
-  fun sendSelfAdvert(promise: Promise) {
+  fun sendSelfAdvert(flood: Boolean, promise: Promise) {
     handler.post {
       if (status != STATUS_CONNECTED) {
         promise.reject("not_connected", "no radio connected")
         return@post
       }
-      // TODO(hardware): real firmware CMD_SEND_SELF_ADVERT may take a 1-byte flood
-      //   flag (0=zero-hop, 1=flood). Confirm against companion_protocol.md; for now
-      //   we send the bare command byte.
       val settle = SettleOnce(promise)
+      val frame =
+          if (flood) byteArrayOf(CMD_SEND_SELF_ADVERT, 1)
+          else byteArrayOf(CMD_SEND_SELF_ADVERT)
       enqueue(
           Command(
-              frame = byteArrayOf(CMD_SEND_SELF_ADVERT),
+              frame = frame,
               expectedResps = null,
               onResponse = { settle.resolve(null) },
               onFailure = { code, message -> settle.reject(code, message) },
           ))
     }
+  }
+
+  // ==========================================================================
+  //  #254 — node/radio configuration (see docs/meshcore-config-protocol.md)
+  // ==========================================================================
+
+  /**
+   * Read the node's device info (DEVICE_QUERY→RESP_CODE_DEVICE_INFO) + battery
+   * (GET_BATT_AND_STORAGE→RESP_CODE_BATT_AND_STORAGE), then resolve a JSON object.
+   * Live radio params (freq/bw/sf/cr/tx_power) come from the SELF_INFO cached at
+   * connect and are read on the JS side; this adds firmware version + battery.
+   */
+  @ReactMethod
+  fun getNodeConfig(promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      val settle = SettleOnce(promise)
+      val out = org.json.JSONObject()
+      // 1) DEVICE_QUERY — firmware version, build date, PIN state, capacities.
+      enqueue(
+          Command(
+              frame = byteArrayOf(CMD_DEVICE_QUERY, APP_TARGET_VER),
+              expectedResps = setOf(RESP_CODE_DEVICE_INFO),
+              onResponse = { frame ->
+                parseDeviceInfo(frame, out)
+                // 2) Battery + storage.
+                enqueue(
+                    Command(
+                        frame = byteArrayOf(CMD_GET_BATT_AND_STORAGE),
+                        expectedResps = setOf(RESP_CODE_BATT_AND_STORAGE),
+                        onResponse = { bf ->
+                          parseBattStorage(bf, out)
+                          settle.resolve(out.toString())
+                        },
+                        // Battery is optional — still return the device info.
+                        onFailure = { _, _ -> settle.resolve(out.toString()) },
+                    ))
+              },
+              onFailure = { code, message -> settle.reject(code, message) },
+          ))
+    }
+  }
+
+  /**
+   * Set the radio params in one frame (CMD_SET_RADIO_PARAMS=11):
+   * freq(kHz u32LE)+bw(Hz u32LE)+sf(u8)+cr(u8). Args are MHz/kHz for the UI.
+   */
+  @ReactMethod
+  fun setRadioParams(freqMHz: Double, bwKHz: Double, sf: Int, cr: Int, promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      val frame = ByteArray(11)
+      frame[0] = CMD_SET_RADIO_PARAMS
+      writeU32LE(frame, 1, Math.round(freqMHz * 1000.0)) // MHz → kHz
+      writeU32LE(frame, 5, Math.round(bwKHz * 1000.0)) // kHz → Hz
+      frame[9] = (sf and 0xFF).toByte()
+      frame[10] = (cr and 0xFF).toByte()
+      enqueueOkCommand(frame, promise)
+    }
+  }
+
+  /** Set TX power in dBm (CMD_SET_RADIO_TX_POWER=12, int8). */
+  @ReactMethod
+  fun setTxPower(dbm: Int, promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      enqueueOkCommand(byteArrayOf(CMD_SET_RADIO_TX_POWER, dbm.toByte()), promise)
+    }
+  }
+
+  /** Set the advert lat/lon (CMD_SET_ADVERT_LATLON=14, degrees × 1e6 int32LE). */
+  @ReactMethod
+  fun setAdvertLatLon(lat: Double, lon: Double, promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      val frame = ByteArray(9)
+      frame[0] = CMD_SET_ADVERT_LATLON
+      writeU32LE(frame, 1, Math.round(lat * 1e6).toLong() and 0xFFFFFFFFL)
+      writeU32LE(frame, 5, Math.round(lon * 1e6).toLong() and 0xFFFFFFFFL)
+      enqueueOkCommand(frame, promise)
+    }
+  }
+
+  /** Sync the radio clock to the phone's time (CMD_SET_DEVICE_TIME=6, epoch u32LE). */
+  @ReactMethod
+  fun setDeviceTime(promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      val frame = ByteArray(5)
+      frame[0] = CMD_SET_DEVICE_TIME
+      writeU32LE(frame, 1, System.currentTimeMillis() / 1000L)
+      enqueueOkCommand(frame, promise)
+    }
+  }
+
+  /**
+   * Reboot the radio (CMD_REBOOT=19 + ASCII "reboot"). The firmware reboots
+   * immediately with NO reply, so we resolve on write-ack and let the link drop.
+   */
+  @ReactMethod
+  fun rebootRadio(promise: Promise) {
+    handler.post {
+      if (status != STATUS_CONNECTED) {
+        promise.reject("not_connected", "no radio connected")
+        return@post
+      }
+      val settle = SettleOnce(promise)
+      val frame = byteArrayOf(CMD_REBOOT) + "reboot".toByteArray(Charsets.US_ASCII)
+      enqueue(
+          Command(
+              frame = frame,
+              expectedResps = null, // no reply — resolve on write-ack
+              onResponse = { settle.resolve(null) },
+              onFailure = { code, message -> settle.reject(code, message) },
+          ))
+    }
+  }
+
+  /** Enqueue a config command whose success is a bare RESP_CODE_OK (or RESP_CODE_ERR). */
+  private fun enqueueOkCommand(frame: ByteArray, promise: Promise) {
+    val settle = SettleOnce(promise)
+    enqueue(
+        Command(
+            frame = frame,
+            expectedResps = setOf(RESP_CODE_OK),
+            onResponse = { settle.resolve(null) },
+            onFailure = { code, message -> settle.reject(code, message) },
+        ))
+  }
+
+  /** Parse RESP_CODE_DEVICE_INFO (82B) into [out]. */
+  private fun parseDeviceInfo(frame: ByteArray?, out: org.json.JSONObject) {
+    val f = frame ?: return
+    if (f.size < 80) return
+    out.put("firmwareVerCode", f[1].toInt() and 0xFF)
+    out.put("maxContacts", (f[2].toInt() and 0xFF) * 2)
+    out.put("maxChannels", f[3].toInt() and 0xFF)
+    out.put("blePin", readU32LE(f, 4))
+    out.put("buildDate", asciiZ(f, 8, 12))
+    out.put("manufacturer", asciiZ(f, 20, 40))
+    out.put("firmwareVersion", asciiZ(f, 60, 20))
+  }
+
+  /** Parse RESP_CODE_BATT_AND_STORAGE (11B) into [out]. */
+  private fun parseBattStorage(frame: ByteArray?, out: org.json.JSONObject) {
+    val f = frame ?: return
+    if (f.size < 11) return
+    out.put("batteryMv", (f[1].toInt() and 0xFF) or ((f[2].toInt() and 0xFF) shl 8))
+    out.put("storageUsedKb", readU32LE(f, 3))
+    out.put("storageTotalKb", readU32LE(f, 7))
+  }
+
+  /** Read a null-padded ASCII field of [len] bytes at [off] (cut at first NUL). */
+  private fun asciiZ(b: ByteArray, off: Int, len: Int): String {
+    if (off >= b.size) return ""
+    val end = minOf(off + len, b.size)
+    var stop = off
+    while (stop < end && b[stop].toInt() != 0) stop++
+    return String(b.copyOfRange(off, stop), Charsets.US_ASCII).trim()
   }
 
   /**
@@ -660,8 +935,101 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     if (gatt != null) return // already connecting to one
     stopScan()
     handler.removeCallbacks(scanTimeout)
-    Log.i(TAG, "found ${device.address}, connecting")
+    connectToDevice(device)
+  }
+
+  /** #186: shared connect path — used by first-hit [onDeviceFound] and the
+   *  address-targeted [connectTo]. Caller has already set connectPromise + status. */
+  @SuppressLint("MissingPermission")
+  private fun connectToDevice(device: BluetoothDevice) {
+    connectedAddress = device.address
+    Log.i(TAG, "connecting to ${device.address}")
     gatt = device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+  }
+
+  // ==========================================================================
+  //  #186 — multi-radio sweep (scanForRadios)
+  // ==========================================================================
+
+  @SuppressLint("MissingPermission")
+  private fun startRadioScan(leScanner: BluetoothLeScanner, timeoutMs: Long) {
+    scanner = leScanner
+    val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(NUS_SERVICE)).build())
+    val settings =
+        ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+            .build()
+    val cb =
+        object : ScanCallback() {
+          override fun onScanResult(callbackType: Int, result: ScanResult) {
+            handler.post { onRadioScanHit(result) }
+          }
+
+          override fun onScanFailed(errorCode: Int) {
+            handler.post {
+              Log.w(TAG, "radio scan failed: $errorCode")
+              radioScanSettle?.reject("scan_failed", "BLE scan failed ($errorCode)")
+              clearRadioScan()
+            }
+          }
+        }
+    radioScanCallback = cb
+    leScanner.startScan(filters, settings, cb)
+    // Clamp the window to a sane range so a bad JS value can't hang the scan.
+    val window = timeoutMs.coerceIn(1500L, 15000L)
+    handler.postDelayed(radioScanTimeout, window)
+    Log.i(TAG, "radio sweep for ${window}ms")
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun onRadioScanHit(result: ScanResult) {
+    val results = radioScanResults ?: return
+    val addr = result.device.address ?: return
+    // Prefer the advertised name (no BLUETOOTH_CONNECT needed); fall back to the
+    // cached device name. Keep the strongest RSSI + first non-null name per address.
+    val advName = result.scanRecord?.deviceName
+    val existing = results[addr]
+    if (existing == null) {
+      results[addr] = RadioHit(advName, result.rssi)
+    } else {
+      if (result.rssi > existing.rssi) existing.rssi = result.rssi
+      if (existing.name.isNullOrBlank() && !advName.isNullOrBlank()) existing.name = advName
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun finishRadioScan() {
+    val settle = radioScanSettle
+    val results = radioScanResults ?: emptyMap()
+    val cb = radioScanCallback
+    if (cb != null) {
+      try {
+        scanner?.stopScan(cb)
+      } catch (t: Throwable) {
+        Log.w(TAG, "stop radio scan: ${t.message}")
+      }
+    }
+    val arr = org.json.JSONArray()
+    results.entries
+        .sortedByDescending { it.value.rssi }
+        .forEach { (addr, hit) ->
+          arr.put(
+              org.json.JSONObject().apply {
+                put("address", addr)
+                put("name", hit.name ?: org.json.JSONObject.NULL)
+                put("rssi", hit.rssi)
+              })
+        }
+    settle?.resolve(arr.toString())
+    clearRadioScan()
+  }
+
+  private fun clearRadioScan() {
+    handler.removeCallbacks(radioScanTimeout)
+    radioScanCallback = null
+    radioScanResults = null
+    radioScanSettle = null
   }
 
   @SuppressLint("MissingPermission")
@@ -1177,7 +1545,37 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     val obj = org.json.JSONObject()
     obj.put("pubkeyHex", pubkeyHex)
     obj.put("name", name)
+    // #186: echo the connected radio's BLE address so JS can remember it.
+    obj.put("address", connectedAddress ?: org.json.JSONObject.NULL)
+    // #254: the live radio params ride in the SELF_INFO tail (read-before-edit).
+    //   [2]=tx_power int8 [3]=max_tx_power u8 [48..51]=freq u32LE(kHz)
+    //   [52..55]=bw u32LE(Hz) [56]=sf [57]=cr. Emit MHz/kHz for the UI.
+    if (frame.size >= 58) {
+      obj.put("txPowerDbm", frame[2].toInt()) // signed
+      obj.put("maxTxPowerDbm", frame[3].toInt() and 0xFF)
+      obj.put("freqMHz", readU32LE(frame, 48) / 1000.0)
+      obj.put("bwKHz", readU32LE(frame, 52) / 1000.0)
+      obj.put("sf", frame[56].toInt() and 0xFF)
+      obj.put("cr", frame[57].toInt() and 0xFF)
+    }
     return obj.toString()
+  }
+
+  /** Read a little-endian uint32 at [off] as a Long (avoids sign issues). */
+  private fun readU32LE(b: ByteArray, off: Int): Long {
+    if (off + 4 > b.size) return 0L
+    return (b[off].toLong() and 0xFF) or
+        ((b[off + 1].toLong() and 0xFF) shl 8) or
+        ((b[off + 2].toLong() and 0xFF) shl 16) or
+        ((b[off + 3].toLong() and 0xFF) shl 24)
+  }
+
+  /** Write a little-endian uint32 (from a Long) into a 4-byte slot at [off]. */
+  private fun writeU32LE(b: ByteArray, off: Int, v: Long) {
+    b[off] = (v and 0xFF).toByte()
+    b[off + 1] = ((v ushr 8) and 0xFF).toByte()
+    b[off + 2] = ((v ushr 16) and 0xFF).toByte()
+    b[off + 3] = ((v ushr 24) and 0xFF).toByte()
   }
 
   // ==========================================================================
@@ -1338,6 +1736,7 @@ class MeshCoreModule(reactContext: ReactApplicationContext) :
     gatt = null
     rxChar = null
     txChar = null
+    connectedAddress = null
     setStatus(STATUS_DISCONNECTED)
   }
 
