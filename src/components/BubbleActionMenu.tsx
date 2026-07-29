@@ -10,9 +10,10 @@
 // no-op there). Copy actions are handled here; label/send are lifted to the
 // screen because they touch the store and the navigator.
 import React from 'react';
-import {Linking, ToastAndroid} from 'react-native';
+import {Linking, Pressable, StyleSheet, Text, ToastAndroid, View} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
-import {colors} from '../theme';
+import {colors, spacing} from '../theme';
+import {REACTION_PALETTE} from '../messages/reactions';
 import {
   OverflowMenu,
   TagIcon,
@@ -36,6 +37,8 @@ import {
 export interface BubbleTarget {
   /** #263: local primary key of this message, for delete. */
   msgPk: number;
+  /** #264: cross-device reaction key for this message (from messageKey). */
+  reactionKey: string;
   /** True for our own outgoing bubble. */
   own: boolean;
   /** True when the thread is a group (enables "Send message"). */
@@ -63,6 +66,7 @@ export function BubbleActionMenu({
   onSaveImage,
   onMapMesh,
   onDelete,
+  onReact,
   isMeshMapped,
 }: {
   target: BubbleTarget | null;
@@ -79,6 +83,8 @@ export function BubbleActionMenu({
   onSaveImage: (path: string) => void;
   /** #263: delete this message from local history (this device only). */
   onDelete: (msgPk: number) => void;
+  /** #264: react to this message with an emoji (opens as a row atop the menu). */
+  onReact?: (target: BubbleTarget, emoji: string) => void;
   /** #210: map this sender to a mesh identity (local, works offline). */
   onMapMesh?: (address: string, label: string | null) => void;
   /** #210: whether this address is already mesh-mapped (label wording). */
@@ -183,10 +189,30 @@ export function BubbleActionMenu({
     });
   }
 
+  // #264: a quick-reaction emoji row at the top of the long-press menu.
+  const reactionBar =
+    onReact != null && target != null ? (
+      <View style={styles.reactBar}>
+        {REACTION_PALETTE.map(emoji => (
+          <Pressable
+            key={emoji}
+            style={styles.reactBtn}
+            onPress={() => {
+              onClose();
+              setTimeout(() => onReact(target, emoji), 0);
+            }}
+            testID={`react-pick-${emoji}`}>
+            <Text style={styles.reactBtnText}>{emoji}</Text>
+          </Pressable>
+        ))}
+      </View>
+    ) : null;
+
   return (
     <OverflowMenu
       visible={target != null}
       items={items}
+      header={reactionBar}
       onClose={onClose}
       anchor="point"
       anchorY={anchorY}
@@ -194,3 +220,14 @@ export function BubbleActionMenu({
     />
   );
 }
+
+const styles = StyleSheet.create({
+  reactBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  reactBtn: {paddingHorizontal: spacing.xs, paddingVertical: spacing.xs},
+  reactBtnText: {fontSize: 26},
+});

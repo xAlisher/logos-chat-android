@@ -114,6 +114,8 @@ class EventCallbackManager {
 
     private fun notifyIfNeeded(outcome: ChatRepo.Outcome) {
       if (outcome.kind != "message" || outcome.direction != "in") return
+      // #264: reactions are folded-in markers, not chat messages — never notify.
+      if (outcome.text.startsWith("react1:")) return
       val resumed = isResumed()
       if (resumed && ChatRepo.activeConvoPk == outcome.convoPk) return
       val ctx = reactContext ?: ChatService.appContext ?: return

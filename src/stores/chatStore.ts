@@ -10,6 +10,7 @@ import type {ConversationRow, MessageRow, GroupMember} from '../native/LogosChat
 import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
+import {encodeReaction} from '../messages/reactions';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
@@ -161,6 +162,15 @@ interface ChatState {
   switchGroupToLogos: (convoPk: number) => Promise<void>;
   /** Send a message into a conversation (1:1 or group). */
   send: (convoPk: number, text: string) => Promise<void>;
+  /** #264: react to a message by its cross-device key (op '+' add / '-' remove).
+   *  Sends a `react1:` marker over the conversation's transport(s) like any message;
+   *  folded into per-message aggregates on load (never shown as a bubble). */
+  sendReaction: (
+    convoPk: number,
+    targetKey: string,
+    emoji: string,
+    op: '+' | '-',
+  ) => Promise<void>;
   /**
    * #197: pick an image from the gallery and send it over Logos (1:1 or group).
    * Images are Logos-only — never mirrored to the mesh (LoRa can't carry them).
@@ -797,6 +807,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
     }
+  },
+
+  sendReaction: async (convoPk, targetKey, emoji, op) => {
+    // A reaction is just a message whose body is a react1: marker — reuse the whole
+    // send path (transport routing, optimistic bubble, dedup). The optimistic row
+    // is a marker, so it's filtered from the timeline + folded into reactions.
+    await get().send(convoPk, encodeReaction(op, emoji, targetKey));
   },
 
   send: async (convoPk: number, text: string) => {

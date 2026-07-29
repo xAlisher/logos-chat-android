@@ -85,6 +85,14 @@ import AudioRecorder, {
 import {deriveComposerState} from '../stores/groupState';
 import {composerBudget} from '../mesh/composerBudget';
 import {linkify} from '../text/linkify';
+import {
+  messageKey,
+  isReactionContent,
+  parseReaction,
+  foldReactions,
+  REACTION_PALETTE,
+  type ReactionState,
+} from '../messages/reactions';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -280,6 +288,8 @@ function Bubble({
   onLongPress,
   onOpenImage,
   onOpenLocation,
+  reactions,
+  onReact,
 }: {
   msg: Message;
   attribution: Attribution | null;
@@ -290,6 +300,9 @@ function Bubble({
   onLongPress: (pageY: number) => void;
   onOpenImage: (path: string) => void;
   onOpenLocation: (loc: {lat: number; lng: number}) => void;
+  // #264: folded reaction aggregates for this message + a toggle callback.
+  reactions?: ReactionState[];
+  onReact?: (emoji: string, mine: boolean) => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
@@ -435,6 +448,21 @@ function Bubble({
             : formatTime(msg.at)}
         </Text>
       </View>
+      {/* #264: reaction pills under the bubble — tap yours to remove, tap another to add. */}
+      {reactions != null && reactions.length > 0 && (
+        <View style={[styles.reactStrip, own ? styles.reactStripOwn : styles.reactStripPeer]}>
+          {reactions.map(r => (
+            <Pressable
+              key={r.emoji}
+              onPress={() => onReact?.(r.emoji, r.mine)}
+              style={[styles.reactPill, r.mine && styles.reactPillMine]}
+              testID={`react-${r.emoji}`}>
+              <Text style={styles.reactEmoji}>{r.emoji}</Text>
+              {r.count > 1 && <Text style={styles.reactCount}>{r.count}</Text>}
+            </Pressable>
+          ))}
+        </View>
+      )}
     </View>
   );
 }
@@ -460,6 +488,7 @@ export function ChatScreen() {
   const loadingMore = useChatStore(s => s.loadingMore[convoPk]) ?? false;
   const addMember = useChatStore(s => s.addMember);
   const send = useChatStore(s => s.send);
+  const sendReaction = useChatStore(s => s.sendReaction); // #264
   const sendImage = useChatStore(s => s.sendImage);
   const stageImages = useChatStore(s => s.stageImages); // #261
   const stageCameraPhoto = useChatStore(s => s.stageCameraPhoto); // #261
@@ -484,6 +513,7 @@ export function ChatScreen() {
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
+  const myAddress = useNodeStore(s => s.myAddress); // #264 reaction author/reactor
   // #237: a 1:1 whose peer is heard on the BLE mesh right now can be messaged even
   // when Logos is off (MLS encrypts locally; BLE carries the ciphertext).
   const bleStatus = useBleStore(s => s.status);
@@ -492,7 +522,8 @@ export function ChatScreen() {
     convo?.peerAddress != null &&
     bleStatus === 'on' &&
     bleNearby.some(a => a.toLowerCase() === convo.peerAddress!.toLowerCase());
-  const [text, setText] = useState('');
+  // #113: a prefilled draft (e.g. "Ping creator" seeds a re-create request).
+  const [text, setText] = useState(route.params.draft ?? '');
   // #255: a location fix staged in the composer, previewed before the user sends.
   const [pendingLoc, setPendingLoc] = useState<LatLng | null>(null);
   // #261: images picked/captured but not yet sent — previewed as removable
@@ -707,7 +738,7 @@ export function ChatScreen() {
 
   /** "Send message" on a group member's bubble (#109): resolve-or-create the 1:1. */
   const openDirectWith = useCallback(
-    async (address: string) => {
+    async (address: string, draft?: string) => {
       try {
         const existing = findDirectConvo(address);
         const pk =
@@ -718,6 +749,7 @@ export function ChatScreen() {
           convoName:
             target != null ? convoDisplayName(target) : shortAddress(address),
           isGroup: false,
+          draft, // #113: prefill (e.g. a "please re-create the group" ping)
         });
       } catch (e: any) {
         useNodeStore.setState({error: `could not open chat: ${e?.message ?? e}`});
@@ -1227,9 +1259,37 @@ export function ChatScreen() {
   // old bottom-pinned footer, which put every system line under every message.
   // (`dead`/`reviving` stay separate — they are current-state banners, not
   // historical events.)
+  // #264: author of a message, derived consistently on every device (own → me,
+  // else the verified sender / the 1:1 peer) — the basis for the cross-device key.
+  const peerAddr = convo?.peerAddress ?? null;
+  const authorOf = useCallback(
+    (m: Message) =>
+      (m.direction === 'out' ? myAddress : m.senderAccount ?? peerAddr) ?? '',
+    [myAddress, peerAddr],
+  );
+  // #264: fold every react1: marker into per-message aggregates (keyed by target).
+  // CHRONOLOGICAL order matters — `messages` is newest-first, but foldReactions
+  // replays +/- in sequence, so a remove must come AFTER its add. Sort ascending.
+  const reactionsByKey = useMemo(() => {
+    const events: {reactor: string; reaction: NonNullable<ReturnType<typeof parseReaction>>}[] = [];
+    const markers = messages
+      .filter(m => isReactionContent(m.text))
+      .slice()
+      .sort((a, b) => a.at - b.at || a.msgPk - b.msgPk);
+    for (const m of markers) {
+      const r = parseReaction(m.text);
+      if (r == null) continue;
+      events.push({reactor: authorOf(m), reaction: r});
+    }
+    return foldReactions(events, myAddress ?? '');
+  }, [messages, authorOf, myAddress]);
+
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [
-      ...messages.map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
+      // #264: reaction markers are folded above, not rendered as bubbles.
+      ...messages
+        .filter(m => !isReactionContent(m.text))
+        .map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
       ...(systemLines ?? []).map(sn => ({
         at: sn.at,
         row: {kind: 'sys' as const, sys: sn},
@@ -1363,10 +1423,17 @@ export function ChatScreen() {
           }
           const m = item.msg;
           const attribution = resolveAttribution(m, isGroup, convo);
+          const rKey = messageKey(authorOf(m), m.text); // #264
           return (
             <Bubble
               msg={m}
               attribution={attribution}
+              reactions={reactionsByKey.get(rKey)}
+              onReact={(emoji, mine) =>
+                sendReaction(convoPk, rKey, emoji, mine ? '-' : '+').catch(() =>
+                  useNodeStore.setState({error: 'reaction failed'}),
+                )
+              }
               avatarKind={
                 convo ? convoKind({transport: convo.transport, isGroup: false}) : 'contact'
               }
@@ -1381,6 +1448,7 @@ export function ChatScreen() {
                 setBubbleY(pageY);
                 setBubbleTarget({
                   msgPk: m.msgPk,
+                  reactionKey: rKey,
                   own: m.direction === 'out',
                   isGroup,
                   text: m.text,
@@ -1434,18 +1502,46 @@ export function ChatScreen() {
         // roster, #95). The (i) explains the Logos limitation + that a new group
         // appears in the desktop module.
         <View style={styles.deadFooter}>
+          {/* #113 member view: put the explanation ON TOP + name it a known
+              limitation we're fixing, then offer a secondary "Ping creator" that
+              opens a DM with the group's creator prefilled with a re-create ask —
+              members can't honestly re-create the roster themselves (#95). */}
+          {!canRevive && (
+            <Text style={styles.deadHint} testID="dead-member-hint">
+              Only the group's creator can re-create it — then the conversation
+              continues right here. This is a known limitation we're fixing.
+            </Text>
+          )}
           <View style={styles.deadFooterRow}>
             <View style={styles.deadFooterBtn}>
               <ActionButton
-                label={canRevive ? 'Restart group' : 'Create new group'}
-                variant="primary"
-                testID={canRevive ? 'restart-group' : 'create-new-group'}
+                label={canRevive ? 'Restart group' : 'Ping creator'}
+                variant={canRevive ? 'primary' : 'secondary'}
+                testID={canRevive ? 'restart-group' : 'ping-creator'}
                 onPress={
                   canRevive
                     ? () => {
                         if (!reviving) doRestart();
                       }
-                    : () => navigation.navigate('NewGroup')
+                    : () => {
+                        const creator = (groupMembers ?? []).find(
+                          m => !m.isSelf,
+                        )?.address;
+                        if (creator == null) {
+                          useNodeStore.setState({
+                            error: 'Creator unknown — no member to ping yet',
+                          });
+                          return;
+                        }
+                        const gname =
+                          convo != null
+                            ? convoDisplayName(convo)
+                            : route.params.convoName;
+                        openDirectWith(
+                          creator,
+                          `"${gname}" ended — could you re-create it?`,
+                        );
+                      }
                 }
               />
             </View>
@@ -1457,14 +1553,6 @@ export function ChatScreen() {
               <InfoIcon size={22} color={colors.textDim} />
             </Pressable>
           </View>
-          {/* Member view: reassure them the thread isn't lost — the creator can
-              re-create the group and it continues in this same conversation. */}
-          {!canRevive && (
-            <Text style={styles.deadHint} testID="dead-member-hint">
-              The group's creator can re-create it — the conversation will continue
-              here.
-            </Text>
-          )}
         </View>
       ) : recording ? (
         // #205/#257: recording a voice note — the live waveform gets its own full-
@@ -1640,6 +1728,11 @@ export function ChatScreen() {
           })
         }
         onSendMessage={openDirectWith}
+        onReact={(t, emoji) =>
+          sendReaction(convoPk, t.reactionKey, emoji, '+').catch(() =>
+            useNodeStore.setState({error: 'reaction failed'}),
+          )
+        }
         onMapMesh={(address, label) => {
           setBubbleTarget(null);
           setMapTarget({address, label});
@@ -1887,7 +1980,13 @@ const styles = StyleSheet.create({
   },
   deadFooterRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   deadFooterBtn: {flex: 1},
-  deadHint: {...type.caption, color: colors.textDim, textAlign: 'center', marginTop: spacing.sm},
+  deadHint: {
+    ...type.caption,
+    color: colors.textDim,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg, // #113: breathing room between the copy and the button
+  },
   deadInfoBtn: {
     padding: spacing.sm,
     alignItems: 'center',
@@ -2083,6 +2182,24 @@ const styles = StyleSheet.create({
   charCount: {...type.caption, color: colors.textFaint},
   charCountOver: {color: colors.unread}, // #150: oversize for the radio
   link: {textDecorationLine: 'underline'}, // #262: tappable message links
+  // #264 reaction strip
+  reactStrip: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 2},
+  reactStripOwn: {justifyContent: 'flex-end', alignSelf: 'flex-end'},
+  reactStripPeer: {justifyContent: 'flex-start', alignSelf: 'flex-start'},
+  reactPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.panel,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  reactPillMine: {borderColor: colors.accent, backgroundColor: '#2a1607'},
+  reactEmoji: {fontSize: 13},
+  reactCount: {...type.caption, color: colors.textDim},
   radioBudget: {
     ...type.caption,
     color: colors.textFaint,

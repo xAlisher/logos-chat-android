@@ -454,7 +454,11 @@ object ChatRepo {
       }
       seedSelfMember(convoPk) // make sure we're on our own roster too
     }
-    if (activeConvoPk != convoPk) d.bumpUnread(convoPk)
+    // #264: a reaction (react1:) is a folded-in marker, not a chat message — it
+    // persists + syncs + reloads JS like any message, but must not bump unread
+    // (notifyIfNeeded likewise skips it). Everything else flows normally.
+    val isReaction = content.startsWith("react1:")
+    if (activeConvoPk != convoPk && !isReaction) d.bumpUnread(convoPk)
     Log.i(TAG, "persisted inbound msg_pk=$msgPk convo=$convoPk (${content.length} chars) BEFORE forward")
     return Outcome("message", convoPk, "in", content, senderAccount)
   }
