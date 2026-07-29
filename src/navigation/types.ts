@@ -1,6 +1,6 @@
 export type RootStackParamList = {
   Conversations: undefined;
-  Chat: {convoPk: number; convoName: string; isGroup?: boolean};
+  Chat: {convoPk: number; convoName: string; isGroup?: boolean; draft?: string};
   /** Show my stable address (QR + hex + copy). */
   MyAddress: undefined;
   /**
