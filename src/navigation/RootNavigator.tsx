@@ -25,6 +25,7 @@ import {AboutScreen} from '../screens/AboutScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {MeshCoreScreen} from '../screens/MeshCoreScreen';
 import {MeshConfigScreen} from '../screens/MeshConfigScreen';
+import {SwipeBackGesture} from '../components/SwipeBackGesture';
 import {NearbyScreen} from '../screens/NearbyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -83,20 +84,23 @@ export function RootNavigator() {
     <NavigationContainer ref={navigationRef} theme={navTheme} onReady={onReady}>
       <Stack.Navigator
         initialRouteName="Conversations"
+        // #267: wrap every screen in an app-level edge-swipe-back gesture. native-
+        // stack has no Android swipe, and 3-button navigation has no OS edge-swipe
+        // at all, so this is the only way to make swipe-back work everywhere. On the
+        // root (Conversations) it's a no-op (nothing to pop).
+        screenLayout={({children}) => (
+          <SwipeBackGesture>{children}</SwipeBackGesture>
+        )}
         screenOptions={{
           headerStyle: {backgroundColor: colors.panel},
           headerTintColor: colors.text,
           headerTitleStyle: {...type.title, color: colors.text},
           headerShadowVisible: false,
           contentStyle: {backgroundColor: colors.canvas},
-          // #158: enable edge-swipe-back on every pushed route (Chat, GroupInfo,
-          // Contacts, About, …). react-native-screens is active (native-stack
-          // uses it), so the gesture is handled natively; the header back arrow
-          // and the system back button keep working alongside it.
-          // fullScreenGestureEnabled widens the swipe zone from the screen edge
-          // to the whole view for an iOS-style full-width swipe where the native
-          // stack supports it. The initial route (Conversations) has nothing to
-          // pop, so its SwipeRow (swipe-to-delete) never competes with this.
+          // gestureEnabled / fullScreenGestureEnabled are the iOS native-stack
+          // swipe-back. They are no-ops on Android (native-stack has no Android
+          // swipe) — the #267 screenLayout SwipeBackGesture handles Android. Kept
+          // for iOS parity; the header back arrow + system back button work too.
           gestureEnabled: true,
           fullScreenGestureEnabled: true,
           // #226: the authoritative fix for the react-native-screens
