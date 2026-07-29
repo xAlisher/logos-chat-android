@@ -159,12 +159,15 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
             putExtra(MediaStore.EXTRA_OUTPUT, uri)
             addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
           }
-      if (intent.resolveActivity(reactApplicationContext.packageManager) == null) {
-        pending = null
-        promise.reject("no_camera", "no camera app available")
-        return
-      }
+      // Launch directly — do NOT gate on resolveActivity(): on Android 11+ package
+      // visibility makes it return null even when a camera app exists (unless the
+      // <queries> manifest entry is present), which caused a false "no camera".
+      // If there truly is no handler, startActivityForResult throws
+      // ActivityNotFoundException, which we translate to the honest no_camera.
       activity.startActivityForResult(intent, REQ_CAPTURE)
+    } catch (e: android.content.ActivityNotFoundException) {
+      pending = null
+      promise.reject("no_camera", "no camera app available")
     } catch (t: Throwable) {
       pending = null
       promise.reject("launch_failed", t.message ?: "could not open camera")

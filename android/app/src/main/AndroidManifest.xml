@@ -29,6 +29,20 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
+    <!-- Android 11+ (API 30+) package visibility: without this, resolveActivity()
+         for the camera-capture intent returns null even when a camera app exists,
+         so ImagePickerModule falsely reports "no camera app available". Declare the
+         capture + gallery intents we launch so the system lets us see their handlers. -->
+    <queries>
+      <intent>
+        <action android:name="android.media.action.IMAGE_CAPTURE" />
+      </intent>
+      <intent>
+        <action android:name="android.intent.action.GET_CONTENT" />
+        <data android:mimeType="image/*" />
+      </intent>
+    </queries>
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
