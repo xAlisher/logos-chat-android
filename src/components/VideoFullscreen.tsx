@@ -3,7 +3,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
   ActivityIndicator,
-  Animated,
   GestureResponderEvent,
   Modal,
   PanResponder,
@@ -40,12 +39,9 @@ export function VideoFullscreen({
   const [barWidth, setBarWidth] = useState(0);
   // Show a loader until the clip actually starts playing (fetch/decrypt + decode latency).
   const [loading, setLoading] = useState(true);
-  // #304: swipe-down-to-dismiss. Drag the video down past a threshold to close.
-  const translateY = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     setLoading(true);
-    translateY.setValue(0);
-  }, [path, translateY]);
+  }, [path]);
 
   // Letterbox: largest w×h with the video's aspect ratio that fits the screen.
   const ar = aspectRatio > 0 ? aspectRatio : 1;
@@ -70,7 +66,6 @@ export function VideoFullscreen({
     setPaused(false);
     setDuration(0);
     setCurrent(0);
-    translateY.setValue(0);
     onClose();
   };
 
@@ -79,29 +74,20 @@ export function VideoFullscreen({
   closeRef.current = close;
   const pan = useRef(
     PanResponder.create({
-      // claim only a clear DOWNWARD drag, so taps/horizontal seeks aren't stolen.
-      onMoveShouldSetPanResponder: (_, g) =>
-        g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
-      onPanResponderMove: (_, g) => {
-        if (g.dy > 0) translateY.setValue(g.dy);
-      },
+      // Lives on a transparent overlay View covering the video (the controls render ON TOP,
+      // so they claim their own taps first). We CLAIM the touch on start — inside a RN Modal
+      // a slow real-finger drag is only captured by an actual responder claim (learned from
+      // the InfoModal scroll fix, #182); returning false let the drag slip away. A plain tap
+      // just releases with dy≈0 and springs back (no-op).
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onMoveShouldSetPanResponder: () => true,
       onPanResponderRelease: (_, g) => {
-        if (g.dy > 140) {
-          closeRef.current();
-        } else {
-          Animated.spring(translateY, {toValue: 0, useNativeDriver: true, bounciness: 0}).start();
-        }
-      },
-      onPanResponderTerminate: () => {
-        Animated.spring(translateY, {toValue: 0, useNativeDriver: true, bounciness: 0}).start();
+        // No drag-follow animation (it glitched) — a downward swipe just closes.
+        if (g.dy > 120 && Math.abs(g.dy) > Math.abs(g.dx)) closeRef.current();
       },
     }),
   ).current;
-  const dragOpacity = translateY.interpolate({
-    inputRange: [0, 300],
-    outputRange: [1, 0.3],
-    extrapolate: 'clamp',
-  });
 
   return (
     <Modal
@@ -110,10 +96,7 @@ export function VideoFullscreen({
       onRequestClose={close}
       statusBarTranslucent>
       <View style={styles.root}>
-        {/* #304: the video area is the swipe-down catcher; controls + ✕ render on top. */}
-        <Animated.View
-          style={[styles.videoWrap, {opacity: dragOpacity, transform: [{translateY}]}]}
-          {...pan.panHandlers}>
+        <View pointerEvents="none" style={styles.videoWrap}>
           {path != null && (
             <MediaVideo
               ref={videoRef}
@@ -132,7 +115,12 @@ export function VideoFullscreen({
               style={{width: vw, height: vh}}
             />
           )}
-        </Animated.View>
+        </View>
+
+        {/* #304: transparent swipe-down-to-close catcher. A plain View reliably receives the
+            gesture (unlike a handler on/under the native video). Rendered BEFORE the ✕ and
+            controls so those sit on top and keep their taps. */}
+        <View style={styles.swipeCatcher} {...pan.panHandlers} />
 
         {/* Loader until the first frame plays. */}
         {path != null && loading && (
@@ -182,6 +170,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  swipeCatcher: {position: 'absolute', top: 0, left: 0, right: 0, bottom: 0},
   close: {
     position: 'absolute',
     top: 40,

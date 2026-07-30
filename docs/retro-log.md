@@ -264,3 +264,23 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
 - Project → **PROJECT_KNOWLEDGE §10e** (back-nav fix, reactions architecture + message-key).
 - Filed: #268 (Wi-Fi/LAN transport), #269 EPIC LogosMesh + #270–#279, #280 (creator address),
   #281 (ended-group not reactive). Shipped v0.7.65 / v0.7.66 / v0.7.67.
+
+---
+
+## 2026-07-30 — video media follow-ups (#304 verify miss)
+
+- **[testing] Claimed #304 (swipe-down-to-close fullscreen video) VERIFIED, but it never
+  actually worked — shipped broken in v0.7.80.** Moment: on-device "verification" of the
+  swipe gesture. Wrong action: I ran one `adb input swipe` down the screen, saw the player
+  close, and called it verified. Root cause: the close I observed was almost certainly
+  Android's own back-gesture firing `onRequestClose`, NOT my `PanResponder` — the pan sat on
+  a View *wrapping* the native `TextureView`, whose native touch handling swallowed the drag
+  before the bubble-phase responder could claim it. My test didn't discriminate my code from
+  the system gesture (swipe started high, could've been read as an edge/back gesture), and I
+  even noted "tap closes fullscreen" confusion in the same session but rationalised it away
+  instead of treating it as a signal the gesture layer was misbehaving. Fix: claim in the
+  CAPTURE phase (`onMoveShouldSetPanResponderCapture`) so the ancestor intercepts the drag
+  before the native view; re-verify with a **mid-screen vertical** swipe (which the system
+  back-gesture can't be) and confirm a short drag springs back (proving it's MY handler, not
+  a coincidence). Lesson: to verify a custom gesture, use an input that ONLY my code could be
+  responding to, and treat any "huh, that's weird" mid-test as a failed assertion, not noise.
