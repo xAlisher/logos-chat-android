@@ -12,6 +12,7 @@ import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {encodeReaction} from '../messages/reactions';
 import {encodePin} from '../messages/pins';
+import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
@@ -1133,10 +1134,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   leaveGroup: async (convoPk: number) => {
-    // Submit the self-removal FIRST — if the group cannot be reached we must not
-    // delete the thread and leave the user believing they left.
-    await LogosChat.leaveGroup(convoPk);
-    await get().remove(convoPk);
+    // #283: GroupV1 has no cryptographic self-remove (the old `leaveGroup` MLS
+    // round errors on a V1 group). So leaving is: (1) broadcast a `leave1:` marker
+    // so the other members see us leave + drop us from their roster; (2) tombstone
+    // the lib id + delete locally so the group never reappears (we still receive
+    // its traffic). Best-effort marker — if we're offline we still leave locally.
+    try {
+      await get().send(convoPk, encodeLeave());
+    } catch {
+      // offline / send failed — leave locally anyway
+    }
+    await LogosChat.leaveGroupLocal(convoPk);
+    // JS-side cleanup (native already deleted the row + messages).
+    for (const p of pendingInvites[convoPk] ?? []) clearTimeout(p.timer);
+    delete pendingInvites[convoPk];
+    delete pendingJoins[convoPk];
+    LogosChat.setSetting(sysLineKey(convoPk), '').catch(() => {});
+    set(s => {
+      const conversations = {...s.conversations};
+      delete conversations[convoPk];
+      const messages = {...s.messages};
+      delete messages[convoPk];
+      const members = {...s.members};
+      delete members[convoPk];
+      const systemLines = {...s.systemLines};
+      delete systemLines[convoPk];
+      return {conversations, messages, members, systemLines};
+    });
   },
 
   deleteMessage: async (convoPk: number, msgPk: number) => {

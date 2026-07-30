@@ -115,7 +115,10 @@ class EventCallbackManager {
     private fun notifyIfNeeded(outcome: ChatRepo.Outcome) {
       if (outcome.kind != "message" || outcome.direction != "in") return
       // #264/#266: reactions + pins are folded-in markers, not chat messages — never notify.
-      if (outcome.text.startsWith("react1:") || outcome.text.startsWith("pin1:")) return
+      if (outcome.text.startsWith("react1:") ||
+          outcome.text.startsWith("pin1:") ||
+          outcome.text.startsWith("leave1:"))
+          return
       val resumed = isResumed()
       if (resumed && ChatRepo.activeConvoPk == outcome.convoPk) return
       val ctx = reactContext ?: ChatService.appContext ?: return
@@ -1093,6 +1096,24 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       // yet; the ejecting commit lands asynchronously via members_changed.
       Log.i("logos-chat-bridge", "leave round opened for convo $pk")
       promise.resolve(null)
+    }
+  }
+
+  /**
+   * #283: leave a group locally (GroupV1 has no crypto self-remove). Tombstones
+   * the group so its further traffic is dropped forever, then deletes it + its
+   * messages. The caller (JS) sends the `leave1:` marker first so the other
+   * members are told. Never touches the MLS group (we can't remove our own leaf).
+   */
+  @ReactMethod
+  fun leaveGroupLocal(convoPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      try {
+        ChatRepo.leaveGroupLocal(convoPk.toLong())
+        promise.resolve(null)
+      } catch (t: Throwable) {
+        promise.reject("leave_group_local", t)
+      }
     }
   }
 

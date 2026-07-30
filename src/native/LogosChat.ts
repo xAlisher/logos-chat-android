@@ -217,6 +217,12 @@ interface LogosChatNative {
    * session (#103).
    */
   leaveGroup(convoPk: number): Promise<null>;
+  /**
+   * #283: leave a GroupV1 group locally — tombstone its lib id (so its further
+   * traffic is dropped forever, since V1 has no crypto self-remove) and delete the
+   * conversation + messages. The caller sends the `leave1:` marker first.
+   */
+  leaveGroupLocal(convoPk: number): Promise<null>;
   /** #112: is a group still operable by the lib? 'live' | 'dead' | 'unknown'. */
   groupLiveness(convoPk: number): Promise<string>;
   /** #112: re-create a dead group in place. NATIVE resolves '{"members":[…]}'

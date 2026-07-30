@@ -863,10 +863,10 @@ class ChatDb(
                       -- #264/#266: reactions (react1:) + pins (pin1:) are folded-in
                       -- markers, not chat messages — never surface them as the preview.
                       (SELECT content FROM messages m WHERE m.convo_pk=c.convo_pk
-                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%'
+                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%' AND m.content NOT LIKE 'leave1:%'
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       (SELECT direction FROM messages m WHERE m.convo_pk=c.convo_pk
-                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%'
+                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%' AND m.content NOT LIKE 'leave1:%'
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),

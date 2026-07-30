@@ -377,9 +377,32 @@ object ChatRepo {
     }
   }
 
+  // #283: KV tombstone key for a group we left.
+  private fun leftKey(libConvoId: String) = "left:$libConvoId"
+
+  /**
+   * #283: leave a group locally (V1 has no crypto self-remove). Tombstone the lib
+   * conversation id so any further inbound traffic for it is dropped forever, then
+   * delete the local conversation + its messages. The `leave1:` marker that tells
+   * the other members is sent from JS (chatStore.leaveGroup) BEFORE this call.
+   */
+  fun leaveGroupLocal(convoPk: Long) {
+    val d = requireDb()
+    d.libConvoIdOf(convoPk)?.let { d.kvSet(leftKey(it), "1") }
+    d.deleteConversation(convoPk)
+    Log.i(TAG, "left + tombstoned group convo=$convoPk")
+  }
+
   private fun onMessageReceived(libConvoId: String, rawContent: String, senderAccount: String?): Outcome? {
     if (libConvoId.isEmpty()) return null
     val d = requireDb()
+    // #283: a group we LEFT is tombstoned. GroupV1 has no crypto self-remove, so
+    // we still receive its traffic; drop everything for it (no row, no store, no
+    // notify) so the left group never reappears in the list.
+    if (d.kvGet(leftKey(libConvoId)) != null) {
+      Log.i(TAG, "dropping inbound for left group lib=$libConvoId")
+      return null
+    }
     val now = System.currentTimeMillis()
     // #197: an inbound image arrives as one `img1:<mime>:<w>:<h>␟<base64>` message.
     // Save the JPEG to app storage and replace the content with the small local
@@ -457,7 +480,8 @@ object ChatRepo {
     // #264/#266: reactions (react1:) + pins (pin1:) are folded-in markers, not chat
     // messages — they persist + sync + reload JS like any message, but must not bump
     // unread (notifyIfNeeded likewise skips them). Everything else flows normally.
-    val isMarker = content.startsWith("react1:") || content.startsWith("pin1:")
+    val isMarker =
+        content.startsWith("react1:") || content.startsWith("pin1:") || content.startsWith("leave1:")
     if (activeConvoPk != convoPk && !isMarker) d.bumpUnread(convoPk)
     Log.i(TAG, "persisted inbound msg_pk=$msgPk convo=$convoPk (${content.length} chars) BEFORE forward")
     return Outcome("message", convoPk, "in", content, senderAccount)

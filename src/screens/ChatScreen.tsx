@@ -95,6 +95,7 @@ import {
   type ReactionState,
 } from '../messages/reactions';
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
+import {isLeaveContent} from '../messages/leave';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -505,6 +506,7 @@ export function ChatScreen() {
   const setVerified = useChatStore(s => s.setVerified);
   const wipe = useChatStore(s => s.wipe);
   const leaveGroup = useChatStore(s => s.leaveGroup);
+  const setMemberStatus = useChatStore(s => s.setMemberStatus); // #283 leave lines
   const remove = useChatStore(s => s.remove);
   const deleteMessage = useChatStore(s => s.deleteMessage); // #263
   const startConversation = useChatStore(s => s.startConversation);
@@ -678,9 +680,9 @@ export function ChatScreen() {
   const onLeave = useCallback(() => {
     Alert.alert(
       'Leave group',
-      'Ask the group to remove you? All its messages will also be deleted from ' +
-        'this device. Removal is submitted to the group and completes once the ' +
-        'group processes it.',
+      "Leave this group? Its messages are deleted from this device and it's " +
+        'hidden for good. The other members are told you left. You cannot rejoin ' +
+        'unless someone re-invites you into a new group.',
       [
         {text: 'Cancel', style: 'cancel'},
         {
@@ -1079,9 +1081,21 @@ export function ChatScreen() {
   // this only re-sends the invite, it does not guarantee they'll receive it.
   const onReinvite = useCallback(
     (address: string) => {
-      addMember(convoPk, address).catch(e =>
-        useNodeStore.setState({error: `re-invite failed: ${e?.message ?? e}`}),
-      );
+      addMember(convoPk, address).catch(e => {
+        const msg = String(e?.message ?? e);
+        // #291: a not-yet-joined member is ALREADY in the MLS group, so re-adding
+        // is invalid ("Duplicate signature key in proposals and group"). That's
+        // benign — they'll get their Welcome via store catch-up once they're
+        // online. Show a calm note instead of the alarming red error banner.
+        if (/duplicate signature key|already a? ?member/i.test(msg)) {
+          ToastAndroid.show(
+            'Already invited — waiting for them to come online',
+            ToastAndroid.LONG,
+          );
+          return;
+        }
+        useNodeStore.setState({error: `re-invite failed: ${msg}`});
+      });
     },
     [addMember, convoPk],
   );
@@ -1307,16 +1321,32 @@ export function ChatScreen() {
             m =>
               !isReactionContent(m.text) &&
               !isPinContent(m.text) &&
+              !isLeaveContent(m.text) &&
               messageKey(authorOf(m), m.text) === pinnedKey,
           ) ?? null,
     [pinnedKey, messages, authorOf],
   );
 
+  // #283: fold leave1: markers → mark each leaver "left" (renders the "X left"
+  // line). setMemberStatus is idempotent on an unchanged status (#285), so this
+  // is safe to re-run on every messages change.
+  useEffect(() => {
+    for (const m of messages) {
+      if (!isLeaveContent(m.text)) continue;
+      const leaver = authorOf(m);
+      if (leaver && leaver.toLowerCase() !== (myAddress ?? '').toLowerCase()) {
+        setMemberStatus(convoPk, leaver, 'left');
+      }
+    }
+  }, [messages, authorOf, myAddress, convoPk, setMemberStatus]);
+
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [
       // #264/#266: reaction + pin markers are folded above, not rendered as bubbles.
       ...messages
-        .filter(m => !isReactionContent(m.text) && !isPinContent(m.text))
+        .filter(
+          m => !isReactionContent(m.text) && !isPinContent(m.text) && !isLeaveContent(m.text),
+        )
         .map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
       ...(systemLines ?? []).map(sn => ({
         at: sn.at,

@@ -5,7 +5,7 @@
 //     destructive action. All PIN logic lives in securityStore + the pure
 //     src/security/pinSecurity module; this screen is presentation + the warning
 //     modal that guards the wipe.
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -14,6 +14,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   ToastAndroid,
   View,
 } from 'react-native';
@@ -25,6 +26,14 @@ import {useSecurityStore} from '../stores/securityStore';
 import {useChatStore} from '../stores/chatStore';
 import {useSettingsStore} from '../stores/settingsStore';
 import type {NotifPref} from '../stores/settingsStore';
+import LogosChat from '../native/LogosChat';
+
+// #265: our default self-hosted delivery node (mirrors threaded.rs
+// DEFAULT_SERVICE_NODE). Shown when no custom node is set; used by "Reset".
+const DEFAULT_NODE =
+  '/dns4/msg.logos.live/tcp/30304/p2p/16Uiu2HAmNdX1s7wRhygyWKmYiUst84329TSz3byLEP6FjcoxDbH4';
+// KV key read by NodeRuntime.applyDeliveryPeerEnv → LOGOS_DELIVERY_SERVICE_NODE.
+const NODE_KV = 'deliveryServiceNode';
 
 /** A tappable Security/Reset row (label + optional value/danger). */
 function Row({
@@ -101,6 +110,30 @@ export function SettingsScreen() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
 
+  // #265: custom self-hosted delivery node. Stored in the KV NodeRuntime reads
+  // at start (applyDeliveryPeerEnv → LOGOS_DELIVERY_SERVICE_NODE); shows the
+  // baked-in default when unset. Applied on the next node start (app restart).
+  const [nodeInput, setNodeInput] = useState('');
+  const [nodeSaving, setNodeSaving] = useState(false);
+  useEffect(() => {
+    LogosChat.getSetting(NODE_KV)
+      .then(v => setNodeInput(v != null && v.length > 0 ? v : DEFAULT_NODE))
+      .catch(() => setNodeInput(DEFAULT_NODE));
+  }, []);
+  const saveNode = async () => {
+    setNodeSaving(true);
+    try {
+      // Empty forces the public-fleet fallback (threaded.rs); a multiaddr pins
+      // the Edge client to that node. Trim to avoid stray whitespace in the addr.
+      await LogosChat.setSetting(NODE_KV, nodeInput.trim());
+      ToastAndroid.show('Node saved — restart the app to apply', ToastAndroid.LONG);
+    } catch {
+      ToastAndroid.show('Save failed', ToastAndroid.SHORT);
+    } finally {
+      setNodeSaving(false);
+    }
+  };
+
   const closeFlow = (changed: boolean) => {
     setFlow(null);
     if (changed) ToastAndroid.show('Security updated', ToastAndroid.SHORT);
@@ -162,6 +195,42 @@ export function SettingsScreen() {
             testID="setting-notif-vibrate"
           />
         </View>
+
+        <Text style={styles.section}>Network</Text>
+        <View style={styles.card}>
+          <Text style={styles.rowLabel}>Delivery node</Text>
+          <TextInput
+            style={styles.nodeInput}
+            value={nodeInput}
+            onChangeText={setNodeInput}
+            placeholder="/dns4/…/tcp/…/p2p/…"
+            placeholderTextColor={colors.textFaint}
+            autoCapitalize="none"
+            autoCorrect={false}
+            multiline
+            testID="settings-node-input"
+          />
+          <View style={styles.nodeBtns}>
+            <Pressable
+              style={styles.nodeReset}
+              onPress={() => setNodeInput(DEFAULT_NODE)}
+              testID="settings-node-reset">
+              <Text style={styles.nodeResetText}>Use default</Text>
+            </Pressable>
+            <View style={styles.nodeSave}>
+              <ActionButton
+                label={nodeSaving ? 'Saving…' : 'Save'}
+                onPress={saveNode}
+                testID="settings-node-save"
+              />
+            </View>
+          </View>
+        </View>
+        <Text style={styles.helper}>
+          The self-hosted node your messages relay through. Leave the default
+          unless you run your own. Blank = the public fleet. Restart the app to
+          apply a change.
+        </Text>
 
         <Text style={styles.section}>Security</Text>
         <View style={styles.card}>
@@ -306,6 +375,24 @@ const styles = StyleSheet.create({
   rowLabel: {...type.title, color: colors.text},
   rowValue: {...type.label, color: colors.textDim},
   sub: {...type.caption, color: colors.textDim},
+  // #265 delivery-node editor
+  nodeInput: {
+    ...type.label,
+    color: colors.text,
+    fontFamily: 'monospace',
+    backgroundColor: colors.canvas,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+    minHeight: 64,
+    textAlignVertical: 'top',
+  },
+  nodeBtns: {flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, gap: spacing.sm},
+  nodeReset: {paddingVertical: spacing.sm, paddingHorizontal: spacing.md},
+  nodeResetText: {...type.label, color: colors.textDim},
+  nodeSave: {flex: 1},
   sep: {height: 1, backgroundColor: colors.border, marginLeft: spacing.lg},
   helper: {...type.label, color: colors.textDim, lineHeight: 18, marginBottom: spacing.md},
   dangerZone: {
