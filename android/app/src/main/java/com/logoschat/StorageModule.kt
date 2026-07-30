@@ -41,8 +41,23 @@ class StorageModule(reactContext: ReactApplicationContext) :
 
   private fun configured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
 
+  /** #308: emit an upload-progress device event so the "sending" ring can fill. */
+  private fun emitSending(id: String, progress: Double) {
+    if (id.isEmpty()) return
+    val map = Arguments.createMap().apply {
+      putString("id", id)
+      putString("phase", "sending")
+      putDouble("progress", progress.coerceIn(0.0, 1.0))
+    }
+    try {
+      reactApplicationContext
+          .getJSModule(com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+          .emit("mediaProgress", map)
+    } catch (_: Throwable) {}
+  }
+
   @ReactMethod
-  fun uploadEncrypted(localPath: String, promise: Promise) {
+  fun uploadEncrypted(localPath: String, id: String, promise: Promise) {
     Thread {
       try {
         if (!configured()) throw IllegalStateException("storage not configured")
@@ -60,10 +75,23 @@ class StorageModule(reactContext: ReactApplicationContext) :
           doOutput = true
           connectTimeout = 15000
           readTimeout = 60000
+          setFixedLengthStreamingMode(blob.size)
           setRequestProperty("Authorization", "Bearer $token")
           setRequestProperty("Content-Type", "application/octet-stream")
         }
-        conn.outputStream.use { it.write(blob) }
+        // #308: stream in chunks so we can report real byte-level upload progress.
+        conn.outputStream.use { os ->
+          val chunk = 64 * 1024
+          var off = 0
+          emitSending(id, 0.0)
+          while (off < blob.size) {
+            val n = minOf(chunk, blob.size - off)
+            os.write(blob, off, n)
+            off += n
+            emitSending(id, off.toDouble() / blob.size)
+          }
+          os.flush()
+        }
         val code = conn.responseCode
         if (code !in 200..299) {
           val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"

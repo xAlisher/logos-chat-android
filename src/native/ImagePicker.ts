@@ -44,11 +44,13 @@ interface ImagePickerNative {
   /** #300: save any media (photo/gif/video) to the gallery, routed by mime. */
   saveMediaToGallery(path: string, mime: string): Promise<string>;
   /**
-   * #300: pick a RAW gif/video (no downscale — animation preserved), copied to a cache
-   * file. Resolves a stringified {@link PickedRawMedia}, or null if cancelled; rejects if
-   * it exceeds [maxBytes]. The caller encrypts + uploads it to Logos Storage.
+   * #300/#306: pick a RAW gif or video (no downscale — animation preserved), copied to a
+   * cache file. [kind] scopes the picker: "gif" (image/gif only) or "video" (video/* only).
+   * Resolves a stringified {@link PickedRawMedia}, or null if cancelled. For "gif" it rejects
+   * over [maxBytes]; for "video" size is unbounded (compression handles it) and the result
+   * carries {durationMs, posterPath}.
    */
-  pickRawMedia(maxBytes: number): Promise<string | null>;
+  pickRawMedia(maxBytes: number, kind: 'gif' | 'video'): Promise<string | null>;
 }
 
 /** #300: a raw (un-re-encoded) gif/video the user picked, staged in a cache file. */
@@ -58,6 +60,9 @@ export interface PickedRawMedia {
   width: number;
   height: number;
   byteLength: number;
+  /** #307: video only — duration + a first-frame poster JPEG for the composer thumbnail. */
+  durationMs?: number;
+  posterPath?: string;
 }
 
 /** Parse the JSON pickRawMedia resolves with. Null on cancel/malformed. */
@@ -72,6 +77,8 @@ export function parseRawMedia(json: string | null): PickedRawMedia | null {
         width: typeof o.width === 'number' ? o.width : 0,
         height: typeof o.height === 'number' ? o.height : 0,
         byteLength: typeof o.byteLength === 'number' ? o.byteLength : 0,
+        durationMs: typeof o.durationMs === 'number' ? o.durationMs : undefined,
+        posterPath: typeof o.posterPath === 'string' ? o.posterPath : undefined,
       };
     }
   } catch {

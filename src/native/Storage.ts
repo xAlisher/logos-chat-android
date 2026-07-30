@@ -5,8 +5,11 @@
 import {NativeModules} from 'react-native';
 
 interface StorageNative {
-  /** AES-256-GCM encrypt the file, POST to the storage node → {cid, key(base64)}. */
-  uploadEncrypted(localPath: string): Promise<{cid: string; key: string}>;
+  /**
+   * AES-256-GCM encrypt the file, POST to the storage node → {cid, key(base64)}.
+   * [id] (#308) keys `mediaProgress` upload events for the "sending" ring; pass "" to skip.
+   */
+  uploadEncrypted(localPath: string, id: string): Promise<{cid: string; key: string}>;
   /** GET ciphertext by cid, decrypt with key(base64), cache locally → local file path. */
   downloadDecrypt(cid: string, key: string): Promise<string>;
 }

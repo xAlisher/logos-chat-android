@@ -65,7 +65,10 @@ import {EmojiGridModal} from '../components/EmojiGridModal';
 import {useComposerDraftStore} from '../stores/composerDraftStore';
 import {ForwardPicker} from '../components/ForwardPicker';
 import {MeshMapModal} from '../components/MeshMapModal';
-import ImagePickerNative, {type PickedImage} from '../native/ImagePicker';
+import ImagePickerNative, {
+  type PickedImage,
+  type PickedRawMedia,
+} from '../native/ImagePicker';
 import {
   useChatStore,
   convoDisplayName,
@@ -74,17 +77,20 @@ import {
 } from '../stores/chatStore';
 import {formatLastSeen} from '../stores/conversationView';
 import {meshPresence} from '../stores/meshPresence';
-import type {Conversation, Message, SystemNote} from '../stores/chatStore';
+import type {Conversation, Message, SystemNote, MediaSend} from '../stores/chatStore';
 
 // #188: a timeline row is either a message or an interleaved system line.
-type Row = {kind: 'msg'; msg: Message} | {kind: 'sys'; sys: SystemNote};
+type Row =
+  | {kind: 'msg'; msg: Message}
+  | {kind: 'sys'; sys: SystemNote}
+  | {kind: 'media'; send: MediaSend}; // #308 in-flight video compress/upload
 import {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
 import {parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal} from '../native/voiceMsg';
 import {parseLocation, formatLatLng, geoUri, type LatLng} from '../native/locMsg';
 import {VoiceBubble} from '../components/VoiceBubble';
-import {CameraIcon, LocationIcon, MicIcon, PlayIcon} from '../components/MediaIcons';
+import {CameraIcon, LocationIcon, MicIcon, PlayIcon, FilmIcon} from '../components/MediaIcons';
 import AudioRecorder, {
   parseRecording,
   MAX_RECORDING_MS,
@@ -108,6 +114,7 @@ import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
 import {useMediaBlob} from '../native/mediaCache';
 import {MediaVideo} from '../components/MediaVideo';
 import {VideoFullscreen} from '../components/VideoFullscreen';
+import {MediaSendBubble} from '../components/MediaSendBubble';
 import Storage from '../native/Storage';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -610,7 +617,9 @@ export function ChatScreen() {
   const sendReaction = useChatStore(s => s.sendReaction); // #264
   const pinMessage = useChatStore(s => s.pinMessage); // #266
   const sendImage = useChatStore(s => s.sendImage);
-  const sendMedia = useChatStore(s => s.sendMedia); // #300 gif/video via Logos Storage
+  const sendGif = useChatStore(s => s.sendGif); // #306 gif via Logos Storage
+  const stageVideo = useChatStore(s => s.stageVideo); // #307 pick+stage a video
+  const sendStagedVideo = useChatStore(s => s.sendStagedVideo); // #305/#308 compress→upload→send
   const stageImages = useChatStore(s => s.stageImages); // #261
   const stageCameraPhoto = useChatStore(s => s.stageCameraPhoto); // #261
   const sendStagedImages = useChatStore(s => s.sendStagedImages); // #261
@@ -657,6 +666,14 @@ export function ChatScreen() {
   // thumbnails above the composer, dispatched on Send (like the location chip).
   const [pendingImages, setPendingImages] = useState<PickedImage[]>(
     initialDraft?.pendingImages ?? [],
+  );
+  // #307: a single video staged in the composer (poster thumbnail + play badge), sent on Send.
+  const [pendingVideo, setPendingVideo] = useState<PickedRawMedia | null>(null);
+  // #308: in-flight video sends for this convo (compress→upload), rendered as progress bubbles.
+  const mediaSends = useChatStore(s => s.mediaSends);
+  const convoMediaSends = useMemo(
+    () => Object.values(mediaSends).filter(m => m.convoPk === convoPk),
+    [mediaSends, convoPk],
   );
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -1122,7 +1139,10 @@ export function ChatScreen() {
   // #255/#261: a staged location OR image counts as sendable payload even with no text.
   const canSend =
     cs.canSendBase &&
-    (text.trim().length > 0 || pendingLoc != null || pendingImages.length > 0) &&
+    (text.trim().length > 0 ||
+      pendingLoc != null ||
+      pendingImages.length > 0 ||
+      pendingVideo != null) &&
     !busy;
   const sendColor =
     cs.sendColorKind === 'mesh'
@@ -1138,7 +1158,10 @@ export function ChatScreen() {
   // #255: …or a location is staged in the composer.
   const canSendText = text.trim().length > 0;
   const canSendComposer =
-    canSendText || pendingLoc != null || pendingImages.length > 0;
+    canSendText ||
+    pendingLoc != null ||
+    pendingImages.length > 0 ||
+    pendingVideo != null;
   // #150: MTU-aware composer. A LoRa text packet is byte-capped (UTF-8), so the
   // budget only applies when the send will ACTUALLY leave over the radio — which
   // is exactly sendColorKind==='mesh' (BLE fragments; Logos has no radio MTU).
@@ -1249,10 +1272,12 @@ export function ChatScreen() {
     const t = text.trim();
     const loc = pendingLoc; // #255: staged location, if any
     const imgs = pendingImages; // #261: staged images, if any
+    const vid = pendingVideo; // #307: staged video, if any
     const reply = replyDraft; // #295: reply target, if any
     setText('');
     setPendingLoc(null);
     setPendingImages([]);
+    setPendingVideo(null);
     setReplyDraft(null);
     try {
       setBusy(true);
@@ -1267,6 +1292,11 @@ export function ChatScreen() {
       // #261: send the staged images (each its own message), after any text.
       if (imgs.length > 0) {
         await sendStagedImages(convoPk, imgs);
+      }
+      // #305/#307: send the staged video — compress→upload→send with an in-chat ring.
+      // Fire-and-forget: the mediaSends bubble tracks progress, so Send returns at once.
+      if (vid != null) {
+        sendStagedVideo(convoPk, vid);
       }
       // #255: send the confirmed location as its own message (after any text).
       if (loc != null) {
@@ -1319,6 +1349,12 @@ export function ChatScreen() {
       if (picked.length > 0) {
         setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
       }
+    });
+  // #307: the Video button — pick + STAGE one video (poster preview), sent on Send.
+  const onPickVideo = () =>
+    withAttaching(async () => {
+      const vid = await stageVideo(convoPk);
+      if (vid != null) setPendingVideo(vid);
     });
   // #255: acquire a fix and STAGE it in the composer (preview + confirm) instead
   // of sending on the first tap.
@@ -1523,11 +1559,16 @@ export function ChatScreen() {
         at: sn.at,
         row: {kind: 'sys' as const, sys: sn},
       })),
+      // #308: in-flight video sends float at the newest end while they compress/upload.
+      ...convoMediaSends.map(ms => ({
+        at: ms.startedAt,
+        row: {kind: 'media' as const, send: ms},
+      })),
     ];
     // inverted list → newest first (index 0 renders at the bottom).
     merged.sort((a, b) => b.at - a.at);
     return merged.map(x => x.row);
-  }, [messages, systemLines]);
+  }, [messages, systemLines, convoMediaSends]);
   rowsRef.current = rows; // #295: keep the reply scroll-to lookup current
   const empty = rows.length === 0;
 
@@ -1675,9 +1716,16 @@ export function ChatScreen() {
           });
         }}
         keyExtractor={r =>
-          r.kind === 'msg' ? `m${r.msg.msgPk}` : `s${r.sys.id}`
+          r.kind === 'msg'
+            ? `m${r.msg.msgPk}`
+            : r.kind === 'media'
+            ? `x${r.send.id}`
+            : `s${r.sys.id}`
         }
         renderItem={({item}) => {
+          if (item.kind === 'media') {
+            return <MediaSendBubble send={item.send} />;
+          }
           if (item.kind === 'sys') {
             const info = item.sys.info;
             return (
@@ -1982,6 +2030,31 @@ export function ChatScreen() {
               ))}
             </ScrollView>
           )}
+          {/* #307: staged video — a poster thumbnail with a play badge, removable, sent on Send. */}
+          {pendingVideo != null && (
+            <View style={styles.pendingImages} testID="pending-video">
+              <View style={styles.pendingImageWrap}>
+                {pendingVideo.posterPath != null ? (
+                  <Image
+                    source={{uri: `file://${pendingVideo.posterPath}`}}
+                    style={styles.pendingImage}
+                  />
+                ) : (
+                  <View style={[styles.pendingImage, styles.pendingVideoFallback]} />
+                )}
+                <View style={styles.pendingVideoPlay} pointerEvents="none">
+                  <PlayIcon size={18} color="#fff" />
+                </View>
+                <Pressable
+                  style={styles.pendingImageX}
+                  onPress={() => setPendingVideo(null)}
+                  hitSlop={8}
+                  testID="pending-video-clear">
+                  <Text style={styles.pendingImageXText}>✕</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
           {/* #255: staged location preview — the user confirms with Send or clears it. */}
           {pendingLoc != null && (
             <View style={styles.pendingLoc} testID="pending-location">
@@ -2032,9 +2105,13 @@ export function ChatScreen() {
             <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} testID="composer-location">
               <LocationIcon size={22} color={colors.textDim} />
             </Pressable>
-            {/* #300: GIF/video via Logos Storage (encrypt -> upload -> store1: marker). */}
-            <Pressable style={styles.actionBtn} onPress={() => sendMedia(convoPk)} disabled={attaching} hitSlop={6} testID="composer-gif">
+            {/* #306: GIF (gifs only) via Logos Storage (encrypt -> upload -> store1: marker). */}
+            <Pressable style={styles.actionBtn} onPress={() => sendGif(convoPk)} disabled={attaching} hitSlop={6} testID="composer-gif">
               <Text style={styles.gifBtn}>GIF</Text>
+            </Pressable>
+            {/* #306/#307: dedicated Video button — picks video/* only, stages a poster. */}
+            <Pressable style={styles.actionBtn} onPress={onPickVideo} disabled={attaching} hitSlop={6} testID="composer-video">
+              <FilmIcon size={22} color={colors.textDim} />
             </Pressable>
             <Pressable style={styles.actionBtn} onPress={onStartRecord} disabled={attaching} hitSlop={6} testID="composer-mic">
               <MicIcon size={22} color={colors.textDim} />
@@ -2542,6 +2619,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pendingImageXText: {color: colors.text, fontSize: 11, lineHeight: 13},
+  // #307: staged-video thumbnail play badge + poster fallback.
+  pendingVideoFallback: {backgroundColor: 'rgba(0,0,0,0.3)'},
+  pendingVideoPlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   actionRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingLeft: spacing.xs},
   actionBtn: {padding: spacing.xs},
   // #205: recording bar.

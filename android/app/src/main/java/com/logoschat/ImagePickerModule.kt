@@ -58,6 +58,7 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
   @Volatile private var pendingMaxCount = 10
   @Volatile private var pendingCaptureUri: Uri? = null
   @Volatile private var pendingRawMaxBytes = 8_000_000 // #300
+  @Volatile private var pendingRawKind = "gif" // #306: "gif" | "video"
 
   /**
    * Open the system image picker. Resolves a stringified JSON
@@ -177,23 +178,28 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * #300: pick a RAW gif/video (no downscale/re-encode — animation preserved), copy it to
-   * a cache file, and return {path, mime, width, height, byteLength}. Rejected if it
-   * exceeds [maxBytes]. The caller encrypts + uploads it to Logos Storage.
+   * #300/#306: pick a RAW gif or video (no downscale/re-encode — animation preserved), copy it
+   * to a cache file, and return {path, mime, width, height, byteLength}. [kind] scopes the
+   * picker: "gif" → image/gif only (#306: the GIF button is gifs-only); "video" → videos only
+   * (the dedicated Video button). For video we also return {durationMs, posterPath} (a first-frame
+   * JPEG, #307) so the composer can stage it as a thumbnail, and we DON'T reject on size —
+   * on-device compression (#305) handles that. For gif the [maxBytes] cap still applies.
    */
   @ReactMethod
-  fun pickRawMedia(maxBytes: Int, promise: Promise) {
+  fun pickRawMedia(maxBytes: Int, kind: String, promise: Promise) {
     val activity = reactApplicationContext.currentActivity
     if (activity == null) {
       promise.reject("no_activity", "no current activity")
       return
     }
     pending = promise
+    pendingRawKind = if (kind == "video") "video" else "gif"
     pendingRawMaxBytes = if (maxBytes > 0) maxBytes else 8_000_000
+    val mimes = if (pendingRawKind == "video") arrayOf("video/*") else arrayOf("image/gif")
     val intent =
         Intent(Intent.ACTION_GET_CONTENT).apply {
           type = "*/*"
-          putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/gif", "video/*"))
+          putExtra(Intent.EXTRA_MIME_TYPES, mimes)
           addCategory(Intent.CATEGORY_OPENABLE)
         }
     try {
@@ -240,13 +246,17 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
             resolver.openInputStream(uri)!!.use { input ->
               dest.outputStream().use { input.copyTo(it) }
             }
-            if (dest.length() > pendingRawMaxBytes) {
+            // #305/#306: GIFs still honour the byte cap; videos DON'T reject on size —
+            // on-device compression shrinks them before upload.
+            if (pendingRawKind == "gif" && dest.length() > pendingRawMaxBytes) {
               dest.delete()
               promise.reject("too_large", "media exceeds ${pendingRawMaxBytes / 1_000_000}MB")
               return@Thread
             }
             var w = 0
             var h = 0
+            var durationMs = 0L
+            var posterPath: String? = null
             if (mime == "image/gif") {
               val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
               dest.inputStream().use { BitmapFactory.decodeStream(it, null, b) }
@@ -258,6 +268,17 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
                 r.setDataSource(dest.absolutePath)
                 w = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
                 h = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                durationMs = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                // #307: first-frame poster JPEG so the composer can stage a thumbnail.
+                val frame = r.getFrameAtTime(0, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                if (frame != null) {
+                  val poster = File(dir, "poster_${System.currentTimeMillis()}.jpg")
+                  poster.outputStream().use {
+                    frame.compress(Bitmap.CompressFormat.JPEG, 80, it)
+                  }
+                  frame.recycle()
+                  posterPath = poster.absolutePath
+                }
               } finally {
                 r.release()
               }
@@ -268,6 +289,8 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
             out.put("width", if (w > 0) w else 240)
             out.put("height", if (h > 0) h else 240)
             out.put("byteLength", dest.length())
+            out.put("durationMs", durationMs)
+            if (posterPath != null) out.put("posterPath", posterPath)
             promise.resolve(out.toString())
           } catch (t: Throwable) {
             Log.w(TAG, "raw pick failed", t)

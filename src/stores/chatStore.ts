@@ -25,11 +25,24 @@ import ImagePicker, {
   parseRawMedia,
   parsePickedArray,
   type PickedImage,
+  type PickedRawMedia,
 } from '../native/ImagePicker';
+import VideoTranscoder from '../native/VideoTranscoder';
 import LocationNative, {parseLocation as parseNativeLocation} from '../native/Location';
 import {buildLocation, type LatLng} from '../native/locMsg';
 import AudioRecorder, {parseRecording} from '../native/Audio';
-import {PermissionsAndroid, Platform} from 'react-native';
+import {DeviceEventEmitter, PermissionsAndroid, Platform} from 'react-native';
+
+/** #308: a video send in flight — compressing then uploading, with a 0..1 ring. */
+export interface MediaSend {
+  id: string;
+  convoPk: number;
+  /** first-frame poster (absolute path) shown under the ring. */
+  poster: string | null;
+  phase: 'compressing' | 'sending';
+  progress: number;
+  startedAt: number;
+}
 import {useNodeStore} from './nodeStore';
 import {useMeshStore} from './meshStore';
 import {convoDisplayName} from './conversationView';
@@ -191,10 +204,19 @@ interface ChatState {
    */
   sendImage: (convoPk: number) => Promise<void>;
   /**
-   * #300: pick a raw gif/video, encrypt + upload it to Logos Storage, and send a
+   * #306: pick a GIF (image/gif only), encrypt + upload it to Logos Storage, and send a
    * `store1:` marker (cid + key) — the blob rides Storage, not the wire. Logos-only.
    */
-  sendMedia: (convoPk: number) => Promise<void>;
+  sendGif: (convoPk: number) => Promise<void>;
+  /** #307: pick a video (video/* only) to STAGE in the composer (guards + pick, no send). */
+  stageVideo: (convoPk: number) => Promise<PickedRawMedia | null>;
+  /**
+   * #305/#308: compress the staged video on-device (compressing ring), encrypt + upload it
+   * (sending ring), then send the `store1:` marker. Progress surfaces via {@link mediaSends}.
+   */
+  sendStagedVideo: (convoPk: number, video: PickedRawMedia) => Promise<void>;
+  /** #308: in-flight media sends (video compress→upload), keyed by a temp id. */
+  mediaSends: Record<string, MediaSend>;
   /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send). */
   stageImages: (convoPk: number) => Promise<PickedImage[]>;
   /** #261: capture a photo to STAGE (guards + camera permission, no send). */
@@ -664,19 +686,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // #300: pick a raw gif/video → encrypt + upload to Logos Storage → send a store1:
   // marker (tiny; the blob rides Storage, key travels E2E in the marker).
-  sendMedia: async (convoPk: number) => {
+  mediaSends: {},
+
+  // #306: the GIF button — image/gif only. Small enough to upload straight away.
+  sendGif: async (convoPk: number) => {
     const convo = get().conversations[convoPk];
     if ((convo?.transport ?? 'logos') === 'mesh') {
-      useNodeStore.setState({error: 'gifs/video are not supported on mesh'});
+      useNodeStore.setState({error: 'gifs are not supported on mesh'});
       return;
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send media'});
+      useNodeStore.setState({error: 'start the node to send a gif'});
       return;
     }
     let raw;
     try {
-      raw = parseRawMedia(await ImagePicker.pickRawMedia(8_000_000));
+      raw = parseRawMedia(await ImagePicker.pickRawMedia(8_000_000, 'gif'));
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
       return;
@@ -684,7 +709,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (raw == null) return; // cancelled
     try {
       useNodeStore.setState({error: 'uploading…'});
-      const {cid, key} = await Storage.uploadEncrypted(raw.path);
+      const {cid, key} = await Storage.uploadEncrypted(raw.path, '');
       useNodeStore.setState({error: null});
       const marker = encodeMedia({
         cid,
@@ -695,7 +720,74 @@ export const useChatStore = create<ChatState>((set, get) => ({
       });
       await get().send(convoPk, marker);
     } catch (e: any) {
-      useNodeStore.setState({error: `media upload failed: ${e?.message ?? e}`});
+      useNodeStore.setState({error: `gif upload failed: ${e?.message ?? e}`});
+    }
+  },
+
+  // #307: the Video button — video/* only, STAGED (not sent) so the composer can preview
+  // a poster thumbnail and send on the user's confirm.
+  stageVideo: async (convoPk: number) => {
+    const convo = get().conversations[convoPk];
+    if ((convo?.transport ?? 'logos') === 'mesh') {
+      useNodeStore.setState({error: 'video is not supported on mesh'});
+      return null;
+    }
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'start the node to send a video'});
+      return null;
+    }
+    try {
+      return parseRawMedia(await ImagePicker.pickRawMedia(0, 'video'));
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return null;
+    }
+  },
+
+  // #305/#308: compress the staged video on-device (compressing ring), then encrypt+upload
+  // (sending ring), then send the store1: marker. A `mediaSends` entry drives the in-chat ring.
+  sendStagedVideo: async (convoPk: number, video: PickedRawMedia) => {
+    const id = `v${Date.now()}`;
+    set(s => ({
+      mediaSends: {
+        ...s.mediaSends,
+        [id]: {
+          id,
+          convoPk,
+          poster: video.posterPath ?? null,
+          phase: 'compressing' as const,
+          progress: 0,
+          startedAt: Date.now(),
+        },
+      },
+    }));
+    const clear = () =>
+      set(s => {
+        const {[id]: _drop, ...rest} = s.mediaSends;
+        return {mediaSends: rest};
+      });
+    try {
+      // 1) compress (native emits mediaProgress phase=compressing keyed by id)
+      const enc = await VideoTranscoder.transcode(video.path, id);
+      // 2) upload (native emits mediaProgress phase=sending keyed by id)
+      set(s =>
+        s.mediaSends[id] == null
+          ? {}
+          : {mediaSends: {...s.mediaSends, [id]: {...s.mediaSends[id], phase: 'sending', progress: 0}}},
+      );
+      const {cid, key} = await Storage.uploadEncrypted(enc.path, id);
+      const marker = encodeMedia({
+        cid,
+        key,
+        mime: 'video/mp4',
+        width: enc.width && enc.width > 0 ? enc.width : video.width,
+        height: enc.height && enc.height > 0 ? enc.height : video.height,
+      });
+      clear();
+      await get().send(convoPk, marker);
+    } catch (e: any) {
+      clear();
+      useNodeStore.setState({error: `video send failed: ${e?.message ?? e}`});
     }
   },
 
@@ -1635,3 +1727,35 @@ addLogosChatListener(e => {
 });
 
 useChatStore.getState().refreshConversations();
+
+// #308: native compress/upload progress → update the matching in-flight media send.
+// The transcoder emits many events per second; delivered in a synchronous batch they
+// tripped React's nested-update guard ("Maximum update depth exceeded"). So we COALESCE:
+// buffer the latest progress per id and flush at most once per animation frame, and only
+// call setState when something actually changed (a no-op partial still notifies zustand).
+let pendingProgress: Record<string, {phase: 'compressing' | 'sending'; progress: number}> = {};
+let progressScheduled = false;
+function flushMediaProgress() {
+  progressScheduled = false;
+  const updates = pendingProgress;
+  pendingProgress = {};
+  const cur = useChatStore.getState().mediaSends;
+  let changed = false;
+  const next = {...cur};
+  for (const id of Object.keys(updates)) {
+    if (next[id] == null) continue; // send already completed/cleared
+    next[id] = {...next[id], phase: updates[id].phase, progress: updates[id].progress};
+    changed = true;
+  }
+  if (changed) useChatStore.setState({mediaSends: next});
+}
+DeviceEventEmitter.addListener(
+  'mediaProgress',
+  (e: {id: string; phase: 'compressing' | 'sending'; progress: number}) => {
+    pendingProgress[e.id] = {phase: e.phase, progress: e.progress};
+    if (!progressScheduled) {
+      progressScheduled = true;
+      requestAnimationFrame(flushMediaProgress);
+    }
+  },
+);

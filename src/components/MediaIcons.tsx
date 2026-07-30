@@ -36,6 +36,22 @@ export function LocationIcon({size = 24, color = colors.text, strokeWidth = 2}: 
   );
 }
 
+// Lucide "film" — the dedicated Video composer button (#306).
+export function FilmIcon({size = 24, color = colors.text, strokeWidth = 2}: P) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Rect x={3} y={3} width={18} height={18} rx={2} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={7} y1={3} x2={7} y2={21} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={17} y1={3} x2={17} y2={21} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={3} y1={12} x2={21} y2={12} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={3} y1={7.5} x2={7} y2={7.5} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={3} y1={16.5} x2={7} y2={16.5} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={17} y1={7.5} x2={21} y2={7.5} stroke={color} strokeWidth={strokeWidth} />
+      <Line x1={17} y1={16.5} x2={21} y2={16.5} stroke={color} strokeWidth={strokeWidth} />
+    </Svg>
+  );
+}
+
 // Lucide "play" — filled triangle, for the inline video play-button overlay.
 export function PlayIcon({size = 24, color = '#fff'}: P) {
   return (
