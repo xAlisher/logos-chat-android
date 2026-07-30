@@ -19,6 +19,15 @@ describe('media marker', () => {
     expect(mediaLabel('just text')).toBe('just text');
   });
 
+  it('#302: round-trips the per-blob cap + parses legacy (capless) markers', () => {
+    const withCap = {...ref, cap: 'a2a008e66058cdd57e08ace8f0eb57bd'};
+    const enc = encodeMedia(withCap);
+    expect(enc).toBe('store1:zDvZRwCID:a2V5YjY0:image/gif:320:240:a2a008e66058cdd57e08ace8f0eb57bd');
+    expect(parseMedia(enc)).toEqual(withCap);
+    // legacy 5-field marker → no cap
+    expect(parseMedia('store1:zDvZRwCID:a2V5YjY0:image/gif:320:240')?.cap).toBeUndefined();
+  });
+
   it('rejects non-markers + malformed', () => {
     expect(isMediaContent('hi')).toBe(false);
     expect(parseMedia('hi')).toBeNull();

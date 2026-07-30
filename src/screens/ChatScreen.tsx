@@ -2229,7 +2229,7 @@ export function ChatScreen() {
           const m = parseMedia(t.text);
           if (m == null) return;
           try {
-            const path = await Storage.downloadDecrypt(m.cid, m.key);
+            const path = await Storage.downloadDecrypt(m.cid, m.key, m.cap ?? '');
             await ImagePickerNative.saveMediaToGallery(path, m.mime);
             ToastAndroid.show('Saved to phone', ToastAndroid.SHORT);
           } catch {

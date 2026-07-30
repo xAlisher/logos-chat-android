@@ -6,12 +6,16 @@ import {NativeModules} from 'react-native';
 
 interface StorageNative {
   /**
-   * AES-256-GCM encrypt the file, POST to the storage node → {cid, key(base64)}.
+   * AES-256-GCM encrypt the file, POST to the storage node → {cid, key(base64), cap}.
    * [id] (#308) keys `mediaProgress` upload events for the "sending" ring; pass "" to skip.
+   * `cap` (#302) is the per-blob fetch capability the proxy issued; travels in the marker.
    */
-  uploadEncrypted(localPath: string, id: string): Promise<{cid: string; key: string}>;
-  /** GET ciphertext by cid, decrypt with key(base64), cache locally → local file path. */
-  downloadDecrypt(cid: string, key: string): Promise<string>;
+  uploadEncrypted(localPath: string, id: string): Promise<{cid: string; key: string; cap: string}>;
+  /**
+   * GET ciphertext by cid (presenting [cap], #302), decrypt with key(base64), cache locally
+   * → local file path. Pass "" for cap on legacy markers that predate #302.
+   */
+  downloadDecrypt(cid: string, key: string, cap: string): Promise<string>;
 }
 
 const Storage = NativeModules.Storage as StorageNative;

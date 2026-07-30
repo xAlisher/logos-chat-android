@@ -709,11 +709,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (raw == null) return; // cancelled
     try {
       useNodeStore.setState({error: 'uploading…'});
-      const {cid, key} = await Storage.uploadEncrypted(raw.path, '');
+      const {cid, key, cap} = await Storage.uploadEncrypted(raw.path, '');
       useNodeStore.setState({error: null});
       const marker = encodeMedia({
         cid,
         key,
+        cap,
         mime: raw.mime,
         width: raw.width,
         height: raw.height,
@@ -775,10 +776,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? {}
           : {mediaSends: {...s.mediaSends, [id]: {...s.mediaSends[id], phase: 'sending', progress: 0}}},
       );
-      const {cid, key} = await Storage.uploadEncrypted(enc.path, id);
+      const {cid, key, cap} = await Storage.uploadEncrypted(enc.path, id);
       const marker = encodeMedia({
         cid,
         key,
+        cap,
         mime: 'video/mp4',
         width: enc.width && enc.width > 0 ? enc.width : video.width,
         height: enc.height && enc.height > 0 ? enc.height : video.height,

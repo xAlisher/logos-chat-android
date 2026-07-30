@@ -97,13 +97,18 @@ class StorageModule(reactContext: ReactApplicationContext) :
           val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"
           throw RuntimeException("upload failed ($code): ${err.take(200)}")
         }
-        val cid = conn.inputStream.bufferedReader().readText().trim()
+        // #302: the capgate proxy returns "cid:cap" (cap = per-blob fetch capability).
+        val body = conn.inputStream.bufferedReader().readText().trim()
         conn.disconnect()
-        if (cid.isEmpty()) throw RuntimeException("empty CID from storage")
+        if (body.isEmpty()) throw RuntimeException("empty CID from storage")
+        val sep = body.indexOf(':')
+        val cid = if (sep >= 0) body.substring(0, sep) else body
+        val cap = if (sep >= 0) body.substring(sep + 1) else ""
 
         val out = Arguments.createMap()
         out.putString("cid", cid)
         out.putString("key", Base64.encodeToString(key, Base64.NO_WRAP))
+        out.putString("cap", cap)
         promise.resolve(out)
       } catch (t: Throwable) {
         promise.reject("storage_upload", t.message, t)
@@ -112,7 +117,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  fun downloadDecrypt(cid: String, keyB64: String, promise: Promise) {
+  fun downloadDecrypt(cid: String, keyB64: String, cap: String, promise: Promise) {
     Thread {
       try {
         if (!configured()) throw IllegalStateException("storage not configured")
@@ -123,7 +128,9 @@ class StorageModule(reactContext: ReactApplicationContext) :
           promise.resolve(dest.absolutePath)
           return@Thread
         }
-        val conn = (URL("$base/data/$cid").openConnection() as HttpURLConnection).apply {
+        // #302: present the per-blob capability on GET (proxy 403s without a valid one).
+        val url = if (cap.isNotEmpty()) "$base/data/$cid?cap=$cap" else "$base/data/$cid"
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
           requestMethod = "GET"
           connectTimeout = 15000
           readTimeout = 60000
