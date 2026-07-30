@@ -27,6 +27,7 @@ import {
   type MenuItem,
 } from './OverflowMenu';
 import {parseImageLocal, isImageContent} from '../native/imageMsg';
+import {isMediaContent} from '../messages/media';
 import {isVoiceContent} from '../native/voiceMsg';
 import {
   parseLocation,
@@ -66,6 +67,7 @@ export function BubbleActionMenu({
   onSendMessage,
   onForward,
   onSaveImage,
+  onSaveToPhone,
   onMapMesh,
   onDelete,
   onReact,
@@ -87,6 +89,8 @@ export function BubbleActionMenu({
   onForward: (content: string) => void;
   /** #201: save an image message to the gallery (path from the local marker). */
   onSaveImage: (path: string) => void;
+  /** #300: save a store1: media message (gif/video) to the phone gallery. */
+  onSaveToPhone?: (target: BubbleTarget) => void;
   /** #263: delete this message from local history (this device only). */
   onDelete: (msgPk: number) => void;
   /** #264: react to this message with an emoji (opens as a row atop the menu). */
@@ -153,6 +157,15 @@ export function BubbleActionMenu({
           onPress: () => onSaveImage(img.path),
         });
       }
+    }
+    // #300: Save a gif/video (Logos-Storage media) to the phone gallery.
+    if (isMediaContent(body) && onSaveToPhone != null) {
+      items.push({
+        key: 'save-media',
+        label: 'Save to phone',
+        icon: <CopyIcon color={colors.textDim} />,
+        onPress: () => onSaveToPhone(t),
+      });
     }
     // #204: a location offers "Open in maps".
     if (isLoc) {

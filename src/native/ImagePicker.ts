@@ -41,6 +41,8 @@ interface ImagePickerNative {
   readFileBase64(path: string): Promise<string>;
   /** #201 Save: copy a stored image into the device gallery; resolves its uri. */
   saveImageToGallery(path: string): Promise<string>;
+  /** #300: save any media (photo/gif/video) to the gallery, routed by mime. */
+  saveMediaToGallery(path: string, mime: string): Promise<string>;
   /**
    * #300: pick a RAW gif/video (no downscale — animation preserved), copied to a cache
    * file. Resolves a stringified {@link PickedRawMedia}, or null if cancelled; rejects if

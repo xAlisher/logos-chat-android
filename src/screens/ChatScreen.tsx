@@ -107,6 +107,8 @@ import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/
 import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
 import {useMediaBlob} from '../native/mediaCache';
 import {MediaVideo} from '../components/MediaVideo';
+import {VideoFullscreen} from '../components/VideoFullscreen';
+import Storage from '../native/Storage';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -311,6 +313,7 @@ function Bubble({
   onLongPress,
   onOpenImage,
   onOpenLocation,
+  onOpenVideo,
   reactions,
   onReact,
   onShowReactors,
@@ -327,6 +330,7 @@ function Bubble({
   onLongPress: (pageY: number) => void;
   onOpenImage: (path: string) => void;
   onOpenLocation: (loc: {lat: number; lng: number}) => void;
+  onOpenVideo?: (path: string, aspectRatio: number) => void; // #300 fullscreen video
   // #264: folded reaction aggregates for this message + a toggle callback.
   reactions?: ReactionState[];
   onReact?: (emoji: string, mine: boolean) => void;
@@ -418,6 +422,8 @@ function Bubble({
             ? () => onOpenImage(image.path)
             : mediaRef != null && media.status === 'ready' && !mediaRef.mime.startsWith('video/')
             ? () => onOpenImage(media.path)
+            : mediaRef != null && media.status === 'ready' && mediaRef.mime.startsWith('video/')
+            ? () => onOpenVideo?.(media.path, mediaRef.width / mediaRef.height)
             : location != null
             ? () => onOpenLocation(location)
             : undefined
@@ -677,6 +683,7 @@ export function ChatScreen() {
   const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
   const [emojiPickerTarget, setEmojiPickerTarget] = useState<BubbleTarget | null>(null); // #298
   const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
+  const [videoFs, setVideoFs] = useState<{path: string; ar: number} | null>(null); // #300 fullscreen video
   const forwardMessage = useChatStore(s => s.forwardMessage);
   // #210: map-to-mesh from the bubble menu (local, works offline).
   const [mapTarget, setMapTarget] = useState<{address: string; label: string | null} | null>(null);
@@ -1733,6 +1740,7 @@ export function ChatScreen() {
               }
               onRetry={() => retry(convoPk, m.msgPk)}
               onOpenImage={path => setFullscreen(path)}
+              onOpenVideo={(path, ar) => setVideoFs({path, ar})}
               onOpenLocation={loc =>
                 Linking.openURL(geoUri(loc)).catch(() =>
                   ToastAndroid.show('No maps app', ToastAndroid.SHORT),
@@ -2094,6 +2102,19 @@ export function ChatScreen() {
             ToastAndroid.show('Save failed', ToastAndroid.SHORT);
           }
         }}
+        onSaveToPhone={async t => {
+          // #300: fetch+decrypt the store1: blob (cache hit if already viewed), then save.
+          setBubbleTarget(null);
+          const m = parseMedia(t.text);
+          if (m == null) return;
+          try {
+            const path = await Storage.downloadDecrypt(m.cid, m.key);
+            await ImagePickerNative.saveMediaToGallery(path, m.mime);
+            ToastAndroid.show('Saved to phone', ToastAndroid.SHORT);
+          } catch {
+            ToastAndroid.show('Save failed', ToastAndroid.SHORT);
+          }
+        }}
         onDelete={msgPk => {
           setBubbleTarget(null);
           // #263: short confirm — local-only delete, no remote unsend.
@@ -2184,6 +2205,12 @@ export function ChatScreen() {
           )}
         </Pressable>
       </Modal>
+      {/* #300: fullscreen video player (sound + native controls). */}
+      <VideoFullscreen
+        path={videoFs?.path ?? null}
+        aspectRatio={videoFs?.ar ?? 1}
+        onClose={() => setVideoFs(null)}
+      />
       <AddressModal
         visible={addressOpen}
         address={convo?.peerAddress ?? null}

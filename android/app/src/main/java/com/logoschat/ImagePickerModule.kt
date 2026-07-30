@@ -358,6 +358,51 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
             }
             promise.resolve(uri.toString())
           } catch (t: Throwable) {
+            promise.reject("save_failed", t.message ?: "could not save")
+          }
+        }
+        .start()
+  }
+
+  /**
+   * #300: save any media (photo / gif / video) to the device gallery. Routes to the
+   * MediaStore Images or Video collection by mime, under Pictures/Peers or Movies/Peers.
+   */
+  @ReactMethod
+  fun saveMediaToGallery(path: String, mime: String, promise: Promise) {
+    Thread {
+          try {
+            val src = File(path)
+            val isVideo = mime.startsWith("video/")
+            val collection =
+                if (isVideo) MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val dir =
+                if (isVideo) android.os.Environment.DIRECTORY_MOVIES
+                else android.os.Environment.DIRECTORY_PICTURES
+            val ext = when {
+              src.name.contains('.') -> ""
+              isVideo -> ".mp4"
+              mime == "image/gif" -> ".gif"
+              else -> ".jpg"
+            }
+            val cv =
+                android.content.ContentValues().apply {
+                  put(MediaStore.MediaColumns.DISPLAY_NAME, src.name + ext)
+                  put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "$dir/Peers")
+                  }
+                }
+            val resolver = reactApplicationContext.contentResolver
+            val uri =
+                resolver.insert(collection, cv)
+                    ?: throw IllegalStateException("MediaStore insert failed")
+            resolver.openOutputStream(uri).use { out ->
+              src.inputStream().use { it.copyTo(out!!) }
+            }
+            promise.resolve(uri.toString())
+          } catch (t: Throwable) {
             promise.reject("save_failed", t.message ?: "could not save to gallery")
           }
         }
