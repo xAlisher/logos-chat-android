@@ -1679,7 +1679,8 @@ export function ChatScreen() {
           }}>
           <PinIcon size={16} color={colors.accent} />
           <View style={styles.pinBarText}>
-            <Text style={styles.pinBarLabel}>Pinned</Text>
+            {/* #309: no "Pinned" label — the pin icon is descriptive enough; keeps the
+                banner to a single compact line. */}
             <Text style={styles.pinBarMsg} numberOfLines={1}>
               {parseImageLocal(pinnedMsg.text) != null
                 ? '📷 Photo'

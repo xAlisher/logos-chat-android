@@ -1,37 +1,48 @@
-# Running your own delivery node
+# Running your own Peers nodes
 
-Peers sends messages over the **Logos Messaging** network (a Waku fork). Your phone
-runs a small *light* node inside the app, but a light node can't relay on its own — it
-needs a always-on **service node** on the network to subscribe for incoming messages
-(filter), push your outgoing ones (lightpush), and hold recent history so you catch up
-after being offline (store).
+Peers rides on infrastructure you can run yourself. There are **two** pieces:
 
-By default Peers uses **our** node (`msg.logos.live`). This guide shows how to run your
-**own** node and point Peers at it, so your group's delivery doesn't depend on anyone
-else's infrastructure. Everything here is what we actually run in production — including
-the two non-obvious gotchas that cost us the most time.
+1. **A delivery node** — messages travel over the **Logos Messaging** network (a Waku
+   fork). Your phone runs a small *light* node inside the app, but a light node can't relay
+   on its own — it needs an always-on **service node** to subscribe for incoming messages
+   (filter), push your outgoing ones (lightpush), and hold recent history so you catch up
+   after being offline (store).
+2. **A media node** *(optional)* — GIFs and videos are too big to ride a message, so Peers
+   stores them as **encrypted blobs** on a **Logos Storage** node and sends only a tiny
+   reference over the encrypted channel. Run your own and your media lives on your infra too.
 
-> You don't need this to use Peers. It's for people who want full control of the relay
-> their messages pass through, or a node their own community can share.
+By default Peers uses **our** nodes (both at `msg.logos.live`). This guide shows how to run
+your **own** and point Peers at them, so your group doesn't depend on anyone else's
+infrastructure. Everything here is what we actually run in production — including the
+non-obvious gotchas that cost us the most time.
+
+> You don't need any of this to use Peers. It's for people who want full control of the
+> relay and storage their messages pass through, or nodes their own community can share.
+> The delivery node is the important one; the media node is optional (without it, media
+> just uses our storage — still end-to-end encrypted, see the last section).
 
 ---
 
-## Why you'd want your own node
+## Why you'd want your own nodes
 
 - **Independence.** The shared public fleet has gone down before and taken delivery with
-  it (a node dies → every conversation on that Waku shard silently stops). A node you
-  control is a delivery path you control.
-- **Privacy of infrastructure.** Traffic is end-to-end encrypted either way (MLS — the
-  node never sees plaintext), but running your own node means *you* decide who serves
-  your metadata and history.
-- **A community node.** One node comfortably serves ~100 devices. Run one for your group.
+  it (a node dies → every conversation on that Waku shard silently stops). Nodes you
+  control are a delivery path you control.
+- **Privacy of infrastructure.** Traffic is end-to-end encrypted either way (MLS for
+  messages, AES-256-GCM for media — the nodes never see plaintext), but running your own
+  means *you* decide who serves your metadata and history.
+- **A community backend.** One delivery node comfortably serves ~100 devices; a media node
+  is just an encrypted blob store with a disk quota. Run both for your group.
 
-The node **cannot read your messages** — content is MLS-encrypted on the device. A node
-sees ciphertext, timing, and Waku content-topics, nothing more.
+The nodes **cannot read your messages or media** — everything is encrypted on the device
+before it leaves. A node sees ciphertext, timing, and sizes, nothing more (full threat
+model at the end).
 
 ---
 
 ## What you're running
+
+### Delivery node
 
 [nwaku](https://github.com/waku-org/nwaku)'s `wakunode2`, joined to **Logos cluster 2**,
 serving **all 8 shards**, with **relay + filter + lightpush + store** enabled and
@@ -49,22 +60,44 @@ node instead of another light client.
 | Stable `--nodekey` | Fixes the node's peerId so its address never changes. **See gotcha #2.** |
 | WSS (`:8000`, TLS) | A fallback endpoint for phones on networks that block the raw libp2p TCP port. |
 
+### Media node (optional)
+
+A **[Logos Storage](https://github.com/logos-storage/logos-storage-nim)** node (a Codex
+derivative) fronted by a small **auth proxy** (Caddy) that adds TLS and a bearer token.
+Media is **encrypted on the sender's phone** (AES-256-GCM, a fresh key per file) *before*
+upload, so the node only ever holds **ciphertext + a content id (CID)**; the decryption key
+travels inside the end-to-end-encrypted message and never reaches the node.
+
+| Piece | Why |
+|---|---|
+| `logosstorage/logos-storage-nim` image | The current Logos Storage. **See gotcha #3** — don't use the stale `codexstorage/nim-codex`. |
+| REST on `127.0.0.1` only | The raw storage API has no auth — never expose it directly. |
+| Caddy auth proxy (`:443`, TLS + bearer token) | The only public surface. Rejects any request without the token; reuses your delivery node's cert. |
+| `STORAGE_STORAGE_QUOTA` + a data volume | Disk cap. Media accumulates — bound it and watch the disk. |
+
 ---
 
 ## Prerequisites
 
 - A small **VPS with a public IPv4** (~$5–10/mo is plenty for ~100 devices) and
-  **Docker + Docker Compose**.
-- A **domain name** pointing at the VPS (needed for the WSS TLS cert; the TCP endpoint
-  alone can use a bare `/dns4/` or `/ip4/` address). Reverse DNS matching the domain lets
-  the node auto-detect it.
-- Open inbound ports: **30304/tcp + 30304/udp** (libp2p), **9005/udp** (discovery),
-  **8000/tcp** (WSS), **80/tcp** (Let's Encrypt HTTP-01 challenge). Keep REST (`8645`),
-  metrics (`8003`), and Postgres (`5432`) bound to `127.0.0.1` — never public.
+  **Docker + Docker Compose**. Both nodes fit comfortably on one box.
+- A **domain name** pointing at the VPS (needed for TLS — the delivery WSS cert and the
+  media proxy both use it). Reverse DNS matching the domain lets the delivery node
+  auto-detect it.
+- Open inbound ports:
+  - **Delivery:** `30304/tcp` + `30304/udp` (libp2p), `9005/udp` (discovery), `8000/tcp`
+    (WSS), `80/tcp` (Let's Encrypt HTTP-01 challenge).
+  - **Media:** `443/tcp` (the auth proxy). Optionally `2345/tcp` + `8090/udp` for the
+    storage node's own libp2p/DHT (not required — phones fetch by a direct REST GET
+    through the proxy).
+  - Keep everything else — delivery REST (`8645`), metrics (`8003`), Postgres (`5432`),
+    and the storage REST (`8080`) — bound to `127.0.0.1`, **never public**.
 
 ---
 
 ## Setup
+
+### The delivery node
 
 The upstream project ships a Docker Compose that runs the node + Postgres store +
 certbot (for WSS) + optional Prometheus/Grafana monitoring. Start from
@@ -112,6 +145,77 @@ docker compose logs -f logos-messaging-node
 > ⚠️ **Always confirm exact flag names against your nwaku version** with
 > `wakunode2 --help`. Flag names drift between releases. We run **nwaku v0.38.0**.
 
+### The media node (optional)
+
+Run it **alongside** the delivery node — two services in one compose: the storage node
+(REST bound to localhost) and a Caddy proxy that is the only public surface.
+
+**`docker-compose.yaml`:**
+
+```yaml
+services:
+  logos-storage:
+    image: logosstorage/logos-storage-nim:latest   # gotcha #3 — NOT codexstorage/nim-codex
+    restart: unless-stopped
+    environment:
+      - STORAGE_API_PORT=8080
+      - STORAGE_API_BINDADDR=0.0.0.0
+      - STORAGE_DATA_DIR=/datadir
+      - STORAGE_LISTEN_ADDRS=/ip4/0.0.0.0/tcp/2345
+      - STORAGE_DISC_PORT=8090
+      - STORAGE_NAT=extip:<YOUR_PUBLIC_IP>
+      - NAT_IP_AUTO=false
+      - STORAGE_REPO_KIND=fs
+      - STORAGE_STORAGE_QUOTA=4294967296            # 4 GB cap — tune to your disk
+      - STORAGE_LOG_LEVEL=INFO
+    ports:
+      - 127.0.0.1:8080:8080/tcp                     # REST: localhost ONLY
+      - 2345:2345/tcp
+      - 8090:8090/udp
+    volumes:
+      - ./datadir:/datadir:z
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [logos-storage]
+    ports:
+      - 443:443/tcp
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /root/logos-delivery-compose/certs:/certs:ro   # reuse the delivery WSS cert
+      - ./caddy-data:/data
+```
+
+**`Caddyfile`** — the auth proxy. It requires a bearer token on every request, reuses your
+delivery node's Let's Encrypt cert, and keeps **access logs off** so there's no persistent
+IP↔CID↔time trail:
+
+```caddyfile
+{
+	auto_https off
+	admin off
+	log { output discard }
+}
+
+<your-domain>:443 {
+	tls /certs/live/<your-domain>/fullchain.pem /certs/live/<your-domain>/privkey.pem
+	@noauth not header Authorization "Bearer <YOUR_TOKEN>"
+	handle @noauth { respond "unauthorized" 403 }
+	handle_path /s/* { reverse_proxy logos-storage:8080 }
+	handle { respond "not found" 404 }
+}
+```
+
+Generate a long random token (`openssl rand -hex 32`), put it **only** in this Caddyfile on
+the VPS and in your password manager — **never commit it to git**. Open `443/tcp` in the
+firewall (`ufw allow 443/tcp`), then `docker compose up -d`.
+
+Public endpoint: `https://<your-domain>/s/api/storage/v1/...` (the `/s/*` path maps to the
+storage REST; the API base is `/api/storage/v1/`).
+
+---
+
 ### Gotcha #1 — lightpush is gated behind RLN by default, but you don't need RLN
 
 Upstream only enables **lightpush** when you supply RLN (rate-limiting) credentials.
@@ -123,14 +227,25 @@ a duplicate if it's in both the launch script and `EXTRA_ARGS`.
 
 ### Gotcha #2 — never rotate your nodekey
 
-The `NODEKEY` (a hex private key in your `.env`) determines the node's **peerId**, which
-is part of the address phones connect to. Change it and the address changes and **every
-phone configured to use your node stops connecting** until they update the address. Set it
-once, **back it up off-host** (password manager / secrets store), and never rotate it.
+The `NODEKEY` (a hex private key in your `.env`) determines the delivery node's **peerId**,
+which is part of the address phones connect to. Change it and the address changes and
+**every phone configured to use your node stops connecting** until they update the address.
+Set it once, **back it up off-host** (password manager / secrets store), and never rotate it.
+
+### Gotcha #3 — media node image + upload content-type
+
+- Use **`logosstorage/logos-storage-nim`**, not the stale `codexstorage/nim-codex` (its API
+  lives under the old `/api/codex/v1/` path and behaves differently). Peers expects
+  `/api/storage/v1/`.
+- Uploads (`POST /data`) **must** send `Content-Type: application/octet-stream`. The default
+  `application/x-www-form-urlencoded` is rejected with a "MIME type … not valid" error.
+  (Peers' native client already sets this; it matters if you test with `curl`.)
 
 ---
 
-## Get your node's address
+## Get your nodes' addresses
+
+### Delivery multiaddr
 
 Phones connect to a **multiaddr** — `/dns4/<domain>/tcp/30304/p2p/<peerId>`. Fetch the
 peerId (and confirm listen addresses) from the node's local REST API:
@@ -149,23 +264,42 @@ WSS:  /dns4/YOUR-DOMAIN/tcp/8000/wss/p2p/16Uiu2Ham...YOURPEERID
 (No domain? A TCP-only node can use `/ip4/<PUBLIC_IP>/tcp/30304/p2p/<peerId>`. WSS needs a
 domain for the TLS cert.)
 
+### Media endpoint
+
+Just your proxy URL + the token: base `https://<your-domain>/s/api/storage/v1` with header
+`Authorization: Bearer <YOUR_TOKEN>`.
+
 ---
 
-## Point Peers at your node
+## Point Peers at your nodes
 
-On the phone: **Settings → Network**. It shows the delivery node currently in use. Paste
-your node's **TCP multiaddr** into the field and **Save**, then **fully restart the app**
-(the node reads the address at startup). "Use default" puts you back on `msg.logos.live`.
+**Delivery — runtime, no rebuild.** On the phone: **Settings → Network**. It shows the
+delivery node currently in use. Paste your node's **TCP multiaddr** into the field and
+**Save**, then **fully restart the app** (the node reads the address at startup). "Use
+default" puts you back on `msg.logos.live`. Peers now uses your node as its filter +
+lightpush + store peer, pinned to cluster 2 / 8 shards, and peer-exchanges through it to
+reach the rest of cluster 2 as backup.
 
-That's it — Peers now uses your node as its filter + lightpush + store peer, pinned to
-cluster 2 / 8 shards, with fleet auto-discovery off (it dials your node directly, and
-peer-exchanges through it to reach the rest of cluster 2 as backup).
+**Media — build time.** The storage base + token are **baked into the app at build time**
+(a shared token can't be a user-facing setting), so using your own media node means building
+Peers yourself:
+
+```sh
+cd android
+./gradlew assembleRelease \
+  -PstorageBase=https://<your-domain>/s/api/storage/v1 \
+  -PstorageToken=<YOUR_TOKEN>
+```
+
+These land in `BuildConfig.STORAGE_BASE` / `BuildConfig.STORAGE_TOKEN`; they default to empty
+(media just no-ops) in a plain build, and the token is **never committed**. If you only run a
+delivery node, skip this — media transparently uses our storage, still end-to-end encrypted.
 
 ---
 
 ## Verify it works
 
-**From anywhere** (reachability, no server access needed):
+**Delivery — from anywhere** (reachability, no server access needed):
 
 ```sh
 nc -vz YOUR-DOMAIN 30304        # libp2p TCP endpoint open
@@ -173,63 +307,94 @@ echo | openssl s_client -connect YOUR-DOMAIN:8000 -servername YOUR-DOMAIN 2>/dev
   | openssl x509 -noout -subject -dates     # WSS cert valid + expiry
 ```
 
-**On the server:**
+**Delivery — on the server:**
 
 ```sh
 curl -s http://127.0.0.1:8645/admin/v1/peers | jq 'length'   # connected peers > 0
 ```
 
-**End-to-end:** with two phones both pointed at your node, send a message and confirm it
-arrives. Then background one phone, send from the other, foreground it again — store
-catch-up should deliver what it missed.
+**Media — a round-trip** (on the host, localhost REST):
+
+```sh
+B=http://127.0.0.1:8080/api/storage/v1
+head -c 300000 /dev/urandom >/tmp/b
+CID=$(curl -s -XPOST "$B/data" -H 'Content-Type: application/octet-stream' --data-binary @/tmp/b)
+curl -s "$B/data/$CID" -o /tmp/o
+sha256sum /tmp/b /tmp/o        # the two hashes must match
+```
+
+**Media — through the public proxy** (from anywhere): the same `POST`/`GET` against
+`https://<your-domain>/s/api/storage/v1` with `-H "Authorization: Bearer <YOUR_TOKEN>"`
+should succeed, and **without** the token should return `403`.
+
+**End-to-end:** with two phones both pointed at your delivery node, send a message and
+confirm it arrives; background one, send from the other, foreground it — store catch-up
+should deliver what it missed. On a media build, send a GIF/video and confirm the other
+phone renders it.
 
 ---
 
 ## Operating it
 
+**Delivery:**
 - **Boot persistence.** Use `restart: unless-stopped` on the node service so it comes back
   after a host reboot (the sample compose uses `on-failure`, which does *not*).
-- **Down-alerts.** Dashboards tell you the past; add an external TCP monitor (e.g.
-  Uptime-Kuma) on `:30304` and `:8000` at 60s so an outage actually pages you.
+- **Down-alerts.** Add an external TCP monitor (e.g. Uptime-Kuma) on `:30304` and `:8000`
+  at 60s so an outage actually pages you.
 - **Cert renewal (WSS).** certbot auto-renews, but nwaku reads the cert **at startup** —
   restart the node after a renewal (a monthly `docker compose restart` cron is simplest).
   Keep port **80** open for the renewal challenge.
-- **Disk.** Store is retention-capped (`size:1GB` above). Watch host disk; rotate node
-  logs (the sample compose does 100 MB × 10).
-- **Never** rotate the nodekey, and **never** expose REST/metrics/Postgres publicly.
+- **Disk.** Store is retention-capped (`size:1GB` above). Watch host disk; rotate node logs.
+
+**Media:**
+- **Quota + disk.** `STORAGE_STORAGE_QUOTA` caps the store, but media accumulates — watch
+  the datadir (`du -sh datadir`) and the host disk. A retention/eviction policy (drop old
+  blobs, show honest "expired" placeholders in-app) is on our roadmap.
+- **Cert renewal.** The Caddy proxy reads the shared cert too — **restart Caddy** after the
+  monthly renewal (`docker compose restart caddy`).
+- **Never** expose the storage REST (`8080`) publicly — only the token-gated proxy.
+
+**Both:** never rotate the delivery nodekey, keep the media token out of git, and never
+expose REST/metrics/Postgres.
 
 ---
 
 ## What a node operator can (and can't) see
 
-Running the node does **not** let you read what people send.
+Running the nodes does **not** let you read what people send.
 
 **You cannot see content.**
-- **Messages** (text, reactions, replies) are **end-to-end encrypted with MLS**. The node
-  only ever relays/stores **ciphertext**, and it **never holds the group keys** — those
-  live only on the participants' devices. You cannot decrypt messages even as the operator.
-- **Media** (photos, gifs, video) is **encrypted on the sender's device before upload**;
-  a storage node holds only **ciphertext + a content id (CID)**, and the decryption key
-  travels inside the E2E message, **never to the node**. So the media is opaque to you too.
+- **Messages** (text, reactions, replies) are **end-to-end encrypted with MLS**. The
+  delivery node only ever relays/stores **ciphertext**, and it **never holds the group
+  keys** — those live only on the participants' devices. You cannot decrypt messages even
+  as the operator.
+- **Media** (photos, gifs, video) is **encrypted on the sender's device before upload**
+  (AES-256-GCM, a fresh random key per file). The media node holds only **ciphertext + a
+  content id (CID)**, and the decryption key travels inside the E2E message, **never to the
+  node**. The CID is a hash of the *ciphertext* and the key is random, so it carries no
+  clue to the content. The media is opaque to you too.
 
-**You can see metadata — not content.** A relay/store node inherently observes: connected
-devices' **IP addresses**, **timing**, message/blob **sizes**, Waku **content-topics**, and
-**CIDs**. Over time that can hint at *who is active* and *possibly who talks to whom* (by IP
-correlation) — but never *what* they say or send. Shrink the trail: keep the storage proxy's
-**access logs off**, and don't add request logging to the relay.
+**You can see metadata — not content.** The nodes inherently observe: connected devices'
+**IP addresses**, **timing**, message/blob **sizes**, Waku **content-topics**, and **CIDs**.
+Over time that can hint at *who is active* and *possibly who talks to whom* (by IP
+correlation) — but never *what* they say or send. Shrink the trail: keep the media proxy's
+**access logs off** (the Caddyfile above does), use a **shared** token (so the proxy sees no
+per-user identity), and don't add request logging to the relay.
 
 **Being a member ≠ being an operator.** If you're a *participant* in a group or DM, you see
 its plaintext — because you're in the room, like everyone else there. That's not the operator
-reading traffic; for any conversation you're *not* a member of, the node shows only ciphertext.
+reading traffic; for any conversation you're *not* a member of, the nodes show only ciphertext.
 
-**The boundary.** The guarantee rests on (1) MLS keys never leaving devices, and (2) the app
-faithfully encrypting. Peers is open-source, so (2) is auditable; and as an operator of only
-the *nodes* you have no key material and no way in.
+**The boundary.** The guarantee rests on (1) MLS/media keys never leaving devices, and (2)
+the app faithfully encrypting. Peers is open-source, so (2) is auditable; and as an operator
+of only the *nodes* you have no key material and no way in.
 
 ## Credits
 
-Built on [nwaku](https://github.com/waku-org/nwaku) and the
-[logos-delivery](https://github.com/logos-messaging/logos-delivery) compose stack. This
-guide reflects the config we run for the Peers alpha at `msg.logos.live` (nwaku v0.38.0,
-cluster 2, 8 shards, relay + filter + lightpush + store, TCP + WSS), verified serving real
-tester traffic. Questions or a better recipe? Open an issue or say so in the testers group.
+Built on [nwaku](https://github.com/waku-org/nwaku), the
+[logos-delivery](https://github.com/logos-messaging/logos-delivery) compose stack, and
+[Logos Storage](https://github.com/logos-storage/logos-storage-nim). This guide reflects the
+config we run for the Peers alpha at `msg.logos.live` — nwaku v0.38.0 (cluster 2, 8 shards,
+relay + filter + lightpush + store, TCP + WSS) plus a Logos Storage node behind a
+token-gated TLS proxy — verified serving real tester traffic. Questions or a better recipe?
+Open an issue or say so in the testers group.

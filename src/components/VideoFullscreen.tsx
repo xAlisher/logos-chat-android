@@ -3,8 +3,10 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  Animated,
   GestureResponderEvent,
   Modal,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -38,9 +40,12 @@ export function VideoFullscreen({
   const [barWidth, setBarWidth] = useState(0);
   // Show a loader until the clip actually starts playing (fetch/decrypt + decode latency).
   const [loading, setLoading] = useState(true);
+  // #304: swipe-down-to-dismiss. Drag the video down past a threshold to close.
+  const translateY = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     setLoading(true);
-  }, [path]);
+    translateY.setValue(0);
+  }, [path, translateY]);
 
   // Letterbox: largest w×h with the video's aspect ratio that fits the screen.
   const ar = aspectRatio > 0 ? aspectRatio : 1;
@@ -65,8 +70,38 @@ export function VideoFullscreen({
     setPaused(false);
     setDuration(0);
     setCurrent(0);
+    translateY.setValue(0);
     onClose();
   };
+
+  // #304: keep the responder pointing at the latest close (onClose identity may change).
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  const pan = useRef(
+    PanResponder.create({
+      // claim only a clear DOWNWARD drag, so taps/horizontal seeks aren't stolen.
+      onMoveShouldSetPanResponder: (_, g) =>
+        g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
+      onPanResponderMove: (_, g) => {
+        if (g.dy > 0) translateY.setValue(g.dy);
+      },
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 140) {
+          closeRef.current();
+        } else {
+          Animated.spring(translateY, {toValue: 0, useNativeDriver: true, bounciness: 0}).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateY, {toValue: 0, useNativeDriver: true, bounciness: 0}).start();
+      },
+    }),
+  ).current;
+  const dragOpacity = translateY.interpolate({
+    inputRange: [0, 300],
+    outputRange: [1, 0.3],
+    extrapolate: 'clamp',
+  });
 
   return (
     <Modal
@@ -75,24 +110,29 @@ export function VideoFullscreen({
       onRequestClose={close}
       statusBarTranslucent>
       <View style={styles.root}>
-        {path != null && (
-          <MediaVideo
-            ref={videoRef}
-            path={path}
-            muted={false}
-            controls
-            paused={paused}
-            onLoad={setDuration}
-            onProgress={(t, playing) => {
-              setCurrent(t);
-              // first real frame → drop the loader.
-              if (loading && (playing || t > 0)) setLoading(false);
-              // keep the button in sync if playback state drifts
-              if (playing === paused) setPaused(!playing);
-            }}
-            style={{width: vw, height: vh}}
-          />
-        )}
+        {/* #304: the video area is the swipe-down catcher; controls + ✕ render on top. */}
+        <Animated.View
+          style={[styles.videoWrap, {opacity: dragOpacity, transform: [{translateY}]}]}
+          {...pan.panHandlers}>
+          {path != null && (
+            <MediaVideo
+              ref={videoRef}
+              path={path}
+              muted={false}
+              controls
+              paused={paused}
+              onLoad={setDuration}
+              onProgress={(t, playing) => {
+                setCurrent(t);
+                // first real frame → drop the loader.
+                if (loading && (playing || t > 0)) setLoading(false);
+                // keep the button in sync if playback state drifts
+                if (playing === paused) setPaused(!playing);
+              }}
+              style={{width: vw, height: vh}}
+            />
+          )}
+        </Animated.View>
 
         {/* Loader until the first frame plays. */}
         {path != null && loading && (
@@ -133,6 +173,15 @@ export function VideoFullscreen({
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center'},
+  videoWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   close: {
     position: 'absolute',
     top: 40,
