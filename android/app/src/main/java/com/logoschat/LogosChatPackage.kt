@@ -23,5 +23,6 @@ class LogosChatPackage : ReactPackage {
           ImagePickerModule(reactContext),
           LocationModule(reactContext),
           AudioModule(reactContext),
+          StorageModule(reactContext),
       )
 }

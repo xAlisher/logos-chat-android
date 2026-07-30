@@ -78,12 +78,20 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "com.logoschat"
+    buildFeatures {
+        buildConfig true  // #300: STORAGE_BASE / STORAGE_TOKEN BuildConfig fields
+    }
     defaultConfig {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 87
         versionName "0.7.75"
+        // #300: Logos Storage (Codex) media endpoint + bearer token. The token is injected
+        // at build time from the `storageToken` gradle property (kept OUT of git); empty by
+        // default so the feature no-ops in a plain build.
+        buildConfigField "String", "STORAGE_BASE", "\"${project.findProperty('storageBase') ?: 'https://msg.logos.live/s/api/storage/v1'}\""
+        buildConfigField "String", "STORAGE_TOKEN", "\"${project.findProperty('storageToken') ?: ''}\""
         ndk {
             // liblogoschat.so is built for arm64 only (emulators can't run the Nim node anyway)
             abiFilters "arm64-v8a"
