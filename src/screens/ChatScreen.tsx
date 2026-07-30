@@ -61,6 +61,8 @@ import {InfoIcon} from '../components/InfoIcon';
 import {InfoModal, InfoSection} from '../components/InfoModal';
 import {BubbleActionMenu} from '../components/BubbleActionMenu';
 import type {BubbleTarget} from '../components/BubbleActionMenu';
+import {EmojiGridModal} from '../components/EmojiGridModal';
+import {useComposerDraftStore} from '../stores/composerDraftStore';
 import {ForwardPicker} from '../components/ForwardPicker';
 import {MeshMapModal} from '../components/MeshMapModal';
 import ImagePickerNative, {type PickedImage} from '../native/ImagePicker';
@@ -397,6 +399,8 @@ function Bubble({
           {effAttr.verified && <VerifiedBadge size={12} />}
         </View>
       )}
+      {/* #299: bubble + its corner reactions share a relative box. */}
+      <View style={styles.bubbleBox}>
       {/* Short tap = retry (failed only); long press = the action menu. The
           Pressable must stay ENABLED or `disabled` would kill onLongPress too. */}
       <Pressable
@@ -488,18 +492,8 @@ function Bubble({
           </Text>
         )}
       </Pressable>
-      <View style={styles.timeRow}>
-        {viaMesh && <Text style={styles.viaMesh}>{viaLabel}</Text>}
-        {viaBle && <Text style={styles.viaBle}>via BLE · </Text>}
-        <Text style={[styles.time, failed && {color: colors.unread}]}>
-          {msg.status === 'pending'
-            ? 'sending…'
-            : failed
-            ? 'failed — tap to retry'
-            : formatTime(msg.at)}
-        </Text>
-      </View>
-      {/* #264: reaction pills under the bubble — tap yours to remove, tap another to add. */}
+      {/* #264/#299: reaction pills at the bubble's lower corner (own=right, peer=left),
+          overlapping the edge — tap yours to remove, tap another to add. */}
       {reactions != null && reactions.length > 0 && (
         <View style={[styles.reactStrip, own ? styles.reactStripOwn : styles.reactStripPeer]}>
           {reactions.map(r => (
@@ -515,6 +509,22 @@ function Bubble({
           ))}
         </View>
       )}
+      </View>{/* #299 end bubbleBox */}
+      <View
+        style={[
+          styles.timeRow,
+          reactions != null && reactions.length > 0 && styles.timeRowReacted,
+        ]}>
+        {viaMesh && <Text style={styles.viaMesh}>{viaLabel}</Text>}
+        {viaBle && <Text style={styles.viaBle}>via BLE · </Text>}
+        <Text style={[styles.time, failed && {color: colors.unread}]}>
+          {msg.status === 'pending'
+            ? 'sending…'
+            : failed
+            ? 'failed — tap to retry'
+            : formatTime(msg.at)}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -576,13 +586,20 @@ export function ChatScreen() {
     convo?.peerAddress != null &&
     bleStatus === 'on' &&
     bleNearby.some(a => a.toLowerCase() === convo.peerAddress!.toLowerCase());
+  // #296: hydrate the composer from this conversation's saved draft (survives leaving
+  // and returning to the chat). A #113 prefill (route.params.draft) still wins when set.
+  const initialDraft = useComposerDraftStore.getState().getDraft(convoPk);
   // #113: a prefilled draft (e.g. "Ping creator" seeds a re-create request).
-  const [text, setText] = useState(route.params.draft ?? '');
+  const [text, setText] = useState(route.params.draft ?? initialDraft?.text ?? '');
   // #255: a location fix staged in the composer, previewed before the user sends.
-  const [pendingLoc, setPendingLoc] = useState<LatLng | null>(null);
+  const [pendingLoc, setPendingLoc] = useState<LatLng | null>(
+    initialDraft?.pendingLoc ?? null,
+  );
   // #261: images picked/captured but not yet sent — previewed as removable
   // thumbnails above the composer, dispatched on Send (like the location chip).
-  const [pendingImages, setPendingImages] = useState<PickedImage[]>([]);
+  const [pendingImages, setPendingImages] = useState<PickedImage[]>(
+    initialDraft?.pendingImages ?? [],
+  );
   const [busy, setBusy] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const [recording, setRecording] = useState(false); // #205 voice
@@ -603,11 +620,20 @@ export function ChatScreen() {
     key: string;
     author: string;
     snippet: string;
-  } | null>(null);
+  } | null>(initialDraft?.replyDraft ?? null);
+  // #296: persist the composer draft per conversation on every change, so navigating
+  // away and back restores it. The store drops empty drafts, so a successful send (which
+  // clears all of these) also clears the saved draft.
+  useEffect(() => {
+    useComposerDraftStore
+      .getState()
+      .setDraft(convoPk, {text, pendingLoc, pendingImages, replyDraft});
+  }, [convoPk, text, pendingLoc, pendingImages, replyDraft]);
   const listRef = React.useRef<FlatList<Row>>(null); // #266: scroll to the pinned msg
   const rowsRef = React.useRef<Row[]>([]); // #295: latest rows for reply scroll-to
   const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
   const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
+  const [emojiPickerTarget, setEmojiPickerTarget] = useState<BubbleTarget | null>(null); // #298
   const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
   const forwardMessage = useChatStore(s => s.forwardMessage);
   // #210: map-to-mesh from the bubble menu (local, works offline).
@@ -1979,6 +2005,7 @@ export function ChatScreen() {
             useNodeStore.setState({error: 'reaction failed'}),
           )
         }
+        onMoreReactions={t => setEmojiPickerTarget(t)}
         onReply={t => {
           setBubbleTarget(null);
           setReplyDraft({
@@ -2040,6 +2067,20 @@ export function ChatScreen() {
               },
             ],
           );
+        }}
+      />
+      {/* #298: full emoji picker — react with any emoji, not just the quick 6. */}
+      <EmojiGridModal
+        visible={emojiPickerTarget != null}
+        onClose={() => setEmojiPickerTarget(null)}
+        onPick={emoji => {
+          const t = emojiPickerTarget;
+          setEmojiPickerTarget(null);
+          if (t != null) {
+            sendReaction(convoPk, t.reactionKey, emoji, '+').catch(() =>
+              useNodeStore.setState({error: 'reaction failed'}),
+            );
+          }
         }}
       />
       <ForwardPicker
@@ -2493,9 +2534,22 @@ const styles = StyleSheet.create({
   pinBarMsg: {...type.label, color: colors.text},
   pinBarClear: {...type.title, color: colors.textDim, paddingHorizontal: spacing.xs},
   // #264 reaction strip
-  reactStrip: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 2},
-  reactStripOwn: {justifyContent: 'flex-end', alignSelf: 'flex-end'},
-  reactStripPeer: {justifyContent: 'flex-start', alignSelf: 'flex-start'},
+  // #299: bubble + its corner reactions share a relative box so the pills can be
+  // absolutely anchored to overlap the bubble's lower corner.
+  bubbleBox: {position: 'relative'},
+  // #299: reaction pills anchored to the bubble's lower corner, overlapping the edge.
+  reactStrip: {
+    position: 'absolute',
+    bottom: -11,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    zIndex: 2,
+    elevation: 2,
+  },
+  reactStripOwn: {right: 8, justifyContent: 'flex-end'},
+  reactStripPeer: {left: 8, justifyContent: 'flex-start'},
+  // Reserve space below so the overhanging pills don't collide with the timestamp.
+  timeRowReacted: {marginTop: 12},
   reactPill: {
     flexDirection: 'row',
     alignItems: 'center',

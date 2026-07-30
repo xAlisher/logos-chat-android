@@ -69,6 +69,7 @@ export function BubbleActionMenu({
   onMapMesh,
   onDelete,
   onReact,
+  onMoreReactions,
   onReply,
   onPin,
   pinnedKey,
@@ -90,6 +91,8 @@ export function BubbleActionMenu({
   onDelete: (msgPk: number) => void;
   /** #264: react to this message with an emoji (opens as a row atop the menu). */
   onReact?: (target: BubbleTarget, emoji: string) => void;
+  /** #298: open the full emoji picker to react with any emoji (the "+" on the row). */
+  onMoreReactions?: (target: BubbleTarget) => void;
   /** #295: reply to / quote this message (sets the composer's reply draft). */
   onReply?: (target: BubbleTarget) => void;
   /** #266: pin/unpin this message (only provided when the user may pin — creator). */
@@ -235,6 +238,18 @@ export function BubbleActionMenu({
             <Text style={styles.reactBtnText}>{emoji}</Text>
           </Pressable>
         ))}
+        {/* #298: "+" opens the full emoji picker to react with any emoji. */}
+        {onMoreReactions != null && (
+          <Pressable
+            style={styles.reactBtn}
+            onPress={() => {
+              onClose();
+              setTimeout(() => onMoreReactions(target), 0);
+            }}
+            testID="react-pick-more">
+            <Text style={styles.reactMoreText}>+</Text>
+          </Pressable>
+        )}
       </View>
     ) : null;
 
@@ -260,5 +275,6 @@ const styles = StyleSheet.create({
   },
   reactBtn: {paddingHorizontal: spacing.xs, paddingVertical: spacing.xs},
   reactBtnText: {fontSize: 26},
+  reactMoreText: {fontSize: 28, color: colors.textDim, fontWeight: '600', lineHeight: 30},
   pinGlyph: {fontSize: 16},
 });
