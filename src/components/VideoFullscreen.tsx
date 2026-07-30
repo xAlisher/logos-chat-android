@@ -1,7 +1,8 @@
 // #300 — fullscreen video player: the decrypted clip with sound + JS-drawn controls
 // (play/pause, tap-to-seek bar, elapsed/total time), letterboxed to preserve aspect ratio.
-import React, {useRef, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
+  ActivityIndicator,
   GestureResponderEvent,
   Modal,
   Pressable,
@@ -35,6 +36,11 @@ export function VideoFullscreen({
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
   const [barWidth, setBarWidth] = useState(0);
+  // Show a loader until the clip actually starts playing (fetch/decrypt + decode latency).
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+  }, [path]);
 
   // Letterbox: largest w×h with the video's aspect ratio that fits the screen.
   const ar = aspectRatio > 0 ? aspectRatio : 1;
@@ -79,11 +85,20 @@ export function VideoFullscreen({
             onLoad={setDuration}
             onProgress={(t, playing) => {
               setCurrent(t);
+              // first real frame → drop the loader.
+              if (loading && (playing || t > 0)) setLoading(false);
               // keep the button in sync if playback state drifts
               if (playing === paused) setPaused(!playing);
             }}
             style={{width: vw, height: vh}}
           />
+        )}
+
+        {/* Loader until the first frame plays. */}
+        {path != null && loading && (
+          <View style={styles.loader} pointerEvents="none">
+            <ActivityIndicator size="large" color="#fff" />
+          </View>
         )}
 
         {/* Close */}
@@ -130,6 +145,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
   },
   closeText: {color: '#fff', fontSize: 20, fontWeight: '600'},
+  loader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   controls: {
     position: 'absolute',
     left: 0,
