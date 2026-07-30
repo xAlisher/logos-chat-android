@@ -8,6 +8,7 @@
 import React, {useState, useEffect} from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -217,13 +218,13 @@ export function SettingsScreen() {
               testID="settings-node-reset">
               <Text style={styles.nodeResetText}>Use default</Text>
             </Pressable>
-            <View style={styles.nodeSave}>
-              <ActionButton
-                label={nodeSaving ? 'Saving…' : 'Save'}
-                onPress={saveNode}
-                testID="settings-node-save"
-              />
-            </View>
+            <Pressable
+              style={({pressed}) => [styles.nodeSave, pressed && styles.nodeSavePressed]}
+              onPress={saveNode}
+              disabled={nodeSaving}
+              testID="settings-node-save">
+              <Text style={styles.nodeSaveText}>{nodeSaving ? 'Saving…' : 'Save'}</Text>
+            </Pressable>
           </View>
         </View>
         <Text style={styles.helper}>
@@ -231,6 +232,15 @@ export function SettingsScreen() {
           unless you run your own. Blank = the public fleet. Restart the app to
           apply a change.
         </Text>
+        <Pressable
+          onPress={() =>
+            Linking.openURL(
+              'https://github.com/xAlisher/peers/blob/main/docs/running-your-own-node.md',
+            )
+          }
+          testID="settings-node-guide">
+          <Text style={styles.nodeGuideLink}>How to run your own node ↗</Text>
+        </Pressable>
 
         <Text style={styles.section}>Security</Text>
         <View style={styles.card}>
@@ -389,10 +399,27 @@ const styles = StyleSheet.create({
     minHeight: 64,
     textAlignVertical: 'top',
   },
-  nodeBtns: {flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, gap: spacing.sm},
+  nodeBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
   nodeReset: {paddingVertical: spacing.sm, paddingHorizontal: spacing.md},
   nodeResetText: {...type.label, color: colors.textDim},
-  nodeSave: {flex: 1},
+  // Secondary, compact — bordered (not a big filled accent button).
+  nodeSave: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.panel,
+  },
+  nodeSavePressed: {opacity: 0.6},
+  nodeSaveText: {...type.label, color: colors.text},
+  nodeGuideLink: {...type.label, color: colors.accent, marginBottom: spacing.md},
   sep: {height: 1, backgroundColor: colors.border, marginLeft: spacing.lg},
   helper: {...type.label, color: colors.textDim, lineHeight: 18, marginBottom: spacing.md},
   dangerZone: {
