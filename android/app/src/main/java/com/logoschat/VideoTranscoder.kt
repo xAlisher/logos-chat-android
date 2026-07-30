@@ -13,7 +13,6 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
-import android.opengl.Matrix
 import android.util.Log
 import android.view.Surface
 import com.facebook.react.bridge.Promise
@@ -111,11 +110,18 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     }
     require(codedW > 0 && codedH > 0) { "no video dimensions" }
 
-    // Target coded size: scale longest side to MAX_LONG_SIDE, keep AR, force even dims.
-    val scale = minOf(1.0, MAX_LONG_SIDE.toDouble() / maxOf(codedW, codedH))
-    val targetW = (codedW * scale).toInt().let { if (it % 2 == 0) it else it - 1 }.coerceAtLeast(2)
-    val targetH = (codedH * scale).toInt().let { if (it % 2 == 0) it else it - 1 }.coerceAtLeast(2)
+    // #311: work in DISPLAY orientation and BAKE the rotation into the pixels (rotate in GL),
+    // so the output is a plain upright clip (orientation hint 0). Encoding coded dims + a hint
+    // stretched the video because our player (TextureView) doesn't apply the hint.
+    val portrait = rotation == 90 || rotation == 270
+    val displayW = if (portrait) codedH else codedW
+    val displayH = if (portrait) codedW else codedH
+    // Target display size: scale longest side to MAX_LONG_SIDE, keep AR, force even dims.
+    val scale = minOf(1.0, MAX_LONG_SIDE.toDouble() / maxOf(displayW, displayH))
+    val targetW = (displayW * scale).toInt().let { if (it % 2 == 0) it else it - 1 }.coerceAtLeast(2)
+    val targetH = (displayH * scale).toInt().let { if (it % 2 == 0) it else it - 1 }.coerceAtLeast(2)
     val bitrate = (targetW.toLong() * targetH * 4).toInt().coerceIn(600_000, 4_000_000)
+    Log.i(TAG, "GEOM coded=${codedW}x${codedH} rot=$rotation display=${displayW}x${displayH} target=${targetW}x${targetH}")
 
     val extractor = MediaExtractor()
     extractor.setDataSource(inputPath)
@@ -133,7 +139,10 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     }
     val encoder = MediaCodec.createEncoderByType(OUTPUT_MIME)
     encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-    val glSurface = EglSurface(encoder.createInputSurface())
+    // #311: the decoder applies the source rotation itself when rendering to a Surface, so the
+    // frames arriving in our SurfaceTexture are ALREADY display-oriented → draw straight (0),
+    // don't rotate again. We only need to size the encoder to DISPLAY dims (above).
+    val glSurface = EglSurface(encoder.createInputSurface(), 0)
     encoder.start()
 
     // Decoder → renders onto the GL SurfaceTexture.
@@ -142,8 +151,8 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     decoder.start()
     extractor.selectTrack(videoTrack)
 
+    // #311: rotation is baked into the pixels below → output is upright, no hint.
     val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-    if (rotation != 0) muxer.setOrientationHint(rotation)
 
     var muxerStarted = false
     var muxVideoIdx = -1
@@ -235,9 +244,8 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     extractor.release()
 
     emitProgress(id, 1.0)
-    // display dims: swap for portrait rotations so the marker AR is right
-    return if (rotation == 90 || rotation == 270) intArrayOf(targetH, targetW)
-    else intArrayOf(targetW, targetH)
+    // Output is already display-oriented (rotation baked in) → dims are the marker AR.
+    return intArrayOf(targetW, targetH)
   }
 
   private fun copyAudio(path: String, track: Int, muxer: MediaMuxer, muxIdx: Int) {
@@ -275,7 +283,7 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
   }
 
   // ── minimal EGL/GL bridge: decoder SurfaceTexture → encoder input Surface ──
-  private class EglSurface(encoderSurface: Surface) {
+  private class EglSurface(encoderSurface: Surface, private val rotationDeg: Int) {
     private val display: EGLDisplay
     private val context: EGLContext
     private val eglSurface: EGLSurface
@@ -329,11 +337,19 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
       aPos = GLES20.glGetAttribLocation(program, "aPosition")
       aTex = GLES20.glGetAttribLocation(program, "aTexCoord")
       uMatrix = GLES20.glGetUniformLocation(program, "uSTMatrix")
+      // #311: bake the source rotation into the pixels by PERMUTING the quad's texcoords
+      // (unambiguous — no matrix math fighting the OES flip). Corners: BL, BR, TL, TR.
+      val tc = when (((rotationDeg % 360) + 360) % 360) {
+        90 -> floatArrayOf(1f, 0f, 1f, 1f, 0f, 0f, 0f, 1f)
+        180 -> floatArrayOf(1f, 1f, 0f, 1f, 1f, 0f, 0f, 0f)
+        270 -> floatArrayOf(0f, 1f, 0f, 0f, 1f, 1f, 1f, 0f)
+        else -> floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f)
+      }
       val verts = floatArrayOf(
-          -1f, -1f, 0f, 0f,
-           1f, -1f, 1f, 0f,
-          -1f,  1f, 0f, 1f,
-           1f,  1f, 1f, 1f)
+          -1f, -1f, tc[0], tc[1],
+           1f, -1f, tc[2], tc[3],
+          -1f,  1f, tc[4], tc[5],
+           1f,  1f, tc[6], tc[7])
       vertexBuf = ByteBuffer.allocateDirect(verts.size * 4).order(ByteOrder.nativeOrder())
           .asFloatBuffer().apply { put(verts); position(0) }
     }
