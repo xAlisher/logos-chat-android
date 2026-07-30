@@ -200,6 +200,32 @@ catch-up should deliver what it missed.
 
 ---
 
+## What a node operator can (and can't) see
+
+Running the node does **not** let you read what people send.
+
+**You cannot see content.**
+- **Messages** (text, reactions, replies) are **end-to-end encrypted with MLS**. The node
+  only ever relays/stores **ciphertext**, and it **never holds the group keys** — those
+  live only on the participants' devices. You cannot decrypt messages even as the operator.
+- **Media** (photos, gifs, video) is **encrypted on the sender's device before upload**;
+  a storage node holds only **ciphertext + a content id (CID)**, and the decryption key
+  travels inside the E2E message, **never to the node**. So the media is opaque to you too.
+
+**You can see metadata — not content.** A relay/store node inherently observes: connected
+devices' **IP addresses**, **timing**, message/blob **sizes**, Waku **content-topics**, and
+**CIDs**. Over time that can hint at *who is active* and *possibly who talks to whom* (by IP
+correlation) — but never *what* they say or send. Shrink the trail: keep the storage proxy's
+**access logs off**, and don't add request logging to the relay.
+
+**Being a member ≠ being an operator.** If you're a *participant* in a group or DM, you see
+its plaintext — because you're in the room, like everyone else there. That's not the operator
+reading traffic; for any conversation you're *not* a member of, the node shows only ciphertext.
+
+**The boundary.** The guarantee rests on (1) MLS keys never leaving devices, and (2) the app
+faithfully encrypting. Peers is open-source, so (2) is auditable; and as an operator of only
+the *nodes* you have no key material and no way in.
+
 ## Credits
 
 Built on [nwaku](https://github.com/waku-org/nwaku) and the

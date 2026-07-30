@@ -431,7 +431,7 @@ function Bubble({
           viaMesh && (own ? styles.bubbleMeshOwn : styles.bubbleMeshPeer),
           viaBle && (own ? styles.bubbleBleOwn : styles.bubbleBlePeer),
           failed && styles.bubbleFailed,
-          image != null && styles.bubbleImage,
+          (image != null || mediaRef != null) && styles.bubbleImage, // #300 thin 2px frame
         ]}>
         {/* #295: quoted-reply header — tap to jump to the original. */}
         {quoted != null && (
