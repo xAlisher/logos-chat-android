@@ -84,7 +84,7 @@ import {parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal} from '../native/voiceMsg';
 import {parseLocation, formatLatLng, geoUri, type LatLng} from '../native/locMsg';
 import {VoiceBubble} from '../components/VoiceBubble';
-import {CameraIcon, LocationIcon, MicIcon} from '../components/MediaIcons';
+import {CameraIcon, LocationIcon, MicIcon, PlayIcon} from '../components/MediaIcons';
 import AudioRecorder, {
   parseRecording,
   MAX_RECORDING_MS,
@@ -464,10 +464,20 @@ function Bubble({
           // the bubble sized so the timeline doesn't jump.
           media.status === 'ready' ? (
             mediaRef.mime.startsWith('video/') ? (
-              <MediaVideo
-                path={media.path}
-                style={{width: mediaDims.width, height: mediaDims.height, borderRadius: radii.card - 2}}
-              />
+              // Videos don't autoplay inline: show the first frame (paused) with a play
+              // overlay; tapping the bubble opens the fullscreen player (with controls).
+              <View style={{width: mediaDims.width, height: mediaDims.height}}>
+                <MediaVideo
+                  path={media.path}
+                  paused
+                  style={{width: mediaDims.width, height: mediaDims.height, borderRadius: radii.card - 2}}
+                />
+                <View style={styles.playOverlay} pointerEvents="none">
+                  <View style={styles.playBadge}>
+                    <PlayIcon size={28} color="#fff" />
+                  </View>
+                </View>
+              </View>
             ) : (
               <Image
                 source={{uri: `file://${media.path}`}}
@@ -2572,6 +2582,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: radii.card - 2,
     backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  // #300: centered play badge over an inline (paused) video preview.
+  playOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingLeft: 4, // optical-center the triangle
   },
   gifBtn: {...type.label, color: colors.textDim, fontWeight: '700', letterSpacing: 0.5},
   // #295: quoted-reply header atop a bubble.

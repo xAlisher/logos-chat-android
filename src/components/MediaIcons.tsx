@@ -36,6 +36,15 @@ export function LocationIcon({size = 24, color = colors.text, strokeWidth = 2}: 
   );
 }
 
+// Lucide "play" — filled triangle, for the inline video play-button overlay.
+export function PlayIcon({size = 24, color = '#fff'}: P) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M7 4v16l13-8L7 4Z" fill={color} />
+    </Svg>
+  );
+}
+
 export function MicIcon({size = 24, color = colors.text, strokeWidth = 2}: P) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
