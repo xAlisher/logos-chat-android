@@ -84,10 +84,17 @@ class StorageModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  fun downloadDecrypt(cid: String, keyB64: String, destPath: String, promise: Promise) {
+  fun downloadDecrypt(cid: String, keyB64: String, promise: Promise) {
     Thread {
       try {
         if (!configured()) throw IllegalStateException("storage not configured")
+        // Cache decrypted blobs under cacheDir/media/<cid>; serve a cache hit immediately.
+        val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
+        val dest = File(dir, cid)
+        if (dest.exists() && dest.length() > 0) {
+          promise.resolve(dest.absolutePath)
+          return@Thread
+        }
         val conn = (URL("$base/data/$cid").openConnection() as HttpURLConnection).apply {
           requestMethod = "GET"
           connectTimeout = 15000
@@ -110,10 +117,8 @@ class StorageModule(reactContext: ReactApplicationContext) :
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, iv))
         val plain = cipher.doFinal(ct)
 
-        val dest = File(destPath)
-        dest.parentFile?.mkdirs()
         dest.writeBytes(plain)
-        promise.resolve(destPath)
+        promise.resolve(dest.absolutePath)
       } catch (t: Throwable) {
         promise.reject("storage_download", t.message, t)
       }

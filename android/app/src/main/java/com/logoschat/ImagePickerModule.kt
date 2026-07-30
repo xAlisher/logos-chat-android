@@ -43,6 +43,7 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     private const val REQ_PICK = 0xC0DE
     private const val REQ_MULTI = 0xC0DF
     private const val REQ_CAPTURE = 0xC0E0
+    private const val REQ_RAW = 0xC0E1 // #300: raw gif/video (no downscale)
   }
 
   init {
@@ -56,6 +57,7 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
   @Volatile private var pendingBudget = 120_000
   @Volatile private var pendingMaxCount = 10
   @Volatile private var pendingCaptureUri: Uri? = null
+  @Volatile private var pendingRawMaxBytes = 8_000_000 // #300
 
   /**
    * Open the system image picker. Resolves a stringified JSON
@@ -174,6 +176,34 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #300: pick a RAW gif/video (no downscale/re-encode — animation preserved), copy it to
+   * a cache file, and return {path, mime, width, height, byteLength}. Rejected if it
+   * exceeds [maxBytes]. The caller encrypts + uploads it to Logos Storage.
+   */
+  @ReactMethod
+  fun pickRawMedia(maxBytes: Int, promise: Promise) {
+    val activity = reactApplicationContext.currentActivity
+    if (activity == null) {
+      promise.reject("no_activity", "no current activity")
+      return
+    }
+    pending = promise
+    pendingRawMaxBytes = if (maxBytes > 0) maxBytes else 8_000_000
+    val intent =
+        Intent(Intent.ACTION_GET_CONTENT).apply {
+          type = "*/*"
+          putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("image/gif", "video/*"))
+          addCategory(Intent.CATEGORY_OPENABLE)
+        }
+    try {
+      activity.startActivityForResult(intent, REQ_RAW)
+    } catch (t: Throwable) {
+      pending = null
+      promise.reject("no_picker", t.message ?: "no media picker")
+    }
+  }
+
   override fun onActivityResult(
       activity: Activity,
       requestCode: Int,
@@ -184,8 +214,67 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
       REQ_PICK -> handleSingle(data?.data, resultCode)
       REQ_CAPTURE -> handleSingle(pendingCaptureUri.also { pendingCaptureUri = null }, resultCode)
       REQ_MULTI -> handleMulti(data, resultCode)
+      REQ_RAW -> handleRaw(data?.data, resultCode)
       else -> return
     }
+  }
+
+  private fun handleRaw(uri: Uri?, resultCode: Int) {
+    val promise = pending ?: return
+    pending = null
+    if (resultCode != Activity.RESULT_OK || uri == null) {
+      promise.resolve(null) // cancelled
+      return
+    }
+    Thread {
+          try {
+            val resolver = reactApplicationContext.contentResolver
+            val mime = resolver.getType(uri) ?: "application/octet-stream"
+            val ext = when {
+              mime == "image/gif" -> "gif"
+              mime.startsWith("video/") -> "mp4"
+              else -> "bin"
+            }
+            val dir = File(reactApplicationContext.cacheDir, "media-out").apply { mkdirs() }
+            val dest = File(dir, "pick_${System.currentTimeMillis()}.$ext")
+            resolver.openInputStream(uri)!!.use { input ->
+              dest.outputStream().use { input.copyTo(it) }
+            }
+            if (dest.length() > pendingRawMaxBytes) {
+              dest.delete()
+              promise.reject("too_large", "media exceeds ${pendingRawMaxBytes / 1_000_000}MB")
+              return@Thread
+            }
+            var w = 0
+            var h = 0
+            if (mime == "image/gif") {
+              val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+              dest.inputStream().use { BitmapFactory.decodeStream(it, null, b) }
+              w = b.outWidth
+              h = b.outHeight
+            } else if (mime.startsWith("video/")) {
+              val r = android.media.MediaMetadataRetriever()
+              try {
+                r.setDataSource(dest.absolutePath)
+                w = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+                h = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+              } finally {
+                r.release()
+              }
+            }
+            val out = org.json.JSONObject()
+            out.put("path", dest.absolutePath)
+            out.put("mime", mime)
+            out.put("width", if (w > 0) w else 240)
+            out.put("height", if (h > 0) h else 240)
+            out.put("byteLength", dest.length())
+            promise.resolve(out.toString())
+          } catch (t: Throwable) {
+            Log.w(TAG, "raw pick failed", t)
+            promise.reject("raw_pick_failed", t.message ?: "could not read media")
+          }
+        }
+        .start()
   }
 
   private fun handleSingle(uri: Uri?, resultCode: Int) {

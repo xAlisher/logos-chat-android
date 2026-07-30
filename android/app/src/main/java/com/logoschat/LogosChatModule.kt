@@ -142,6 +142,11 @@ class EventCallbackManager {
             t.startsWith("img1") -> "📷 Photo"
             t.startsWith("voc1") -> "🎤 Voice message"
             t.startsWith("loc1:") -> "📍 Location"
+            // #300: store1:<cid>:<key>:<mime>:<w>:<h> — Logos-Storage media.
+            t.startsWith("store1:") ->
+                if (t.contains(":video/")) "🎬 Video"
+                else if (t.contains(":image/gif:")) "GIF"
+                else "📎 Media"
             else -> t
           }
       MessageNotifier.notifyMessage(ctx, outcome.convoPk, name, body)

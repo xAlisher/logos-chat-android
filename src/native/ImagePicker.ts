@@ -41,6 +41,41 @@ interface ImagePickerNative {
   readFileBase64(path: string): Promise<string>;
   /** #201 Save: copy a stored image into the device gallery; resolves its uri. */
   saveImageToGallery(path: string): Promise<string>;
+  /**
+   * #300: pick a RAW gif/video (no downscale — animation preserved), copied to a cache
+   * file. Resolves a stringified {@link PickedRawMedia}, or null if cancelled; rejects if
+   * it exceeds [maxBytes]. The caller encrypts + uploads it to Logos Storage.
+   */
+  pickRawMedia(maxBytes: number): Promise<string | null>;
+}
+
+/** #300: a raw (un-re-encoded) gif/video the user picked, staged in a cache file. */
+export interface PickedRawMedia {
+  path: string;
+  mime: string;
+  width: number;
+  height: number;
+  byteLength: number;
+}
+
+/** Parse the JSON pickRawMedia resolves with. Null on cancel/malformed. */
+export function parseRawMedia(json: string | null): PickedRawMedia | null {
+  if (!json) return null;
+  try {
+    const o = JSON.parse(json);
+    if (typeof o?.path === 'string' && typeof o?.mime === 'string') {
+      return {
+        path: o.path,
+        mime: o.mime,
+        width: typeof o.width === 'number' ? o.width : 0,
+        height: typeof o.height === 'number' ? o.height : 0,
+        byteLength: typeof o.byteLength === 'number' ? o.byteLength : 0,
+      };
+    }
+  } catch {
+    // fall through
+  }
+  return null;
 }
 
 const native: ImagePickerNative = NativeModules.ImagePicker;

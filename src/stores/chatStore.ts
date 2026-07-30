@@ -12,13 +12,17 @@ import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {encodeReaction} from '../messages/reactions';
 import {displayBody} from '../messages/reply';
+import {isMediaContent, mediaLabel} from '../messages/media';
 import {encodePin} from '../messages/pins';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
+import Storage from '../native/Storage';
+import {encodeMedia} from '../messages/media';
 import ImagePicker, {
   parsePicked,
+  parseRawMedia,
   parsePickedArray,
   type PickedImage,
 } from '../native/ImagePicker';
@@ -108,7 +112,9 @@ export function conversationPreview(
   // Media last-messages are markers, not readable text — preview with a label.
   // #295: a reply's last-text is a reply1: marker → preview its body.
   const lt = displayBody(convo.lastText);
-  const text = isImageContent(lt)
+  const text = isMediaContent(lt)
+    ? mediaLabel(lt) // #300: GIF / Video / Media
+    : isImageContent(lt)
     ? '📷 Photo'
     : isVoiceContent(lt)
     ? '🎤 Voice message'
@@ -184,6 +190,11 @@ interface ChatState {
    * No-op if the user cancels the picker.
    */
   sendImage: (convoPk: number) => Promise<void>;
+  /**
+   * #300: pick a raw gif/video, encrypt + upload it to Logos Storage, and send a
+   * `store1:` marker (cid + key) — the blob rides Storage, not the wire. Logos-only.
+   */
+  sendMedia: (convoPk: number) => Promise<void>;
   /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send). */
   stageImages: (convoPk: number) => Promise<PickedImage[]>;
   /** #261: capture a photo to STAGE (guards + camera permission, no send). */
@@ -649,6 +660,43 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // The own bubble + status land native-side; refresh from the DB.
     await get().loadMessages(convoPk);
     get().refreshConversations();
+  },
+
+  // #300: pick a raw gif/video → encrypt + upload to Logos Storage → send a store1:
+  // marker (tiny; the blob rides Storage, key travels E2E in the marker).
+  sendMedia: async (convoPk: number) => {
+    const convo = get().conversations[convoPk];
+    if ((convo?.transport ?? 'logos') === 'mesh') {
+      useNodeStore.setState({error: 'gifs/video are not supported on mesh'});
+      return;
+    }
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'start the node to send media'});
+      return;
+    }
+    let raw;
+    try {
+      raw = parseRawMedia(await ImagePicker.pickRawMedia(8_000_000));
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return;
+    }
+    if (raw == null) return; // cancelled
+    try {
+      useNodeStore.setState({error: 'uploading…'});
+      const {cid, key} = await Storage.uploadEncrypted(raw.path);
+      useNodeStore.setState({error: null});
+      const marker = encodeMedia({
+        cid,
+        key,
+        mime: raw.mime,
+        width: raw.width,
+        height: raw.height,
+      });
+      await get().send(convoPk, marker);
+    } catch (e: any) {
+      useNodeStore.setState({error: `media upload failed: ${e?.message ?? e}`});
+    }
   },
 
   // #261: guard + pick, but DON'T send — return the picked images so the composer

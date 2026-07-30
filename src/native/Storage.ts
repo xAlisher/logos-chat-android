@@ -7,8 +7,8 @@ import {NativeModules} from 'react-native';
 interface StorageNative {
   /** AES-256-GCM encrypt the file, POST to the storage node → {cid, key(base64)}. */
   uploadEncrypted(localPath: string): Promise<{cid: string; key: string}>;
-  /** GET ciphertext by cid, decrypt with key(base64), write to destPath → destPath. */
-  downloadDecrypt(cid: string, key: string, destPath: string): Promise<string>;
+  /** GET ciphertext by cid, decrypt with key(base64), cache locally → local file path. */
+  downloadDecrypt(cid: string, key: string): Promise<string>;
 }
 
 const Storage = NativeModules.Storage as StorageNative;

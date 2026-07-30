@@ -104,6 +104,8 @@ import {
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
 import {isLeaveContent} from '../messages/leave';
 import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
+import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
+import {useMediaBlob} from '../native/mediaCache';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -362,6 +364,10 @@ function Bubble({
   const voice = parseVoiceLocal(raw); // #205
   const location = parseLocation(raw); // #204
   const imgDims = image != null ? fitImage(image.meta.width, image.meta.height) : null;
+  // #300: store1: media hosted on Logos Storage — fetched+decrypted on demand.
+  const mediaRef = isMediaContent(raw) ? parseMedia(raw) : null;
+  const media = useMediaBlob(mediaRef);
+  const mediaDims = mediaRef != null ? fitImage(mediaRef.width, mediaRef.height) : null;
   const relay = parseRelay(raw);
   const displayText = relay?.text ?? raw;
   const bridgeName =
@@ -409,6 +415,8 @@ function Bubble({
             ? onRetry
             : image != null
             ? () => onOpenImage(image.path)
+            : mediaRef != null && media.status === 'ready' && !mediaRef.mime.startsWith('video/')
+            ? () => onOpenImage(media.path)
             : location != null
             ? () => onOpenLocation(location)
             : undefined
@@ -443,7 +451,36 @@ function Bubble({
             </Text>
           </Pressable>
         )}
-        {image != null && imgDims != null ? (
+        {mediaRef != null && mediaDims != null ? (
+          // #300: Logos-Storage media. Ready → animate (Fresco animated-gif renders GIFs
+          // in <Image>); video shows a labeled poster (playback is a follow-up). Loading/
+          // error keep the bubble sized so the timeline doesn't jump.
+          media.status === 'ready' && !mediaRef.mime.startsWith('video/') ? (
+            <Image
+              source={{uri: `file://${media.path}`}}
+              style={{width: mediaDims.width, height: mediaDims.height, borderRadius: radii.card - 2}}
+              resizeMode="cover"
+            />
+          ) : (
+            <View
+              style={[
+                styles.mediaBox,
+                {width: mediaDims.width, height: mediaDims.height},
+              ]}>
+              {media.status === 'loading' ? (
+                <ActivityIndicator color={own ? colors.onAccent : colors.textDim} />
+              ) : (
+                <Text style={[type.caption, {color: own ? colors.onAccent : colors.textDim}]}>
+                  {media.status === 'error'
+                    ? 'media unavailable'
+                    : mediaRef.mime.startsWith('video/')
+                    ? '▶ Video'
+                    : mediaLabel(raw)}
+                </Text>
+              )}
+            </View>
+          )
+        ) : image != null && imgDims != null ? (
           <Image
             source={{uri: `file://${image.path}`}}
             style={{
@@ -553,6 +590,7 @@ export function ChatScreen() {
   const sendReaction = useChatStore(s => s.sendReaction); // #264
   const pinMessage = useChatStore(s => s.pinMessage); // #266
   const sendImage = useChatStore(s => s.sendImage);
+  const sendMedia = useChatStore(s => s.sendMedia); // #300 gif/video via Logos Storage
   const stageImages = useChatStore(s => s.stageImages); // #261
   const stageCameraPhoto = useChatStore(s => s.stageCameraPhoto); // #261
   const sendStagedImages = useChatStore(s => s.sendStagedImages); // #261
@@ -1972,6 +2010,10 @@ export function ChatScreen() {
             <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} testID="composer-location">
               <LocationIcon size={22} color={colors.textDim} />
             </Pressable>
+            {/* #300: GIF/video via Logos Storage (encrypt -> upload -> store1: marker). */}
+            <Pressable style={styles.actionBtn} onPress={() => sendMedia(convoPk)} disabled={attaching} hitSlop={6} testID="composer-gif">
+              <Text style={styles.gifBtn}>GIF</Text>
+            </Pressable>
             <Pressable style={styles.actionBtn} onPress={onStartRecord} disabled={attaching} hitSlop={6} testID="composer-mic">
               <MicIcon size={22} color={colors.textDim} />
             </Pressable>
@@ -2493,6 +2535,14 @@ const styles = StyleSheet.create({
   charCount: {...type.caption, color: colors.textFaint},
   charCountOver: {color: colors.unread}, // #150: oversize for the radio
   link: {textDecorationLine: 'underline'}, // #262: tappable message links
+  // #300: placeholder box for a Logos-Storage media blob while it loads / on error.
+  mediaBox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.card - 2,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  gifBtn: {...type.label, color: colors.textDim, fontWeight: '700', letterSpacing: 0.5},
   // #295: quoted-reply header atop a bubble.
   quoteBlock: {
     borderLeftWidth: 2,
