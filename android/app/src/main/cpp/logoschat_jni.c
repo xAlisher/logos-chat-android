@@ -247,6 +247,14 @@ Java_com_logoschat_NodeBridge_chatSetDeliveryActive(JNIEnv *env, jobject thiz, j
   return logoschat_set_delivery_active((void *)handle, active ? 1 : 0);
 }
 
+// #292: force an immediate store catch-up on all active topics (app foreground).
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatCatchupNow(JNIEnv *env, jobject thiz, jlong handle) {
+  (void)env;
+  (void)thiz;
+  return logoschat_catchup_now((void *)handle);
+}
+
 // #239: our contact card JSON for a peer to add us over BLE.
 JNIEXPORT jstring JNICALL
 Java_com_logoschat_NodeBridge_chatExportContact(JNIEnv *env, jobject thiz, jlong handle) {

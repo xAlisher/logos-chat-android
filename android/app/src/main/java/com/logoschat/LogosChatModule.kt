@@ -1196,6 +1196,13 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     ChatRepo.activeConvoPk = convoPk.toLong()
   }
 
+  // #292: fire-and-forget store catch-up (called on app foreground). Off-thread — the
+  // native call briefly blocks on the node thread's command ack.
+  @ReactMethod
+  fun catchupNow() {
+    Thread { NodeRuntime.catchupNow() }.start()
+  }
+
   @ReactMethod
   fun consumeLaunchConvo(promise: Promise) {
     promise.resolve(MainActivity.consumeLaunchConvoPk().toDouble())

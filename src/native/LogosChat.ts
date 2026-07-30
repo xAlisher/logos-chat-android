@@ -210,6 +210,8 @@ interface LogosChatNative {
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
   markRead(convoPk: number): Promise<null>;
   setActiveConversation(convoPk: number): void;
+  /** #292: force an immediate store catch-up on all active topics (call on app foreground). */
+  catchupNow(): void;
   /**
    * Self-removal from a group (#108). Resolving means the removal CONSENSUS
    * ROUND opened — not that you are out; the ejecting commit lands later.

@@ -136,6 +136,8 @@ int logoschat_ingest_ciphertext(void *handle, const unsigned char *data, size_t 
 // #237: pause (active==0) / resume (active!=0) Waku delivery without tearing the
 // node down. MLS stays alive for off-node (BLE) send/receive. 0 ok, -1 error.
 int logoschat_set_delivery_active(void *handle, int active);
+/* #292: force an immediate store catch-up on all active topics (call on app foreground). */
+int logoschat_catchup_now(void *handle);
 
 // #239: offline (BLE) contact bootstrap. Caller frees returned strings.
 //  export -> JSON contact card {account,device,keyPackage,bundlePayload,bundleSig}.

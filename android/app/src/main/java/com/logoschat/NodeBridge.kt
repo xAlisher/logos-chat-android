@@ -67,6 +67,9 @@ object NodeBridge {
    *  down — the MLS engine stays alive for BLE. 0 ok, -1 error. */
   external fun chatSetDeliveryActive(handle: Long, active: Boolean): Int
 
+  // #292: force an immediate store catch-up on all active topics (app foreground).
+  external fun chatCatchupNow(handle: Long): Int
+
   /** #239: our contact card JSON for a peer to add us over BLE, or null. */
   external fun chatExportContact(handle: Long): String?
 

@@ -198,7 +198,7 @@ export function SettingsScreen() {
         </View>
 
         <Text style={styles.section}>Network</Text>
-        <View style={styles.card}>
+        <View style={[styles.card, styles.networkCard]}>
           <Text style={styles.rowLabel}>Delivery node</Text>
           <TextInput
             style={styles.nodeInput}
@@ -385,7 +385,9 @@ const styles = StyleSheet.create({
   rowLabel: {...type.title, color: colors.text},
   rowValue: {...type.label, color: colors.textDim},
   sub: {...type.caption, color: colors.textDim},
-  // #265 delivery-node editor
+  // #265 delivery-node editor — the Network card holds bare content (label/input/btns)
+  // with no row padding, so give it its own inset (the label was flush to the border).
+  networkCard: {padding: spacing.lg},
   nodeInput: {
     ...type.label,
     color: colors.text,

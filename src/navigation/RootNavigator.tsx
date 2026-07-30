@@ -116,6 +116,13 @@ export function RootNavigator() {
     const sub = AppState.addEventListener('change', s => {
       if (s === 'active') {
         openLaunchConvo();
+        // #292: on foreground, kick an immediate store catch-up so messages/reactions
+        // that arrived while the node was frozen surface now, not on the next ~20s tick.
+        try {
+          LogosChat.catchupNow();
+        } catch {
+          // native not ready — the periodic pull still covers it
+        }
       }
     });
     return () => sub.remove();

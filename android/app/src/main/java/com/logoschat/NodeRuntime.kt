@@ -271,6 +271,23 @@ object NodeRuntime {
     setStatus("stopped")
   }
 
+  /**
+   * #292: force an immediate store catch-up on all active topics. Called on app
+   * foreground so messages/reactions that arrived while the node was frozen surface at
+   * once instead of on the next periodic (~20s) pull. Best-effort + non-fatal; a no-op
+   * when the node isn't open or delivery is paused (the native side gates it).
+   */
+  fun catchupNow() {
+    val c = ctx
+    if (c == 0L) return
+    try {
+      val rc = NodeBridge.chatCatchupNow(c)
+      if (rc != 0) Log.w(TAG, "catchupNow failed: ${NodeBridge.chatLastError()}")
+    } catch (t: Throwable) {
+      Log.w(TAG, "catchupNow threw (non-fatal): ${t.message}")
+    }
+  }
+
   // -- async entry points ----------------------------------------------------
 
   fun start(onDone: (String?) -> Unit) {
