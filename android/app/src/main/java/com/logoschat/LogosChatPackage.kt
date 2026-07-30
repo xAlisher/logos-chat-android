@@ -9,9 +9,12 @@ import com.facebook.react.uimanager.ViewManager
 
 class LogosChatPackage : ReactPackage {
 
+  @Suppress("UNCHECKED_CAST")
   override fun createViewManagers(
       reactContext: ReactApplicationContext
-  ): MutableList<ViewManager<View, ReactShadowNode<*>>> = mutableListOf()
+  ): MutableList<ViewManager<View, ReactShadowNode<*>>> =
+      mutableListOf<ViewManager<*, *>>(MediaVideoViewManager(reactContext))
+          as MutableList<ViewManager<View, ReactShadowNode<*>>>
 
   override fun createNativeModules(
       reactContext: ReactApplicationContext

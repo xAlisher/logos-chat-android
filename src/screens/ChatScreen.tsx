@@ -106,6 +106,7 @@ import {isLeaveContent} from '../messages/leave';
 import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
 import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
 import {useMediaBlob} from '../native/mediaCache';
+import {MediaVideo} from '../components/MediaVideo';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -452,15 +453,22 @@ function Bubble({
           </Pressable>
         )}
         {mediaRef != null && mediaDims != null ? (
-          // #300: Logos-Storage media. Ready → animate (Fresco animated-gif renders GIFs
-          // in <Image>); video shows a labeled poster (playback is a follow-up). Loading/
-          // error keep the bubble sized so the timeline doesn't jump.
-          media.status === 'ready' && !mediaRef.mime.startsWith('video/') ? (
-            <Image
-              source={{uri: `file://${media.path}`}}
-              style={{width: mediaDims.width, height: mediaDims.height, borderRadius: radii.card - 2}}
-              resizeMode="cover"
-            />
+          // #300: Logos-Storage media. Ready → GIFs animate in <Image> (Fresco
+          // animated-gif); videos play muted+looping in <MediaVideo>. Loading/error keep
+          // the bubble sized so the timeline doesn't jump.
+          media.status === 'ready' ? (
+            mediaRef.mime.startsWith('video/') ? (
+              <MediaVideo
+                path={media.path}
+                style={{width: mediaDims.width, height: mediaDims.height, borderRadius: radii.card - 2}}
+              />
+            ) : (
+              <Image
+                source={{uri: `file://${media.path}`}}
+                style={{width: mediaDims.width, height: mediaDims.height, borderRadius: radii.card - 2}}
+                resizeMode="cover"
+              />
+            )
           ) : (
             <View
               style={[
@@ -471,11 +479,7 @@ function Bubble({
                 <ActivityIndicator color={own ? colors.onAccent : colors.textDim} />
               ) : (
                 <Text style={[type.caption, {color: own ? colors.onAccent : colors.textDim}]}>
-                  {media.status === 'error'
-                    ? 'media unavailable'
-                    : mediaRef.mime.startsWith('video/')
-                    ? '▶ Video'
-                    : mediaLabel(raw)}
+                  {media.status === 'error' ? 'media unavailable' : mediaLabel(raw)}
                 </Text>
               )}
             </View>
