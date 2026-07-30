@@ -79,6 +79,9 @@ import {formatLastSeen} from '../stores/conversationView';
 import {meshPresence} from '../stores/meshPresence';
 import type {Conversation, Message, SystemNote, MediaSend} from '../stores/chatStore';
 
+// #313: send button "breathes" while the node is connecting.
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
 // #188: a timeline row is either a message or an interleaved system line.
 type Row =
   | {kind: 'msg'; msg: Message}
@@ -1154,6 +1157,27 @@ export function ChatScreen() {
       : cs.sendColorKind === 'connecting'
       ? colors.nodeConnecting
       : colors.nodeOffline;
+  // #313: gently pulse the send button while the node is connecting (yellow `nodeConnecting`
+  // tint above); steady otherwise.
+  const sendPulse = React.useRef(new Animated.Value(1)).current;
+  const sendConnecting = cs.sendColorKind === 'connecting';
+  useEffect(() => {
+    if (!sendConnecting) {
+      sendPulse.setValue(1);
+      return undefined;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sendPulse, {toValue: 0.45, duration: 700, useNativeDriver: true}),
+        Animated.timing(sendPulse, {toValue: 1, duration: 700, useNativeDriver: true}),
+      ]),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      sendPulse.setValue(1);
+    };
+  }, [sendConnecting, sendPulse]);
   // #206: the send button is only active when there's text to send; gray otherwise.
   // #255: …or a location is staged in the composer.
   const canSendText = text.trim().length > 0;
@@ -1962,13 +1986,16 @@ export function ChatScreen() {
               testID="composer-charcount">
               {budget.label}
             </Text>
-            <Pressable
-              style={[styles.send, {backgroundColor: canSendText ? sendColor : colors.border}]}
+            <AnimatedPressable
+              style={[
+                styles.send,
+                {backgroundColor: canSendText ? sendColor : colors.border, opacity: sendPulse},
+              ]}
               onPress={onSubmit}
               disabled={!canSendText}
               testID="composer-send">
               <SendIcon mesh color={colors.onAccent} />
-            </Pressable>
+            </AnimatedPressable>
           </View>
         </View>
       ) : (
@@ -2081,10 +2108,10 @@ export function ChatScreen() {
               multiline
               testID="composer-input"
             />
-            <Pressable
+            <AnimatedPressable
               style={[
                 styles.send,
-                {backgroundColor: canSendComposer ? sendColor : colors.border},
+                {backgroundColor: canSendComposer ? sendColor : colors.border, opacity: sendPulse},
               ]}
               onPress={onSubmit}
               disabled={!canSendComposer}
@@ -2094,7 +2121,7 @@ export function ChatScreen() {
               ) : (
                 <SendIcon mesh={false} color={colors.onAccent} />
               )}
-            </Pressable>
+            </AnimatedPressable>
           </View>
           <View style={styles.actionRow}>
             <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} testID="composer-image">
@@ -2761,7 +2788,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   reactPillMine: {borderColor: colors.accent, backgroundColor: '#2a1607'},
-  reactEmoji: {fontSize: 13},
+  reactEmoji: {fontSize: 10}, // #310: ~3/4 — the pills read as reactions, not full emoji
   reactCount: {...type.caption, color: colors.textDim},
   radioBudget: {
     ...type.caption,

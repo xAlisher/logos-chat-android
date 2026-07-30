@@ -651,7 +651,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send an image'});
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send an image'});
       return;
     }
     // Pick + downscale natively to ~120 KB so it fits one Logos message.
@@ -696,7 +696,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send a gif'});
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send a gif'});
       return;
     }
     let raw;
@@ -733,7 +733,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return null;
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send a video'});
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send a video'});
       return null;
     }
     try {
@@ -800,7 +800,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return [];
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send images'});
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send images'});
       return [];
     }
     try {
@@ -818,7 +818,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return [];
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send a photo'});
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send a photo'});
       return [];
     }
     if (!(await ensurePerm(PermissionsAndroid.PERMISSIONS.CAMERA))) {
@@ -895,7 +895,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     if (useNodeStore.getState().status !== 'running') {
-      useNodeStore.setState({error: 'start the node to send a voice note'});
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send a voice note'});
       return;
     }
     try {
