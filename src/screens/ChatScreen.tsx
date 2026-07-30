@@ -505,7 +505,13 @@ function Bubble({
                 <ActivityIndicator color={own ? colors.onAccent : colors.textDim} />
               ) : (
                 <Text style={[type.caption, {color: own ? colors.onAccent : colors.textDim}]}>
-                  {media.status === 'error' ? 'media unavailable' : mediaLabel(raw)}
+                  {/* #303: a blob evicted by node retention 404s → honest "expired", not a
+                      generic failure. */}
+                  {media.status === 'expired'
+                    ? 'media expired'
+                    : media.status === 'error'
+                    ? 'media unavailable'
+                    : mediaLabel(raw)}
                 </Text>
               )}
             </View>

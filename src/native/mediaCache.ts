@@ -60,7 +60,9 @@ export type MediaState =
   | {status: 'idle'}
   | {status: 'loading'}
   | {status: 'ready'; path: string}
-  | {status: 'error'};
+  | {status: 'error'}
+  // #303: the blob was evicted by node retention (a 404 on GET) → show an honest placeholder.
+  | {status: 'expired'};
 
 export function useMediaBlob(ref: MediaRef | null): MediaState {
   const cid = ref?.cid ?? null;
@@ -86,8 +88,11 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
       .then(path => {
         if (alive) setState({status: 'ready', path});
       })
-      .catch(() => {
-        if (alive) setState({status: 'error'});
+      .catch((e: unknown) => {
+        if (!alive) return;
+        // #303: a 404 means the node evicted the blob (retention) → "expired", not a failure.
+        const expired = /\b404\b/.test(String((e as {message?: string})?.message ?? e));
+        setState({status: expired ? 'expired' : 'error'});
       });
     return () => {
       alive = false;

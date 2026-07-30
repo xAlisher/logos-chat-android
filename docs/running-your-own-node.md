@@ -167,6 +167,7 @@ services:
       - NAT_IP_AUTO=false
       - STORAGE_REPO_KIND=fs
       - STORAGE_STORAGE_QUOTA=4294967296            # 4 GB cap — tune to your disk
+      - STORAGE_BLOCK_TTL=2592000                   # retention: blobs expire after 30 days
       - STORAGE_LOG_LEVEL=INFO
     ports:
       - 127.0.0.1:8080:8080/tcp                     # REST: localhost ONLY
@@ -347,9 +348,10 @@ phone renders it.
 - **Disk.** Store is retention-capped (`size:1GB` above). Watch host disk; rotate node logs.
 
 **Media:**
-- **Quota + disk.** `STORAGE_STORAGE_QUOTA` caps the store, but media accumulates — watch
-  the datadir (`du -sh datadir`) and the host disk. A retention/eviction policy (drop old
-  blobs, show honest "expired" placeholders in-app) is on our roadmap.
+- **Retention + disk.** Two bounds: `STORAGE_STORAGE_QUOTA` is the hard disk cap (LRU
+  eviction when full), and `STORAGE_BLOCK_TTL` (seconds; we run 30 days) expires old blobs.
+  Once a blob is gone, `GET /data/{cid}` returns 404 and Peers shows an honest **"media
+  expired"** placeholder in the bubble. Still watch the datadir (`du -sh datadir`) and host disk.
 - **Cert renewal.** The Caddy proxy reads the shared cert too — **restart Caddy** after the
   monthly renewal (`docker compose restart caddy`).
 - **Never** expose the storage REST (`8080`) publicly — only the token-gated proxy.
