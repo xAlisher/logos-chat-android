@@ -64,7 +64,12 @@ import type {BubbleTarget} from '../components/BubbleActionMenu';
 import {ForwardPicker} from '../components/ForwardPicker';
 import {MeshMapModal} from '../components/MeshMapModal';
 import ImagePickerNative, {type PickedImage} from '../native/ImagePicker';
-import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
+import {
+  useChatStore,
+  convoDisplayName,
+  isAddressVerified,
+  describePeer,
+} from '../stores/chatStore';
 import {formatLastSeen} from '../stores/conversationView';
 import {meshPresence} from '../stores/meshPresence';
 import type {Conversation, Message, SystemNote} from '../stores/chatStore';
@@ -96,6 +101,7 @@ import {
 } from '../messages/reactions';
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
 import {isLeaveContent} from '../messages/leave';
+import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
@@ -121,6 +127,15 @@ const MESH_GREEN = '#22C55E';
 // #262: link color inside received bubbles (readable blue on the dark fill); own
 // (orange) bubbles keep the white onAccent text, distinguished by the underline.
 const LINK_BLUE = '#4EA3FF';
+
+/** #295: a one-line preview of a message for a reply quote (media → friendly label). */
+function quotePreview(text: string): string {
+  const b = displayBody(text);
+  if (parseImageLocal(b) != null) return 'Photo';
+  if (parseVoiceLocal(b) != null) return 'Voice message';
+  if (parseLocation(b) != null) return 'Location';
+  return b;
+}
 // #261: how many images may be staged in the composer at once.
 const MAX_STAGED_IMAGES = 10;
 // #243: Bluetooth transport accent. A message that rode the BLE mesh (sentVia
@@ -293,6 +308,10 @@ function Bubble({
   onOpenLocation,
   reactions,
   onReact,
+  onShowReactors,
+  quoted,
+  replyText,
+  onQuotedPress,
 }: {
   msg: Message;
   attribution: Attribution | null;
@@ -306,6 +325,14 @@ function Bubble({
   // #264: folded reaction aggregates for this message + a toggle callback.
   reactions?: ReactionState[];
   onReact?: (emoji: string, mine: boolean) => void;
+  // #293: long-press a pill to see who reacted with that emoji.
+  onShowReactors?: (r: ReactionState) => void;
+  // #295: a quoted-reply header ({author label, snippet}) drawn atop the bubble.
+  quoted?: {author: string; snippet: string} | null;
+  // #295: for a reply, the body text to render (the marker's payload).
+  replyText?: string;
+  // #295: tap the quoted header to jump to the original message.
+  onQuotedPress?: () => void;
 }) {
   const own = msg.direction === 'out';
   const failed = msg.status === 'failed';
@@ -325,13 +352,16 @@ function Bubble({
   // msg.senderAccount for a Logos-arrived relay) describes them — reuse its
   // label ?? hex. MessageRow carries no mesh sender-name, so a mesh-arrived relay
   // (attribution == null) falls back to a plain 'bridge'.
+  // #295: a reply stores its body inside a `reply1:` marker — render from the body,
+  // not the raw marker (the quoted header is drawn separately from `quoted`).
+  const raw = replyText ?? msg.text;
   // Media messages store a compact local marker; render each kind specially.
-  const image = parseImageLocal(msg.text); // #197
-  const voice = parseVoiceLocal(msg.text); // #205
-  const location = parseLocation(msg.text); // #204
+  const image = parseImageLocal(raw); // #197
+  const voice = parseVoiceLocal(raw); // #205
+  const location = parseLocation(raw); // #204
   const imgDims = image != null ? fitImage(image.meta.width, image.meta.height) : null;
-  const relay = parseRelay(msg.text);
-  const displayText = relay?.text ?? msg.text;
+  const relay = parseRelay(raw);
+  const displayText = relay?.text ?? raw;
   const bridgeName =
     attribution != null ? attribution.label ?? attribution.hex : 'bridge';
   const effAttr =
@@ -391,6 +421,24 @@ function Bubble({
           failed && styles.bubbleFailed,
           image != null && styles.bubbleImage,
         ]}>
+        {/* #295: quoted-reply header — tap to jump to the original. */}
+        {quoted != null && (
+          <Pressable
+            onPress={onQuotedPress}
+            style={[styles.quoteBlock, {borderLeftColor: own ? colors.onAccent : colors.accent}]}
+            testID="quote-block">
+            <Text
+              style={[styles.quoteAuthor, {color: own ? colors.onAccent : colors.accent}]}
+              numberOfLines={1}>
+              {quoted.author}
+            </Text>
+            <Text
+              style={[styles.quoteSnippet, {color: own ? colors.onAccent : colors.textDim}]}
+              numberOfLines={1}>
+              {quoted.snippet}
+            </Text>
+          </Pressable>
+        )}
         {image != null && imgDims != null ? (
           <Image
             source={{uri: `file://${image.path}`}}
@@ -458,6 +506,7 @@ function Bubble({
             <Pressable
               key={r.emoji}
               onPress={() => onReact?.(r.emoji, r.mine)}
+              onLongPress={() => onShowReactors?.(r)}
               style={[styles.reactPill, r.mine && styles.reactPillMine]}
               testID={`react-${r.emoji}`}>
               <Text style={styles.reactEmoji}>{r.emoji}</Text>
@@ -548,7 +597,15 @@ export function ChatScreen() {
     verified: boolean;
   } | null>(null);
   const [bubbleTarget, setBubbleTarget] = useState<BubbleTarget | null>(null);
+  // #295: the message being replied to (composer shows a quote banner; send wraps
+  // the typed text in a reply1: marker pointing at this key). Null = normal send.
+  const [replyDraft, setReplyDraft] = useState<{
+    key: string;
+    author: string;
+    snippet: string;
+  } | null>(null);
   const listRef = React.useRef<FlatList<Row>>(null); // #266: scroll to the pinned msg
+  const rowsRef = React.useRef<Row[]>([]); // #295: latest rows for reply scroll-to
   const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
   const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
   const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
@@ -1107,16 +1164,20 @@ export function ChatScreen() {
     const t = text.trim();
     const loc = pendingLoc; // #255: staged location, if any
     const imgs = pendingImages; // #261: staged images, if any
+    const reply = replyDraft; // #295: reply target, if any
     setText('');
     setPendingLoc(null);
     setPendingImages([]);
+    setReplyDraft(null);
     try {
       setBusy(true);
       // #191: no more silent revive-on-send. A dead group is restarted only via
       // the explicit "Restart group" action (which shows what it does), so the
       // composer isn't even reachable while dead — a plain send is all this is.
       if (t) {
-        await send(convoPk, t);
+        // #295: a reply wraps the typed text in a reply1: marker → the peer renders
+        // the quoted header. A plain message sends the text as-is.
+        await send(convoPk, reply != null ? encodeReply(reply.key, t) : t);
       }
       // #261: send the staged images (each its own message), after any text.
       if (imgs.length > 0) {
@@ -1302,6 +1363,31 @@ export function ChatScreen() {
     return foldReactions(events, myAddress ?? '');
   }, [messages, authorOf, myAddress]);
 
+  // #295: index every non-marker message by its cross-device key, so a reply can
+  // resolve the ORIGINAL it quotes (author + snippet). First occurrence wins.
+  const msgByKey = useMemo(() => {
+    const map = new Map<string, {author: string; snippet: string}>();
+    for (const m of messages) {
+      if (isReactionContent(m.text) || isPinContent(m.text) || isLeaveContent(m.text)) continue;
+      const k = messageKey(authorOf(m), m.text);
+      if (!map.has(k)) map.set(k, {author: authorOf(m), snippet: quotePreview(m.text)});
+    }
+    return map;
+  }, [messages, authorOf]);
+
+  // #295: jump to a quoted message by its key (best-effort — no-op if not loaded).
+  const scrollToKey = useCallback(
+    (key: string) => {
+      const idx = rowsRef.current.findIndex(
+        r => r.kind === 'msg' && messageKey(authorOf(r.msg), r.msg.text) === key,
+      );
+      if (idx >= 0) {
+        listRef.current?.scrollToIndex({index: idx, animated: true, viewPosition: 0.5});
+      }
+    },
+    [authorOf],
+  );
+
   // #266: fold pin1: markers (chronological) → the currently-pinned message key.
   const pinnedKey = useMemo(() => {
     const events = messages
@@ -1357,6 +1443,7 @@ export function ChatScreen() {
     merged.sort((a, b) => b.at - a.at);
     return merged.map(x => x.row);
   }, [messages, systemLines]);
+  rowsRef.current = rows; // #295: keep the reply scroll-to lookup current
   const empty = rows.length === 0;
 
   return (
@@ -1530,16 +1617,49 @@ export function ChatScreen() {
           const m = item.msg;
           const attribution = resolveAttribution(m, isGroup, convo);
           const rKey = messageKey(authorOf(m), m.text); // #264
+          // #295: if this bubble is a reply, resolve the quoted original.
+          const parsedReply = parseReply(m.text);
+          const quotedTarget =
+            parsedReply != null ? msgByKey.get(parsedReply.key) ?? null : null;
+          const quoted =
+            parsedReply != null
+              ? {
+                  author:
+                    quotedTarget == null
+                      ? 'message'
+                      : myAddress != null &&
+                        quotedTarget.author.toLowerCase() === myAddress.toLowerCase()
+                      ? 'You'
+                      : describePeer(quotedTarget.author),
+                  snippet: quotedTarget?.snippet ?? '(not loaded)',
+                }
+              : null;
           return (
             <Bubble
               msg={m}
               attribution={attribution}
+              quoted={quoted}
+              replyText={parsedReply?.body}
+              onQuotedPress={
+                parsedReply != null ? () => scrollToKey(parsedReply.key) : undefined
+              }
               reactions={reactionsByKey.get(rKey)}
               onReact={(emoji, mine) =>
                 sendReaction(convoPk, rKey, emoji, mine ? '-' : '+').catch(() =>
                   useNodeStore.setState({error: 'reaction failed'}),
                 )
               }
+              onShowReactors={r => {
+                // #293: the reactor addresses are already folded — surface them.
+                const who = r.reactors
+                  .map(a =>
+                    myAddress != null && a.toLowerCase() === myAddress.toLowerCase()
+                      ? 'You'
+                      : describePeer(a),
+                  )
+                  .join('\n');
+                Alert.alert(`${r.emoji}  ·  ${r.count}`, who);
+              }}
               avatarKind={
                 convo ? convoKind({transport: convo.transport, isGroup: false}) : 'contact'
               }
@@ -1719,6 +1839,26 @@ export function ChatScreen() {
       ) : (
         // #206: 2-line composer — a growing text row + an action-icon row.
         <View style={styles.composerV}>
+          {/* #295: reply/quote banner — the message being answered, with a clear ✕. */}
+          {replyDraft != null && (
+            <View style={styles.replyBanner} testID="reply-banner">
+              <View style={styles.replyBannerBar} />
+              <View style={styles.replyBannerText}>
+                <Text style={styles.replyBannerAuthor} numberOfLines={1}>
+                  Replying to {replyDraft.author}
+                </Text>
+                <Text style={styles.replyBannerSnippet} numberOfLines={1}>
+                  {replyDraft.snippet}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setReplyDraft(null)}
+                hitSlop={10}
+                testID="reply-banner-clear">
+                <Text style={styles.pendingLocClear}>✕</Text>
+              </Pressable>
+            </View>
+          )}
           {/* #150: a mesh-mirrored group whose live transport is the LoRa radio
               is byte-budgeted too — show the same honest budget/oversize line. */}
           {budget.show && (
@@ -1839,6 +1979,20 @@ export function ChatScreen() {
             useNodeStore.setState({error: 'reaction failed'}),
           )
         }
+        onReply={t => {
+          setBubbleTarget(null);
+          setReplyDraft({
+            key: t.reactionKey,
+            author: t.own
+              ? 'You'
+              : t.label != null && t.label.length > 0
+              ? t.label
+              : t.address != null
+              ? describePeer(t.address)
+              : 'message',
+            snippet: quotePreview(t.text),
+          });
+        }}
         pinnedKey={pinnedKey}
         onPin={
           // #266 v1: only the group creator may pin/unpin.
@@ -2298,6 +2452,30 @@ const styles = StyleSheet.create({
   charCount: {...type.caption, color: colors.textFaint},
   charCountOver: {color: colors.unread}, // #150: oversize for the radio
   link: {textDecorationLine: 'underline'}, // #262: tappable message links
+  // #295: quoted-reply header atop a bubble.
+  quoteBlock: {
+    borderLeftWidth: 2,
+    paddingLeft: spacing.sm,
+    marginBottom: spacing.xs,
+    opacity: 0.9,
+  },
+  quoteAuthor: {...type.caption, fontWeight: '600'},
+  quoteSnippet: {...type.caption},
+  // #295: composer reply banner.
+  replyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.xs,
+    backgroundColor: colors.panel,
+    borderRadius: radii.card,
+  },
+  replyBannerBar: {width: 2, alignSelf: 'stretch', backgroundColor: colors.accent},
+  replyBannerText: {flex: 1},
+  replyBannerAuthor: {...type.caption, color: colors.accent, fontWeight: '600'},
+  replyBannerSnippet: {...type.caption, color: colors.textDim},
   // #266 pinned-message bar
   pinBar: {
     flexDirection: 'row',

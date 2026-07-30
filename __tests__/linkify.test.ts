@@ -75,6 +75,43 @@ describe('linkify', () => {
   it('empty string yields one empty run', () => {
     expect(linkify('')).toEqual([{text: ''}]);
   });
+
+  // #262 follow-up — scheme-less links (the "not tappable without https" report).
+  it('detects a bare domain with a path and promotes to https', () => {
+    const runs = linkify('see github.com/xAlisher/peers here');
+    const link = runs.find(r => r.url);
+    expect(link?.text).toBe('github.com/xAlisher/peers');
+    expect(link?.url).toBe('https://github.com/xAlisher/peers');
+    assertRoundTrip('see github.com/xAlisher/peers here');
+  });
+
+  it('detects a bare path-less domain with a well-known TLD', () => {
+    const link = linkify('visit peers.tech ok').find(r => r.url);
+    expect(link?.url).toBe('https://peers.tech');
+  });
+
+  it('does NOT linkify filenames or version strings', () => {
+    for (const s of ['see index.ts here', 'the running-your-own-node.md file', 'v0.7.71 shipped', 'e.g. this']) {
+      expect(linkify(s).some(r => r.url)).toBe(false);
+      assertRoundTrip(s);
+    }
+  });
+
+  it('does NOT linkify an email address domain', () => {
+    const runs = linkify('mail me at alisher@gmail.com please');
+    expect(runs.some(r => r.url)).toBe(false);
+    assertRoundTrip('mail me at alisher@gmail.com please');
+  });
+
+  it('round-trips scheme-less links too', () => {
+    for (const s of [
+      'github.com/a/b, and peers.tech!',
+      '(github.com/a/b)',
+      'msg.logos.live is our node',
+    ]) {
+      assertRoundTrip(s);
+    }
+  });
 });
 
 describe('hrefFor', () => {

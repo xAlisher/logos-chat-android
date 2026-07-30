@@ -33,5 +33,6 @@ module.exports = {
     '<rootDir>/__tests__/linkify.test.ts',
     '<rootDir>/__tests__/reactions.test.ts',
     '<rootDir>/__tests__/pins.test.ts',
+    '<rootDir>/__tests__/reply.test.ts',
   ],
 };

@@ -11,6 +11,7 @@ import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {encodeReaction} from '../messages/reactions';
+import {displayBody} from '../messages/reply';
 import {encodePin} from '../messages/pins';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -105,7 +106,8 @@ export function conversationPreview(
     return {text: latest.text, at: latest.at, isSystem: true};
   }
   // Media last-messages are markers, not readable text — preview with a label.
-  const lt = convo.lastText;
+  // #295: a reply's last-text is a reply1: marker → preview its body.
+  const lt = displayBody(convo.lastText);
   const text = isImageContent(lt)
     ? '📷 Photo'
     : isVoiceContent(lt)
@@ -291,7 +293,7 @@ export type {KnownContact} from './conversationView';
 const PAGE = 200;
 
 /** "Alice 0c87f0…71c6", or just the short hex when we have no label for them. */
-function describePeer(address: string): string {
+export function describePeer(address: string): string {
   const target = address.toLowerCase();
   for (const c of Object.values(useChatStore.getState().conversations)) {
     if (

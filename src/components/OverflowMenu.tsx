@@ -188,6 +188,16 @@ export function PinIcon({size = S, color = colors.textDim}: IconProps) {
   );
 }
 
+/** lucide `reply` (corner-up-left) — reply to / quote a message. */
+export function ReplyIcon({size = S, color = colors.textDim}: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path d="M9 17 4 12 9 7" stroke={color} strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M20 18v-2a4 4 0 0 0-4-4H4" stroke={color} strokeWidth={SW} strokeLinecap="round" strokeLinejoin="round" />
+    </Svg>
+  );
+}
+
 export function ClipboardIcon({size = S, color = colors.textDim}: IconProps) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">

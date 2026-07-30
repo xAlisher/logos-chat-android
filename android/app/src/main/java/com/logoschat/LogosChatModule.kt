@@ -128,8 +128,15 @@ class EventCallbackManager {
           } catch (_: Throwable) {
             null
           }
+      // #295: a reply carries a `reply1:<key>:<body>` marker — notify with the body.
+      val raw = outcome.text
+      val t =
+          if (raw.startsWith("reply1:")) {
+            val rest = raw.removePrefix("reply1:")
+            val idx = rest.indexOf(':')
+            if (idx >= 0) rest.substring(idx + 1) else raw
+          } else raw
       // Media messages carry a marker, not readable text — show a friendly label.
-      val t = outcome.text
       val body =
           when {
             t.startsWith("img1") -> "📷 Photo"

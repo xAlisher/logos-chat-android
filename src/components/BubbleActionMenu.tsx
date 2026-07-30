@@ -23,6 +23,7 @@ import {
   MeshIcon,
   TrashIcon,
   PinIcon,
+  ReplyIcon,
   type MenuItem,
 } from './OverflowMenu';
 import {parseImageLocal, isImageContent} from '../native/imageMsg';
@@ -68,6 +69,7 @@ export function BubbleActionMenu({
   onMapMesh,
   onDelete,
   onReact,
+  onReply,
   onPin,
   pinnedKey,
   isMeshMapped,
@@ -88,6 +90,8 @@ export function BubbleActionMenu({
   onDelete: (msgPk: number) => void;
   /** #264: react to this message with an emoji (opens as a row atop the menu). */
   onReact?: (target: BubbleTarget, emoji: string) => void;
+  /** #295: reply to / quote this message (sets the composer's reply draft). */
+  onReply?: (target: BubbleTarget) => void;
   /** #266: pin/unpin this message (only provided when the user may pin — creator). */
   onPin?: (target: BubbleTarget, currentlyPinned: boolean) => void;
   /** #266: the currently-pinned message key, to label Pin vs Unpin. */
@@ -105,6 +109,15 @@ export function BubbleActionMenu({
     const isImage = isImageContent(body);
     const isVoice = isVoiceContent(body);
     const isLoc = isLocationContent(body);
+    // #295: Reply works on any message (own or peer), first for prominence.
+    if (onReply != null) {
+      items.push({
+        key: 'reply',
+        label: 'Reply',
+        icon: <ReplyIcon color={colors.textDim} />,
+        onPress: () => onReply(t),
+      });
+    }
     if (!t.own && address != null) {
       items.push({
         key: 'label',
