@@ -1,6 +1,6 @@
 // Native-stack navigation shell — themed headers (panel bg, mono titles), dark
 // nav theme so no white flashes between screens.
-import React, {useCallback, useEffect} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {AppState} from 'react-native';
 import {
   NavigationContainer,
@@ -30,6 +30,21 @@ import {NearbyScreen} from '../screens/NearbyScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+// #301: persist React Navigation state so the open chat survives an OS Activity
+// recreation on background→foreground (MainActivity.onCreate passes null to avoid the
+// react-native-screens fragment-restore crash, which otherwise resets nav to the
+// conversation list). We save at the RN layer into the native KV — survives both a
+// same-process Activity recreation AND full process death — never the Android bundle.
+const NAV_STATE_KEY = 'navState';
+let navSaveTimer: ReturnType<typeof setTimeout> | null = null;
+function persistNavState(state: unknown) {
+  if (navSaveTimer) clearTimeout(navSaveTimer);
+  // Debounced — onStateChange fires on every navigation tick.
+  navSaveTimer = setTimeout(() => {
+    LogosChat.setSetting(NAV_STATE_KEY, JSON.stringify(state ?? {})).catch(() => {});
+  }, 500);
+}
 
 // #162: a tapped message notification lands in MainActivity, which stashes the
 // convoPk; the native side exposes it once via consumeLaunchConvo(). Consume it
@@ -66,6 +81,36 @@ const navTheme = {
 };
 
 export function RootNavigator() {
+  // #301: restore the saved nav state before first render, so the open chat survives an
+  // Activity recreation. Gated so NavigationContainer mounts with initialState already
+  // resolved; a timeout fallback guarantees we never hang startup on a slow KV read.
+  const [restoring, setRestoring] = useState(true);
+  const [initialNavState, setInitialNavState] = useState<any>(undefined);
+  useEffect(() => {
+    let done = false;
+    const finish = (st?: any) => {
+      if (done) return;
+      done = true;
+      setInitialNavState(st);
+      setRestoring(false);
+    };
+    LogosChat.getSetting(NAV_STATE_KEY)
+      .then(raw => {
+        if (raw != null && raw.length > 0) {
+          try {
+            finish(JSON.parse(raw));
+            return;
+          } catch {
+            // corrupt — ignore and start fresh
+          }
+        }
+        finish(undefined);
+      })
+      .catch(() => finish(undefined));
+    const t = setTimeout(() => finish(undefined), 1500);
+    return () => clearTimeout(t);
+  }, []);
+
   // Warm-resume: onNewIntent already refreshed the launch pk before we foreground.
   useEffect(() => {
     const sub = AppState.addEventListener('change', s => {
@@ -77,11 +122,21 @@ export function RootNavigator() {
   }, []);
 
   const onReady = useCallback(() => {
-    openLaunchConvo(); // cold-start deep link
+    openLaunchConvo(); // cold-start deep link (wins over restored state)
   }, []);
 
+  // Hold render until the saved state is resolved (fast; bounded by the fallback).
+  if (restoring) {
+    return null;
+  }
+
   return (
-    <NavigationContainer ref={navigationRef} theme={navTheme} onReady={onReady}>
+    <NavigationContainer
+      ref={navigationRef}
+      theme={navTheme}
+      onReady={onReady}
+      initialState={initialNavState}
+      onStateChange={persistNavState}>
       <Stack.Navigator
         initialRouteName="Conversations"
         // #267: wrap every screen in an app-level edge-swipe-back gesture. native-
