@@ -5,9 +5,18 @@
 import {create} from 'zustand';
 import LogosChat from '../native/LogosChat';
 import Storage from '../native/Storage';
+import Tor, {onTorBootstrap} from '../native/Tor';
 
-/** #318: local Tor SOCKS port (Orbot's default; embedded Tor will set its own). */
+/**
+ * #318: fallback SOCKS port. The embedded Tor picks its own port (kmp-tor `auto()`),
+ * reported back via getSocksPort(); this is only used if that read ever fails.
+ */
 const TOR_SOCKS_PORT = 9050;
+
+// #318: cross-render handles for the in-flight Tor bootstrap so enableTor/cancelTor
+// can coordinate (unsubscribe the progress listener; abort a bootstrap the user cancels).
+let torUnsub: (() => void) | null = null;
+let torCancelled = false;
 
 export const KV_DISPLAY_NAME = 'displayName';
 export const DEFAULT_DISPLAY_NAME = '';
@@ -104,6 +113,14 @@ interface SettingsState {
   lockOnBackground: boolean;
   /** #318: route media through Tor (metadata privacy). Default off (opt-in). */
   mediaOverTor: boolean;
+  /**
+   * #318: bootstrap progress (0..100) of the embedded Tor while it starts. The
+   * "Starting Tor…" modal reads this; 100 means the network is reachable and media
+   * routing is live. Meaningless unless {@link torBusy} is true (or Tor just came up).
+   */
+  torBootstrapPercent: number;
+  /** #318: an embedded-Tor bootstrap is currently in flight (modal is showing). */
+  torBusy: boolean;
   /** #232: OS notifications while the app is backgrounded. Default on. */
   localNotifications: boolean;
   /** #232: in-app banners for other chats while foregrounded. Default on. */
@@ -126,8 +143,17 @@ interface SettingsState {
   setBleEngagedPref: (on: boolean) => Promise<void>;
   /** #236: toggle auto-lock (re-lock when the app backgrounds); persisted. */
   setLockOnBackground: (on: boolean) => Promise<void>;
-  /** #318: toggle routing media through Tor; persisted + pushed to the native storage client. */
-  setMediaOverTor: (on: boolean) => Promise<void>;
+  /**
+   * #318: turn media-over-Tor ON — boots the embedded Tor and, once it bootstraps to
+   * 100%, wires the storage client to its SOCKS port and persists the pref. Drives
+   * {@link torBootstrapPercent} / {@link torBusy} so the "Starting Tor…" modal can show
+   * progress. Resolves when Tor is live (or rejects/settles off on failure/cancel).
+   */
+  enableTor: () => Promise<void>;
+  /** #318: turn media-over-Tor OFF — stop Tor, unwire the storage client, persist off. */
+  disableTor: () => Promise<void>;
+  /** #318: abort an in-flight bootstrap (user pressed Cancel) — stop Tor, stay off. */
+  cancelTor: () => void;
   /** #186: remember the last radio's BLE address (persisted; null clears it). */
   setLastRadioAddress: (address: string | null) => Promise<void>;
 }
@@ -141,6 +167,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   bleEngagedPref: false,
   lockOnBackground: false,
   mediaOverTor: false,
+  torBootstrapPercent: 0,
+  torBusy: false,
   localNotifications: true,
   inAppNotifications: true,
   messageSound: true,
@@ -193,11 +221,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // keep default
     }
     // #318: media-over-Tor defaults OFF — only flip on when explicitly stored 'true'.
+    // If it was on, boot the embedded Tor in the background and wire the storage client
+    // once it bootstraps (no modal at launch — media just waits for Tor to come up).
     try {
       const t = await LogosChat.getSetting(KV_MEDIA_OVER_TOR);
-      const on = t === 'true';
-      if (on) set({mediaOverTor: true});
-      Storage.setTorRouting(on, TOR_SOCKS_PORT);
+      if (t === 'true') {
+        set({mediaOverTor: true});
+        get().enableTor().catch(() => {});
+      }
     } catch {
       // keep default
     }
@@ -287,15 +318,81 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  setMediaOverTor: async (on: boolean) => {
-    if (get().mediaOverTor === on) return;
-    set({mediaOverTor: on});
-    Storage.setTorRouting(on, TOR_SOCKS_PORT); // push to the native storage client immediately
+  enableTor: async () => {
+    // Boot the daemon and wait for a full (100%) bootstrap before declaring media
+    // routing live — "green" per the UX = the network is actually reachable, not just
+    // the process spawned. The SOCKS listener binds early; we read its port at the end.
+    set({torBusy: true, torBootstrapPercent: 0});
+    torCancelled = false;
+    torUnsub?.();
     try {
-      await LogosChat.setSetting(KV_MEDIA_OVER_TOR, on ? 'true' : 'false');
+      await new Promise<void>((resolve, reject) => {
+        torUnsub = onTorBootstrap(p => {
+          if (torCancelled) return;
+          set({torBootstrapPercent: p});
+          if (p >= 100) resolve();
+        });
+        // start() resolves once the SOCKS listener is up (bootstrap continues after);
+        // a start failure (missing binary, etc.) rejects the whole flow.
+        Tor.start().catch(reject);
+      });
+      if (torCancelled) return;
+      let port = TOR_SOCKS_PORT;
+      try {
+        const p = await Tor.getSocksPort();
+        if (p && p > 0) port = p;
+      } catch {
+        // fall back to the default port
+      }
+      Storage.setTorRouting(true, port);
+      set({mediaOverTor: true, torBusy: false});
+      try {
+        await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'true');
+      } catch {
+        // best-effort
+      }
+    } catch {
+      // start/bootstrap failed — leave the toggle off and tear the daemon down.
+      try {
+        Tor.stop();
+      } catch {
+        // best-effort
+      }
+      set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
+    } finally {
+      torUnsub?.();
+      torUnsub = null;
+    }
+  },
+
+  disableTor: async () => {
+    set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
+    try {
+      Tor.stop();
     } catch {
       // best-effort
     }
+    Storage.setTorRouting(false, 0);
+    try {
+      await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  cancelTor: () => {
+    // User pressed Cancel mid-bootstrap: abort the pending enableTor, stop the daemon,
+    // stay off. Don't touch the persisted pref (it was never turned on).
+    torCancelled = true;
+    torUnsub?.();
+    torUnsub = null;
+    try {
+      Tor.stop();
+    } catch {
+      // best-effort
+    }
+    Storage.setTorRouting(false, 0);
+    set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
   },
 
   setNotifPref: async (pref: NotifPref, on: boolean) => {

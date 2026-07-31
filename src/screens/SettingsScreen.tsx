@@ -23,6 +23,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {PinFlowModal, type PinFlowMode} from '../components/PinFlowModal';
+import {TorBootstrapModal} from '../components/TorBootstrapModal';
 import {useSecurityStore} from '../stores/securityStore';
 import {useChatStore} from '../stores/chatStore';
 import {useSettingsStore} from '../stores/settingsStore';
@@ -58,9 +59,9 @@ function Row({
   );
 }
 
-// #318: flip to true once embedded Tor (kmp-tor) is wired — gates the "Route media over Tor"
-// toggle so it never appears before there's a real Tor to route through.
-const TOR_TOGGLE_READY = false;
+// #318: embedded Tor (kmp-tor) is wired in (TorModule.kt + TorBootstrapModal), so the
+// "Route media over Tor" toggle is live.
+const TOR_TOGGLE_READY = true;
 
 /** A notification-preference row: label + sublabel on the left, Switch on the right. */
 function ToggleRow({
@@ -101,9 +102,31 @@ export function SettingsScreen() {
   const vibration = useSettingsStore(s => s.vibration);
   const setNotifPref = useSettingsStore(s => s.setNotifPref);
   const setNotif = (pref: NotifPref) => (on: boolean) => setNotifPref(pref, on);
-  // #318: metadata-privacy — route media through Tor.
+  // #318: metadata-privacy — route media through Tor (embedded kmp-tor).
   const mediaOverTor = useSettingsStore(s => s.mediaOverTor);
-  const setMediaOverTor = useSettingsStore(s => s.setMediaOverTor);
+  const torBootstrapPercent = useSettingsStore(s => s.torBootstrapPercent);
+  const enableTor = useSettingsStore(s => s.enableTor);
+  const disableTor = useSettingsStore(s => s.disableTor);
+  const cancelTor = useSettingsStore(s => s.cancelTor);
+  // Local: is the "Starting Tor…" modal showing? Opened when the user flips Tor on;
+  // closed on Cancel or automatically once mediaOverTor flips true (bootstrap hit 100%).
+  const [torModalVisible, setTorModalVisible] = useState(false);
+  const onToggleTor = (on: boolean) => {
+    if (on) {
+      setTorModalVisible(true);
+      enableTor(); // drives torBootstrapPercent; flips mediaOverTor at 100%
+    } else {
+      disableTor();
+    }
+  };
+  const onCancelTor = () => {
+    cancelTor();
+    setTorModalVisible(false);
+  };
+  // Auto-close the modal once Tor is live ("wait until it's green — then it auto-closes").
+  useEffect(() => {
+    if (mediaOverTor && torModalVisible) setTorModalVisible(false);
+  }, [mediaOverTor, torModalVisible]);
   // #236: auto-lock when the app goes to background (only meaningful with a PIN).
   const lockOnBackground = useSettingsStore(s => s.lockOnBackground);
   const setLockOnBackground = useSettingsStore(s => s.setLockOnBackground);
@@ -257,9 +280,9 @@ export function SettingsScreen() {
             <View style={styles.card}>
               <ToggleRow
                 label="Route media over Tor"
-                sublabel="Hide your IP from the storage node when sending or viewing media. Slower; needs Tor running."
+                sublabel="Hide your IP from the storage node when sending or viewing media. Slower; Tor runs inside the app."
                 value={mediaOverTor}
-                onChange={setMediaOverTor}
+                onChange={onToggleTor}
                 testID="setting-media-tor"
               />
             </View>
@@ -346,6 +369,13 @@ export function SettingsScreen() {
       </ScrollView>
 
       {flow != null && <PinFlowModal visible mode={flow} onClose={closeFlow} />}
+
+      {/* #318: "Starting Tor…" bootstrap modal (shown while media-over-Tor spins up). */}
+      <TorBootstrapModal
+        visible={torModalVisible}
+        percent={torBootstrapPercent}
+        onCancel={onCancelTor}
+      />
 
       {/* Reset warning modal (#232). */}
       <Modal

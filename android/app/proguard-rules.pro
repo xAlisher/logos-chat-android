@@ -21,3 +21,11 @@
 -keepclassmembers class com.logoschat.MainActivity {
     public static long consumeLaunchConvoPk();
 }
+
+# --- kmp-tor / kmp-process (#318 embedded Tor) ----------------------------
+# kmp-process's JVM PID helper references java.lang.management.* to read the
+# pid on desktop JVMs. That code path is never taken on Android (it uses the
+# Android pid API), but R8 still sees the class references and aborts. These
+# classes genuinely don't exist in the Android runtime, so suppress the warning.
+-dontwarn java.lang.management.ManagementFactory
+-dontwarn java.lang.management.RuntimeMXBean
