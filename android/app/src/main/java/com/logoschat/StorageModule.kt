@@ -39,7 +39,34 @@ class StorageModule(reactContext: ReactApplicationContext) :
   private val IV_LEN = 12
   private val TAG_BITS = 128
 
+  // #318 (metadata privacy): when on, media upload/download is routed through a local SOCKS5
+  // proxy (Tor) so the storage node sees a Tor exit IP, not the user's real IP. Set from JS
+  // (settingsStore) via setTorRouting; the embedded/Orbot Tor listens on `torSocksPort`.
+  @Volatile private var torEnabled = false
+  @Volatile private var torSocksPort = 9050
+
   private fun configured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
+
+  /** #318: open a connection, routed through the local Tor SOCKS proxy when enabled. */
+  private fun openConn(urlStr: String): HttpURLConnection {
+    val url = URL(urlStr)
+    return if (torEnabled) {
+      val proxy = java.net.Proxy(
+          java.net.Proxy.Type.SOCKS,
+          java.net.InetSocketAddress("127.0.0.1", torSocksPort),
+      )
+      url.openConnection(proxy) as HttpURLConnection
+    } else {
+      url.openConnection() as HttpURLConnection
+    }
+  }
+
+  /** #318: JS toggles Tor routing for media (settingsStore.mediaOverTor). */
+  @ReactMethod
+  fun setTorRouting(enabled: Boolean, socksPort: Int) {
+    torEnabled = enabled
+    if (socksPort > 0) torSocksPort = socksPort
+  }
 
   /** #308: emit an upload-progress device event so the "sending" ring can fill. */
   private fun emitSending(id: String, progress: Double) {
@@ -70,7 +97,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
         val ct = cipher.doFinal(plain)
         val blob = iv + ct // IV || ciphertext(+tag)
 
-        val conn = (URL("$base/data").openConnection() as HttpURLConnection).apply {
+        val conn = openConn("$base/data").apply {
           requestMethod = "POST"
           doOutput = true
           connectTimeout = 15000
@@ -130,7 +157,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
         }
         // #302: present the per-blob capability on GET (proxy 403s without a valid one).
         val url = if (cap.isNotEmpty()) "$base/data/$cid?cap=$cap" else "$base/data/$cid"
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+        val conn = openConn(url).apply {
           requestMethod = "GET"
           connectTimeout = 15000
           readTimeout = 60000

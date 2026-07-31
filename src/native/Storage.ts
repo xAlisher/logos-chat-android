@@ -16,6 +16,12 @@ interface StorageNative {
    * → local file path. Pass "" for cap on legacy markers that predate #302.
    */
   downloadDecrypt(cid: string, key: string, cap: string): Promise<string>;
+  /**
+   * #318 (metadata privacy): route media upload/download through a local SOCKS5 (Tor) proxy
+   * so the storage node sees a Tor exit IP, not the user's real IP. [socksPort] is the local
+   * Tor SOCKS port (embedded Tor, or 9050 for Orbot).
+   */
+  setTorRouting(enabled: boolean, socksPort: number): void;
 }
 
 const Storage = NativeModules.Storage as StorageNative;

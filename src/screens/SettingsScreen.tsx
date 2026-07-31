@@ -97,6 +97,9 @@ export function SettingsScreen() {
   const vibration = useSettingsStore(s => s.vibration);
   const setNotifPref = useSettingsStore(s => s.setNotifPref);
   const setNotif = (pref: NotifPref) => (on: boolean) => setNotifPref(pref, on);
+  // #318: metadata-privacy — route media through Tor.
+  const mediaOverTor = useSettingsStore(s => s.mediaOverTor);
+  const setMediaOverTor = useSettingsStore(s => s.setMediaOverTor);
   // #236: auto-lock when the app goes to background (only meaningful with a PIN).
   const lockOnBackground = useSettingsStore(s => s.lockOnBackground);
   const setLockOnBackground = useSettingsStore(s => s.setLockOnBackground);
@@ -241,6 +244,21 @@ export function SettingsScreen() {
           testID="settings-node-guide">
           <Text style={styles.nodeGuideLink}>How to run your own node ↗</Text>
         </Pressable>
+
+        <Text style={styles.section}>Privacy</Text>
+        <View style={styles.card}>
+          <ToggleRow
+            label="Route media over Tor"
+            sublabel="Hide your IP from the storage node when sending or viewing media. Slower; needs Tor running."
+            value={mediaOverTor}
+            onChange={setMediaOverTor}
+            testID="setting-media-tor"
+          />
+        </View>
+        <Text style={styles.helper}>
+          Media content is always end-to-end encrypted. This also hides the network metadata
+          (your IP) from the node — so it can't tell who is sending or viewing.
+        </Text>
 
         <Text style={styles.section}>Security</Text>
         <View style={styles.card}>

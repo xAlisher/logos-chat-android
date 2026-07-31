@@ -4,6 +4,10 @@
 // persisted in native kv.
 import {create} from 'zustand';
 import LogosChat from '../native/LogosChat';
+import Storage from '../native/Storage';
+
+/** #318: local Tor SOCKS port (Orbot's default; embedded Tor will set its own). */
+const TOR_SOCKS_PORT = 9050;
 
 export const KV_DISPLAY_NAME = 'displayName';
 export const DEFAULT_DISPLAY_NAME = '';
@@ -34,6 +38,14 @@ export const KV_BLE_ENGAGED_PREF = 'bleEngagedPref';
  * a stricter, opt-in security behaviour on top of the cold-launch gate (#232).
  */
 export const KV_LOCK_ON_BACKGROUND = 'lockOnBackground';
+
+/**
+ * #318 (metadata privacy): route media upload/download through Tor so the storage node sees a
+ * Tor exit IP, not the user's real IP. Default OFF (opt-in; costs latency + needs a running
+ * Tor). Empirically validated: direct fetch leaks the real IP; over Tor the node sees only
+ * exit IPs (epic #317).
+ */
+export const KV_MEDIA_OVER_TOR = 'mediaOverTor';
 
 // #232: notification preferences. All default ON. Persisted per device.
 export const KV_NOTIF_LOCAL = 'notifLocal'; // OS notifications while backgrounded
@@ -90,6 +102,8 @@ interface SettingsState {
    * enforced when a PIN is set. Default off (opt-in).
    */
   lockOnBackground: boolean;
+  /** #318: route media through Tor (metadata privacy). Default off (opt-in). */
+  mediaOverTor: boolean;
   /** #232: OS notifications while the app is backgrounded. Default on. */
   localNotifications: boolean;
   /** #232: in-app banners for other chats while foregrounded. Default on. */
@@ -112,6 +126,8 @@ interface SettingsState {
   setBleEngagedPref: (on: boolean) => Promise<void>;
   /** #236: toggle auto-lock (re-lock when the app backgrounds); persisted. */
   setLockOnBackground: (on: boolean) => Promise<void>;
+  /** #318: toggle routing media through Tor; persisted + pushed to the native storage client. */
+  setMediaOverTor: (on: boolean) => Promise<void>;
   /** #186: remember the last radio's BLE address (persisted; null clears it). */
   setLastRadioAddress: (address: string | null) => Promise<void>;
 }
@@ -124,6 +140,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   bleAdvertiseIdentity: false,
   bleEngagedPref: false,
   lockOnBackground: false,
+  mediaOverTor: false,
   localNotifications: true,
   inAppNotifications: true,
   messageSound: true,
@@ -172,6 +189,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const lb = await LogosChat.getSetting(KV_LOCK_ON_BACKGROUND);
       if (lb === 'true') set({lockOnBackground: true});
+    } catch {
+      // keep default
+    }
+    // #318: media-over-Tor defaults OFF — only flip on when explicitly stored 'true'.
+    try {
+      const t = await LogosChat.getSetting(KV_MEDIA_OVER_TOR);
+      const on = t === 'true';
+      if (on) set({mediaOverTor: true});
+      Storage.setTorRouting(on, TOR_SOCKS_PORT);
     } catch {
       // keep default
     }
@@ -256,6 +282,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({lockOnBackground: on});
     try {
       await LogosChat.setSetting(KV_LOCK_ON_BACKGROUND, on ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setMediaOverTor: async (on: boolean) => {
+    if (get().mediaOverTor === on) return;
+    set({mediaOverTor: on});
+    Storage.setTorRouting(on, TOR_SOCKS_PORT); // push to the native storage client immediately
+    try {
+      await LogosChat.setSetting(KV_MEDIA_OVER_TOR, on ? 'true' : 'false');
     } catch {
       // best-effort
     }
