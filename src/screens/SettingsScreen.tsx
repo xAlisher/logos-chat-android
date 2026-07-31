@@ -58,6 +58,10 @@ function Row({
   );
 }
 
+// #318: flip to true once embedded Tor (kmp-tor) is wired — gates the "Route media over Tor"
+// toggle so it never appears before there's a real Tor to route through.
+const TOR_TOGGLE_READY = false;
+
 /** A notification-preference row: label + sublabel on the left, Switch on the right. */
 function ToggleRow({
   label,
@@ -245,20 +249,26 @@ export function SettingsScreen() {
           <Text style={styles.nodeGuideLink}>How to run your own node ↗</Text>
         </Pressable>
 
-        <Text style={styles.section}>Privacy</Text>
-        <View style={styles.card}>
-          <ToggleRow
-            label="Route media over Tor"
-            sublabel="Hide your IP from the storage node when sending or viewing media. Slower; needs Tor running."
-            value={mediaOverTor}
-            onChange={setMediaOverTor}
-            testID="setting-media-tor"
-          />
-        </View>
-        <Text style={styles.helper}>
-          Media content is always end-to-end encrypted. This also hides the network metadata
-          (your IP) from the node — so it can't tell who is sending or viewing.
-        </Text>
+        {/* #318: shown once embedded Tor (kmp-tor) is wired in — hidden until then so the
+            toggle isn't a footgun (enabling it without a running Tor would fail fetches). */}
+        {TOR_TOGGLE_READY && (
+          <>
+            <Text style={styles.section}>Privacy</Text>
+            <View style={styles.card}>
+              <ToggleRow
+                label="Route media over Tor"
+                sublabel="Hide your IP from the storage node when sending or viewing media. Slower; needs Tor running."
+                value={mediaOverTor}
+                onChange={setMediaOverTor}
+                testID="setting-media-tor"
+              />
+            </View>
+            <Text style={styles.helper}>
+              Media content is always end-to-end encrypted. This also hides the network metadata
+              (your IP) from the node — so it can't tell who is sending or viewing.
+            </Text>
+          </>
+        )}
 
         <Text style={styles.section}>Security</Text>
         <View style={styles.card}>
