@@ -117,6 +117,7 @@ import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
 import {useMediaBlob} from '../native/mediaCache';
 import {MediaVideo} from '../components/MediaVideo';
 import {VideoFullscreen} from '../components/VideoFullscreen';
+import {ImageFullscreen} from '../components/ImageFullscreen';
 import {MediaSendBubble} from '../components/MediaSendBubble';
 import Storage from '../native/Storage';
 import {useNodeStore} from '../stores/nodeStore';
@@ -2309,23 +2310,8 @@ export function ChatScreen() {
           setMapTarget(null);
         }}
       />
-      {/* #200: full-screen image viewer — tap anywhere to dismiss. */}
-      <Modal
-        visible={fullscreen != null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setFullscreen(null)}
-        statusBarTranslucent>
-        <Pressable style={styles.fsBackdrop} onPress={() => setFullscreen(null)}>
-          {fullscreen != null && (
-            <Image
-              source={{uri: `file://${fullscreen}`}}
-              style={styles.fsImage}
-              resizeMode="contain"
-            />
-          )}
-        </Pressable>
-      </Modal>
+      {/* #200/#315: full-screen image viewer — pinch-zoom + pan, tap to dismiss. */}
+      <ImageFullscreen path={fullscreen} onClose={() => setFullscreen(null)} />
       {/* #300: fullscreen video player (sound + native controls). */}
       <VideoFullscreen
         path={videoFs?.path ?? null}

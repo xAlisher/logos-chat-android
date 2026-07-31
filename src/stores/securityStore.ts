@@ -5,6 +5,7 @@
 // the session unlock flag, and the destructive native wipe.
 import {create} from 'zustand';
 import LogosChat from '../native/LogosChat';
+import {useChatStore} from './chatStore'; // #328: clear in-memory chat state on wipe
 import {
   makeVerifier,
   parseVerifier,
@@ -196,6 +197,11 @@ export const useSecurityStore = create<SecurityState>((set, get) => ({
     // + images and reopens with a fresh identity. The wiped DB drops the kv, so
     // both verifiers are gone — reflect that in memory and come back unlocked.
     await LogosChat.wipeIdentityAndData();
+    // #328: the native wipe deletes the DB (convoPk autoincrement restarts at 1),
+    // but the JS chatStore survives — so drop its in-memory maps too, else a new
+    // conversation reusing an old convoPk renders the previous identity's cached
+    // messages/system-lines (phantom "joined" lines in a fresh DM).
+    useChatStore.getState().reset();
     set({
       mainVerifier: null,
       duressVerifier: null,

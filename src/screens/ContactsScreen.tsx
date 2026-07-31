@@ -57,6 +57,17 @@ export function ContactsScreen() {
   // #173: search field — filters the (already alpha-sorted) list by label + hex.
   const [query, setQuery] = useState('');
   const visible = useMemo(() => filterContacts(contacts, query), [contacts, query]);
+  // #325: split Labeled (you gave them a label or verified them) from Seen (people
+  // auto-picked-up from group rosters, no label). Fixes the "my contacts filled with
+  // strangers I never added" complaint. Default to Labeled — your own people.
+  const isLabeled = (c: KnownContact) => c.label != null || c.verified;
+  const [tab, setTab] = useState<'labeled' | 'seen'>('labeled');
+  const labeledCount = useMemo(() => contacts.filter(isLabeled).length, [contacts]);
+  const seenCount = contacts.length - labeledCount;
+  const shown = useMemo(
+    () => visible.filter(c => (tab === 'labeled' ? isLabeled(c) : !isLabeled(c))),
+    [visible, tab],
+  );
   // #131: long-press context menu + the address / label editors it can open.
   const [menuContact, setMenuContact] = useState<KnownContact | null>(null);
   const [menuY, setMenuY] = useState(0); // #157: tap Y to anchor the menu
@@ -254,8 +265,27 @@ export function ContactsScreen() {
               testID="contact-search"
             />
           </View>
+          {/* #325: Labeled vs Seen tabs. */}
+          <View style={styles.tabs}>
+            <Pressable
+              style={[styles.tab, tab === 'labeled' && styles.tabActive]}
+              onPress={() => setTab('labeled')}
+              testID="contacts-tab-labeled">
+              <Text style={[styles.tabText, tab === 'labeled' && styles.tabTextActive]}>
+                Labeled {labeledCount > 0 ? `(${labeledCount})` : ''}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.tab, tab === 'seen' && styles.tabActive]}
+              onPress={() => setTab('seen')}
+              testID="contacts-tab-seen">
+              <Text style={[styles.tabText, tab === 'seen' && styles.tabTextActive]}>
+                Seen {seenCount > 0 ? `(${seenCount})` : ''}
+              </Text>
+            </Pressable>
+          </View>
           <FlatList
-            data={visible}
+            data={shown}
             keyExtractor={c => c.address}
             renderItem={renderItem}
             contentContainerStyle={styles.list}
@@ -263,7 +293,13 @@ export function ContactsScreen() {
             ItemSeparatorComponent={() => <View style={styles.sep} />}
             ListEmptyComponent={
               <View style={styles.empty}>
-                <Text style={styles.emptyText}>no contacts match “{query}”</Text>
+                <Text style={styles.emptyText}>
+                  {query.length > 0
+                    ? `no contacts match “${query}”`
+                    : tab === 'labeled'
+                    ? 'no labeled contacts yet — label someone in Seen to keep them here'
+                    : 'no one seen yet'}
+                </Text>
               </View>
             }
           />
@@ -366,6 +402,22 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   menuHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  tabs: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+  },
+  tab: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tabActive: {backgroundColor: colors.accent, borderColor: colors.accent},
+  tabText: {...type.label, color: colors.textDim},
+  tabTextActive: {color: colors.onAccent},
   sep: {height: 1, backgroundColor: colors.border, marginLeft: spacing.lg},
   empty: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl},
   emptyText: {...type.label, color: colors.textDim, textAlign: 'center'},

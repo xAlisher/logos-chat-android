@@ -301,6 +301,14 @@ interface ChatState {
   openMeshChannel: (idx: number, name: string) => Promise<number>;
   /** #167 (Phase 1b): get-or-create a MeshCore ECDH DM conversation (by pubkey). Resolves convoPk. */
   startMeshDm: (pubkeyHex: string, name: string | null) => Promise<number>;
+  /**
+   * #328: drop ALL in-memory state. Called on identity reset/wipe — the native
+   * side deletes the identity + DB, but the JS store survives, and `convoPk` is an
+   * autoincrement that restarts at 1 after the DB is deleted. Without this, a new
+   * conversation reusing an old `convoPk` renders the previous identity's cached
+   * messages/system-lines (bug #328: phantom "joined" lines in a fresh DM).
+   */
+  reset: () => void;
 }
 
 // Pure view helpers live in conversationView.ts (RN-free, unit-tested);
@@ -407,6 +415,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
   reachedEnd: {},
   loadingMore: {},
   activeConvoPk: null,
+
+  reset: () => {
+    // Module-level mutable caches (not in `set` state) — clear in place, and cancel
+    // any outstanding invite timers so they don't fire against the new identity.
+    for (const k of Object.keys(pendingJoins)) delete (pendingJoins as Record<string, unknown>)[k];
+    for (const q of Object.values(pendingInvites)) for (const p of q) clearTimeout(p.timer);
+    for (const k of Object.keys(pendingInvites)) delete (pendingInvites as Record<string, unknown>)[k];
+    for (const k of Object.keys(rebroadcast)) delete (rebroadcast as Record<string, unknown>)[k];
+    ackedGroups.clear();
+    // Zustand state maps — reset to empty so a reused convoPk starts clean.
+    set({
+      conversations: {},
+      meshMap: {},
+      messages: {},
+      members: {},
+      systemLines: {},
+      liveness: {},
+      reachedEnd: {},
+      loadingMore: {},
+      activeConvoPk: null,
+    });
+  },
 
   refreshConversations: async () => {
     const rows: ConversationRow[] = JSON.parse(
