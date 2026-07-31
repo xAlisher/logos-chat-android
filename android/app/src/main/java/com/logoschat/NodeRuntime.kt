@@ -29,6 +29,11 @@ object NodeRuntime {
   // Empty = default fleet behaviour. Read into env before open (the Rust delivery
   // layer reads LOGOS_DELIVERY_FILTERNODE / LOGOS_DELIVERY_LIGHTPUSHNODE, threaded.rs).
   const val KV_DELIVERY_SERVICE_NODE = "deliveryServiceNode"
+  // #319: when Private mode (Tor) is on, a loopback multiaddr pointing at the local
+  // TCP→SOCKS relay (/ip4/127.0.0.1/tcp/<port>/p2p/<realPeerId>). Set by settingsStore
+  // only after the relay is up. Takes precedence over the direct node so delivery
+  // libp2p egresses via a Tor exit. Empty = route delivery directly.
+  const val KV_DELIVERY_RELAY_NODE = "deliveryRelayNode"
   private const val SECURE_PREFS = "logoschat_secure"
   private const val KEY_DB_KEY = "dbKey" // legacy plaintext (pre-#258); migrated below
   private const val KEY_DB_KEY_ENC = "dbKeyEnc" // #258: Keystore-wrapped dbKey
@@ -191,11 +196,15 @@ object NodeRuntime {
   private fun applyDeliveryPeerEnv() {
     try {
       val db = ChatRepo.requireDb()
-      // Override the baked-in self-hosted node (threaded.rs DEFAULT_SERVICE_NODE).
-      // Empty string forces the old preset/fleet behaviour.
-      db.kvGet(KV_DELIVERY_SERVICE_NODE)?.let {
-        Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", it, true)
-        Log.i(TAG, "delivery service node override: '${it}'")
+      // #319: Private mode routes delivery through the local Tor relay — its loopback
+      // multiaddr (set only once the relay is up) wins over the direct node so libp2p
+      // egresses via a Tor exit. Falls back to the custom node, then the baked-in default.
+      val relay = db.kvGet(KV_DELIVERY_RELAY_NODE)?.takeIf { it.isNotEmpty() }
+      val direct = db.kvGet(KV_DELIVERY_SERVICE_NODE)?.takeIf { it.isNotEmpty() }
+      val node = relay ?: direct
+      if (node != null) {
+        Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", node, true)
+        Log.i(TAG, "delivery service node: '${node}'${if (relay != null) " (Tor relay)" else ""}")
       }
     } catch (t: Throwable) {
       Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")

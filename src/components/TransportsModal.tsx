@@ -252,8 +252,9 @@ export function TransportsModal({
             />
           </View>
           <Text style={styles.hint}>
-            Routes media through Tor so the storage node sees a Tor exit, not your IP.
-            Content is always end-to-end encrypted; this hides the network metadata. Slower.
+            Routes media (and, after a restart, message delivery) through Tor, so the node
+            sees a Tor exit — not your IP. Content is always end-to-end encrypted; this hides
+            the network metadata. Slower.
           </Text>
         </Pressable>
       </Pressable>

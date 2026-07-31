@@ -14,14 +14,29 @@ import Tor, {onTorBootstrap} from '../native/Tor';
 const TOR_SOCKS_PORT = 9050;
 
 /**
- * #319: the delivery-over-Tor relay. When Private mode is on we also stand up a local
- * TCP→SOCKS relay to the default delivery node, so the node can be pointed at
- * /ip4/127.0.0.1/tcp/<DELIVERY_RELAY_PORT>/p2p/<peerId> and its libp2p traffic egresses
- * via a Tor exit. Fixed loopback port so the multiaddr is stable.
+ * #319: delivery-over-Tor. When Private mode is on we stand up a local TCP→SOCKS relay to
+ * the delivery node's host:port, then point the node at /ip4/127.0.0.1/tcp/<port>/p2p/<peerId>
+ * (KV `deliveryRelayNode`, read by NodeRuntime at start) so its libp2p egresses via a Tor
+ * exit. Fixed loopback port so the multiaddr is stable across restarts.
  */
-const DELIVERY_RELAY_HOST = 'msg.logos.live';
-const DELIVERY_RELAY_TARGET_PORT = 30304;
 const DELIVERY_RELAY_LOCAL_PORT = 39301;
+/** KV: loopback relay multiaddr the node should dial while Private mode is on (#319). */
+const KV_DELIVERY_RELAY_NODE = 'deliveryRelayNode';
+/** KV: the user's custom delivery node, if any (mirrors NodeRuntime.KV_DELIVERY_SERVICE_NODE). */
+const KV_DELIVERY_SERVICE_NODE = 'deliveryServiceNode';
+/** Default self-hosted delivery node (mirrors threaded.rs DEFAULT_SERVICE_NODE + SettingsScreen). */
+const DEFAULT_DELIVERY_NODE =
+  '/dns4/msg.logos.live/tcp/30304/p2p/16Uiu2HAmNdX1s7wRhygyWKmYiUst84329TSz3byLEP6FjcoxDbH4';
+
+/** Parse a /dns4|ip4/<host>/tcp/<port>/p2p/<peerId> multiaddr → {host, port, peerId}. */
+function parseDeliveryNode(
+  ma: string,
+): {host: string; port: number; peerId: string} | null {
+  // e.g. /dns4/msg.logos.live/tcp/30304/p2p/16Uiu2HAm…
+  const m = ma.match(/^\/(?:dns4|dns6|dns|ip4|ip6)\/([^/]+)\/tcp\/(\d+)\/p2p\/([^/]+)/);
+  if (!m) return null;
+  return {host: m[1], port: Number(m[2]), peerId: m[3]};
+}
 
 // #318: cross-render handles for the in-flight Tor bootstrap so enableTor/cancelTor
 // can coordinate (unsubscribe the progress listener; abort a bootstrap the user cancels).
@@ -355,18 +370,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         // fall back to the default port
       }
       Storage.setTorRouting(true, port);
-      // #319: also stand up the delivery relay (best-effort). The node only uses it if
-      // the delivery service node is pointed at the relay multiaddr.
-      Tor.startDeliveryRelay(
-        DELIVERY_RELAY_HOST,
-        DELIVERY_RELAY_TARGET_PORT,
-        DELIVERY_RELAY_LOCAL_PORT,
-      ).catch(() => {});
       set({mediaOverTor: true, torBusy: false});
       try {
         await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'true');
       } catch {
         // best-effort
+      }
+      // #319: stand up the delivery relay to the CURRENT delivery node's host:port, then
+      // point the node at the loopback relay (KV). Only set the KV AFTER the relay is up,
+      // so we never send the node to a dead relay. Applies to delivery on next node start.
+      try {
+        const custom = (await LogosChat.getSetting(KV_DELIVERY_SERVICE_NODE)) || '';
+        const target = parseDeliveryNode(custom.trim().length > 0 ? custom : DEFAULT_DELIVERY_NODE);
+        if (target != null) {
+          await Tor.startDeliveryRelay(target.host, target.port, DELIVERY_RELAY_LOCAL_PORT);
+          await LogosChat.setSetting(
+            KV_DELIVERY_RELAY_NODE,
+            `/ip4/127.0.0.1/tcp/${DELIVERY_RELAY_LOCAL_PORT}/p2p/${target.peerId}`,
+          );
+        }
+      } catch {
+        // relay failed → leave delivery direct (don't point the node at a dead relay)
       }
     } catch {
       // start/bootstrap failed — leave the toggle off and tear the daemon down.
@@ -397,6 +421,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     Storage.setTorRouting(false, 0);
     try {
       await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'false');
+    } catch {
+      // best-effort
+    }
+    // #319: stop routing delivery over the relay (applies on next node start).
+    try {
+      await LogosChat.setSetting(KV_DELIVERY_RELAY_NODE, '');
     } catch {
       // best-effort
     }
