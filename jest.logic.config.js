@@ -35,5 +35,6 @@ module.exports = {
     '<rootDir>/__tests__/pins.test.ts',
     '<rootDir>/__tests__/reply.test.ts',
     '<rootDir>/__tests__/media.test.ts',
+    '<rootDir>/__tests__/metadataPrivacy.test.ts',
   ],
 };

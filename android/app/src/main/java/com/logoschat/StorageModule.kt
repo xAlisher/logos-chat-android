@@ -88,20 +88,9 @@ class StorageModule(reactContext: ReactApplicationContext) :
     Thread {
       try {
         if (!configured()) throw IllegalStateException("storage not configured")
-        // #320: size padding. Encrypt [4-byte BE realLen][data][zero pad → Padmé bucket]
-        // so the storage node sees only a bucketed size, not the exact file size. The true
-        // length rides inside the ciphertext (E2E); the store2: marker tells the receiver to
-        // strip it. Padmé bounds overhead to ~<=12% while collapsing sizes into few classes.
-        val raw = File(localPath).readBytes()
-        val realLen = raw.size
-        val target = padme((4 + realLen).toLong()).toInt()
-        val plain = ByteArray(target)
-        plain[0] = (realLen ushr 24).toByte()
-        plain[1] = (realLen ushr 16).toByte()
-        plain[2] = (realLen ushr 8).toByte()
-        plain[3] = realLen.toByte()
-        System.arraycopy(raw, 0, plain, 4, realLen)
-        // bytes [4+realLen, target) stay zero (padding)
+        // #320: size padding — [4-byte realLen][data][zero pad → Padmé bucket] so the node
+        // sees only a bucketed size, not the exact file size (MediaPadding, unit-tested #323).
+        val plain = MediaPadding.pad(File(localPath).readBytes())
         // AES-256-GCM: fresh key + IV; store IV as the first bytes of the blob.
         val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
         val iv = ByteArray(IV_LEN).also { SecureRandom().nextBytes(it) }
@@ -156,21 +145,6 @@ class StorageModule(reactContext: ReactApplicationContext) :
     }.start()
   }
 
-  /**
-   * #320: Padmé (Nym / PURB) — round `l` up to a size class. Overhead is bounded to
-   * ~<=1/floor(log2 l) (≈12% for small blobs, less for large), and the number of distinct
-   * on-wire sizes collapses to O(log log), giving each blob a large size-anonymity set.
-   */
-  private fun padme(l: Long): Long {
-    if (l < 2L) return 2L
-    val e = 63 - java.lang.Long.numberOfLeadingZeros(l) // floor(log2 l)
-    val s = (63 - java.lang.Long.numberOfLeadingZeros(e.toLong())) + 1 // floor(log2 e)+1
-    val lastBits = e - s
-    if (lastBits <= 0) return l // tiny blobs: not worth bucketing
-    val mask = (1L shl lastBits) - 1
-    return (l + mask) and mask.inv() // round up to a multiple of 2^lastBits
-  }
-
   @ReactMethod
   fun downloadDecrypt(cid: String, keyB64: String, cap: String, padded: Boolean, promise: Promise) {
     Thread {
@@ -207,18 +181,8 @@ class StorageModule(reactContext: ReactApplicationContext) :
         cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, iv))
         val decrypted = cipher.doFinal(ct)
 
-        // #320: store2 blobs are size-padded — strip the 4-byte length header + zero pad.
-        val plain = if (padded) {
-          if (decrypted.size < 4) throw RuntimeException("padded blob too short")
-          val realLen = ((decrypted[0].toInt() and 0xff) shl 24) or
-            ((decrypted[1].toInt() and 0xff) shl 16) or
-            ((decrypted[2].toInt() and 0xff) shl 8) or
-            (decrypted[3].toInt() and 0xff)
-          if (realLen < 0 || 4 + realLen > decrypted.size) throw RuntimeException("bad padded length")
-          decrypted.copyOfRange(4, 4 + realLen)
-        } else {
-          decrypted
-        }
+        // #320: store2 blobs are size-padded — strip the header + zero pad (MediaPadding).
+        val plain = if (padded) MediaPadding.strip(decrypted) else decrypted
 
         dest.writeBytes(plain)
         promise.resolve(dest.absolutePath)

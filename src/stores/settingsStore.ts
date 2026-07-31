@@ -24,19 +24,14 @@ const DELIVERY_RELAY_LOCAL_PORT = 39301;
 const KV_DELIVERY_RELAY_NODE = 'deliveryRelayNode';
 /** KV: the user's custom delivery node, if any (mirrors NodeRuntime.KV_DELIVERY_SERVICE_NODE). */
 const KV_DELIVERY_SERVICE_NODE = 'deliveryServiceNode';
-/** Default self-hosted delivery node (mirrors threaded.rs DEFAULT_SERVICE_NODE + SettingsScreen). */
-const DEFAULT_DELIVERY_NODE =
-  '/dns4/msg.logos.live/tcp/30304/p2p/16Uiu2HAmNdX1s7wRhygyWKmYiUst84329TSz3byLEP6FjcoxDbH4';
-
-/** Parse a /dns4|ip4/<host>/tcp/<port>/p2p/<peerId> multiaddr → {host, port, peerId}. */
-function parseDeliveryNode(
-  ma: string,
-): {host: string; port: number; peerId: string} | null {
-  // e.g. /dns4/msg.logos.live/tcp/30304/p2p/16Uiu2HAm…
-  const m = ma.match(/^\/(?:dns4|dns6|dns|ip4|ip6)\/([^/]+)\/tcp\/(\d+)\/p2p\/([^/]+)/);
-  if (!m) return null;
-  return {host: m[1], port: Number(m[2]), peerId: m[3]};
-}
+// #319/#323: pure delivery-node helpers live in ./deliveryNode (no native imports) so the
+// routing guarantees are unit-testable; re-exported here for existing call sites.
+import {
+  DEFAULT_DELIVERY_NODE,
+  parseDeliveryNode,
+  relayMultiaddr,
+} from './deliveryNode';
+export {DEFAULT_DELIVERY_NODE, parseDeliveryNode, relayMultiaddr} from './deliveryNode';
 
 // #318: cross-render handles for the in-flight Tor bootstrap so enableTor/cancelTor
 // can coordinate (unsubscribe the progress listener; abort a bootstrap the user cancels).
@@ -381,13 +376,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // so we never send the node to a dead relay. Applies to delivery on next node start.
       try {
         const custom = (await LogosChat.getSetting(KV_DELIVERY_SERVICE_NODE)) || '';
-        const target = parseDeliveryNode(custom.trim().length > 0 ? custom : DEFAULT_DELIVERY_NODE);
-        if (target != null) {
+        const node = custom.trim().length > 0 ? custom : DEFAULT_DELIVERY_NODE;
+        const target = parseDeliveryNode(node);
+        const relay = relayMultiaddr(node, DELIVERY_RELAY_LOCAL_PORT);
+        if (target != null && relay != null) {
           await Tor.startDeliveryRelay(target.host, target.port, DELIVERY_RELAY_LOCAL_PORT);
-          await LogosChat.setSetting(
-            KV_DELIVERY_RELAY_NODE,
-            `/ip4/127.0.0.1/tcp/${DELIVERY_RELAY_LOCAL_PORT}/p2p/${target.peerId}`,
-          );
+          await LogosChat.setSetting(KV_DELIVERY_RELAY_NODE, relay);
         }
       } catch {
         // relay failed → leave delivery direct (don't point the node at a dead relay)
