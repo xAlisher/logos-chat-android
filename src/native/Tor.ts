@@ -18,6 +18,13 @@ interface TorNative {
   start(): Promise<number>;
   stop(): void;
   getSocksPort(): Promise<number>;
+  /**
+   * #319: start a local TCP→SOCKS relay for the delivery path. Requires Tor running.
+   * Point the delivery service node at /ip4/127.0.0.1/tcp/<localPort>/p2p/<same peerId>
+   * so the node dials the relay → Tor → the real node (which sees a Tor exit IP).
+   */
+  startDeliveryRelay(host: string, port: number, localPort: number): Promise<number>;
+  stopDeliveryRelay(): void;
 }
 
 const Tor = NativeModules.Tor as TorNative;

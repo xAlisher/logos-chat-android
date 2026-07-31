@@ -13,6 +13,16 @@ import Tor, {onTorBootstrap} from '../native/Tor';
  */
 const TOR_SOCKS_PORT = 9050;
 
+/**
+ * #319: the delivery-over-Tor relay. When Private mode is on we also stand up a local
+ * TCP→SOCKS relay to the default delivery node, so the node can be pointed at
+ * /ip4/127.0.0.1/tcp/<DELIVERY_RELAY_PORT>/p2p/<peerId> and its libp2p traffic egresses
+ * via a Tor exit. Fixed loopback port so the multiaddr is stable.
+ */
+const DELIVERY_RELAY_HOST = 'msg.logos.live';
+const DELIVERY_RELAY_TARGET_PORT = 30304;
+const DELIVERY_RELAY_LOCAL_PORT = 39301;
+
 // #318: cross-render handles for the in-flight Tor bootstrap so enableTor/cancelTor
 // can coordinate (unsubscribe the progress listener; abort a bootstrap the user cancels).
 let torUnsub: (() => void) | null = null;
@@ -345,6 +355,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         // fall back to the default port
       }
       Storage.setTorRouting(true, port);
+      // #319: also stand up the delivery relay (best-effort). The node only uses it if
+      // the delivery service node is pointed at the relay multiaddr.
+      Tor.startDeliveryRelay(
+        DELIVERY_RELAY_HOST,
+        DELIVERY_RELAY_TARGET_PORT,
+        DELIVERY_RELAY_LOCAL_PORT,
+      ).catch(() => {});
       set({mediaOverTor: true, torBusy: false});
       try {
         await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'true');
@@ -368,6 +385,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   disableTor: async () => {
     set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
     try {
+      Tor.stopDeliveryRelay(); // #319
+    } catch {
+      // best-effort
+    }
+    try {
       Tor.stop();
     } catch {
       // best-effort
@@ -386,6 +408,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     torCancelled = true;
     torUnsub?.();
     torUnsub = null;
+    try {
+      Tor.stopDeliveryRelay(); // #319
+    } catch {
+      // best-effort
+    }
     try {
       Tor.stop();
     } catch {

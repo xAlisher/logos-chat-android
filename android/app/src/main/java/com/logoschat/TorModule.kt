@@ -33,6 +33,7 @@ class TorModule(private val ctx: ReactApplicationContext) :
 
   @Volatile private var runtime: TorRuntime? = null
   @Volatile private var socksPort = 0
+  @Volatile private var relay: TorSocksRelay? = null
 
   private fun emit(name: String, data: WritableMap) {
     try {
@@ -99,5 +100,33 @@ class TorModule(private val ctx: ReactApplicationContext) :
   @ReactMethod
   fun getSocksPort(promise: Promise) {
     promise.resolve(socksPort)
+  }
+
+  /**
+   * #319: start a local TCP→SOCKS relay for the DELIVERY path. Requires Tor already
+   * running (SOCKS listener up). Resolves the loopback port the caller should point the
+   * delivery service node at (/ip4/127.0.0.1/tcp/<port>/p2p/<same peerId>).
+   */
+  @ReactMethod
+  fun startDeliveryRelay(host: String, port: Int, localPort: Int, promise: Promise) {
+    try {
+      if (socksPort <= 0) {
+        promise.reject("tor_relay", "tor not running (no SOCKS port)")
+        return
+      }
+      relay?.stop()
+      val r = TorSocksRelay(socksPort, host, port, localPort)
+      val bound = r.start()
+      relay = r
+      promise.resolve(bound)
+    } catch (t: Throwable) {
+      promise.reject("tor_relay", t.message, t)
+    }
+  }
+
+  @ReactMethod
+  fun stopDeliveryRelay() {
+    relay?.stop()
+    relay = null
   }
 }
