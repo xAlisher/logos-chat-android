@@ -13,6 +13,12 @@
 // per-blob fetch capability issued by the storage proxy; legacy markers (5 fields) omit it.
 
 export const MEDIA_PREFIX = 'store1:';
+// #320: `store2:` marks a SIZE-PADDED blob — the ciphertext is padded to a Padmé size
+// bucket before upload (the true length rides in a 4-byte header inside the ciphertext),
+// so the storage node sees only a bucketed size, not the exact file size. Same field
+// layout as store1; only the download path differs (strip the header/padding after
+// decrypt). Legacy `store1:` (unpadded) is still parsed so older/in-flight media works.
+export const MEDIA_PREFIX_V2 = 'store2:';
 
 export interface MediaRef {
   /** Logos Storage content id (hash of the ciphertext). */
@@ -25,22 +31,28 @@ export interface MediaRef {
   height: number;
   /** #302: per-blob fetch capability (hex HMAC issued by the proxy on upload). */
   cap?: string;
+  /** #320: blob is size-padded (store2). The download path strips the header/padding.
+   *  Absent/false ⇒ legacy store1 (unpadded). New sends are always padded. */
+  padded?: boolean;
 }
 
-/** `store1:<cid>:<key>:<mime>:<w>:<h>[:<cap>]`. */
+/** `store{1,2}:<cid>:<key>:<mime>:<w>:<h>[:<cap>]`. New sends emit store2 (padded). */
 export function encodeMedia(m: MediaRef): string {
-  const head = `${MEDIA_PREFIX}${m.cid}:${m.key}:${m.mime}:${m.width}:${m.height}`;
+  const prefix = m.padded === false ? MEDIA_PREFIX : MEDIA_PREFIX_V2;
+  const head = `${prefix}${m.cid}:${m.key}:${m.mime}:${m.width}:${m.height}`;
   return m.cap ? `${head}:${m.cap}` : head;
 }
 
 export function isMediaContent(s: string): boolean {
-  return s.startsWith(MEDIA_PREFIX);
+  return s.startsWith(MEDIA_PREFIX) || s.startsWith(MEDIA_PREFIX_V2);
 }
 
-/** Parse a `store1:` marker; null for non-markers or malformed input. */
+/** Parse a `store1:`/`store2:` marker; null for non-markers or malformed input. */
 export function parseMedia(s: string): MediaRef | null {
-  if (!s.startsWith(MEDIA_PREFIX)) return null;
-  const parts = s.slice(MEDIA_PREFIX.length).split(':');
+  const v2 = s.startsWith(MEDIA_PREFIX_V2);
+  const prefix = v2 ? MEDIA_PREFIX_V2 : MEDIA_PREFIX;
+  if (!v2 && !s.startsWith(MEDIA_PREFIX)) return null;
+  const parts = s.slice(prefix.length).split(':');
   if (parts.length !== 5 && parts.length !== 6) return null;
   const [cid, key, mime, w, h, cap] = parts;
   const width = Number(w);
@@ -48,7 +60,7 @@ export function parseMedia(s: string): MediaRef | null {
   if (!cid || !key || !mime || !Number.isFinite(width) || !Number.isFinite(height)) {
     return null;
   }
-  return {cid, key, mime, width, height, ...(cap ? {cap} : {})};
+  return {cid, key, mime, width, height, padded: v2, ...(cap ? {cap} : {})};
 }
 
 /** Friendly one-line label for list previews / notifications / reply quotes. */

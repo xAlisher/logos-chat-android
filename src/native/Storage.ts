@@ -15,7 +15,7 @@ interface StorageNative {
    * GET ciphertext by cid (presenting [cap], #302), decrypt with key(base64), cache locally
    * → local file path. Pass "" for cap on legacy markers that predate #302.
    */
-  downloadDecrypt(cid: string, key: string, cap: string): Promise<string>;
+  downloadDecrypt(cid: string, key: string, cap: string, padded: boolean): Promise<string>;
   /**
    * #318 (metadata privacy): route media upload/download through a local SOCKS5 (Tor) proxy
    * so the storage node sees a Tor exit IP, not the user's real IP. [socksPort] is the local

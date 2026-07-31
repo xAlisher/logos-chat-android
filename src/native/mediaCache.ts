@@ -37,13 +37,13 @@ function release() {
 }
 
 /** One shared download+decrypt per cid, cached and throttled. */
-function fetchBlob(cid: string, key: string, cap: string): Promise<string> {
+function fetchBlob(cid: string, key: string, cap: string, padded: boolean): Promise<string> {
   const cached = pathByCid.get(cid);
   if (cached != null) return Promise.resolve(cached);
   const existing = inflight.get(cid);
   if (existing != null) return existing;
   const p = acquire()
-    .then(() => Storage.downloadDecrypt(cid, key, cap))
+    .then(() => Storage.downloadDecrypt(cid, key, cap, padded))
     .then(path => {
       pathByCid.set(cid, path);
       return path;
@@ -68,6 +68,7 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
   const cid = ref?.cid ?? null;
   const key = ref?.key ?? null;
   const cap = ref?.cap ?? ''; // #302: legacy markers have none → "" (proxy 403s → placeholder)
+  const padded = ref?.padded ?? false; // #320: store2 blobs are size-padded → strip on decrypt
   const [state, setState] = useState<MediaState>(() =>
     cid != null && pathByCid.has(cid)
       ? {status: 'ready', path: pathByCid.get(cid)!}
@@ -85,7 +86,7 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
     }
     let alive = true;
     setState({status: 'loading'});
-    fetchBlob(cid, key, cap)
+    fetchBlob(cid, key, cap, padded)
       .then(path => {
         if (alive) setState({status: 'ready', path});
       })
@@ -99,6 +100,6 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
       alive = false;
     };
     // Primitives only — NOT the `ref` object (which is new each render → re-fire storm).
-  }, [cid, key, cap]);
+  }, [cid, key, cap, padded]);
   return state;
 }
