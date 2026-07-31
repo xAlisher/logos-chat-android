@@ -46,15 +46,22 @@ talk to.
 ## What we do NOT claim
 
 - We do **not** claim to hide *that* you use Peers from a network observer.
-- We do **not** yet hide your IP on the messaging path (only media, via Private mode) — #319.
-- We do **not** defeat a determined adversary correlating traffic *timing* — that needs a
-  mature mixnet (#322), which we track upstream and will adopt when it's real.
+- We do **not** hide the **conversation graph** (who talks to whom). With Private mode on, the
+  node can't tie traffic to your **IP** — but it can still see the *shape* of encrypted
+  conversations: which content topics a session **subscribes** to (its conversation set) and
+  publish→fetch **timing**. Hiding that needs a **mixnet**, not just Tor.
+- We do **not** defeat a determined adversary correlating traffic *timing*.
 
 ## The direction
 
-- **Near-term:** Tor for media (done) → Tor for delivery (#319) → size/timing hardening (#320
-  size done; timing pending).
-- **Long-term:** a real **mix network** (Waku mix / Nym) once mature — that's the proper fix
-  for who-talks-to-whom, and it supersedes the Tor stopgap.
+Anonymity is a **pluggable transport pipe** under Logos messaging — never a replacement for it
+(see **ADR 0001**, `docs/adr/0001-anonymity-transport-nym-now-waku-mix-later.md`).
+
+- **Done:** Tor for media (#318) + delivery (#319); blob **size padding** (#320); honest wording (#321).
+- **Next — an external mixnet tunnel (Nym, #334):** a shippable IP-metadata upgrade over Tor,
+  opt-in. Still doesn't hide the conversation graph.
+- **Endgame — native Waku mix (#335):** the same-stack mixnet (no second network/token) that can
+  cover the Waku layer itself once it's mainnet-ready (today it's a send-only testnet PoC).
+  That's the proper fix for who-talks-to-whom.
 
 If you found a gap not listed here, please open an issue — honest threat-modeling is the point.
