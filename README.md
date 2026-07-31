@@ -64,6 +64,7 @@ npx jest --config jest.logic.config.js
 
 ## Docs
 
+- [**Privacy**](docs/privacy.md) — the honest content-vs-metadata breakdown: what's protected, what isn't yet, and the threat model.
 - [**Architecture**](docs/architecture.md) — FFI surface, native/JS split, persistence.
 - [**MeshCore config protocol**](docs/meshcore-config-protocol.md) — the companion BLE
   wire protocol, validated against firmware source.

@@ -13,6 +13,7 @@ import {Animated, Pressable, StyleSheet} from 'react-native';
 import {Logo} from './Logo';
 import {MeshLogo} from './MeshLogo';
 import {BleLogo} from './BleLogo';
+import {ShieldLogo} from './ShieldLogo';
 import {TransportsModal} from './TransportsModal';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -30,7 +31,7 @@ function TransportGlyph({
   kind,
 }: {
   tri: Tri;
-  kind: 'logos' | 'mesh' | 'ble';
+  kind: 'logos' | 'mesh' | 'ble' | 'tor';
 }) {
   const breathing = tri === 'connecting';
   const opacity = useRef(new Animated.Value(1)).current;
@@ -50,15 +51,18 @@ function TransportGlyph({
     return undefined;
   }, [breathing, opacity]);
 
-  const color = triColorFor(tri, kind);
+  // Tor is a privacy layer over Logos, so it borrows the logos tri palette.
+  const color = triColorFor(tri, kind === 'tor' ? 'logos' : kind);
   return (
     <Animated.View style={{opacity}}>
       {kind === 'logos' ? (
         <Logo size={GLYPH} color={color} strokeWidth={2} />
       ) : kind === 'mesh' ? (
         <MeshLogo size={GLYPH} color={color} strokeWidth={2} />
-      ) : (
+      ) : kind === 'ble' ? (
         <BleLogo size={GLYPH} color={color} strokeWidth={2} />
+      ) : (
+        <ShieldLogo size={GLYPH} color={color} strokeWidth={2} />
       )}
     </Animated.View>
   );
@@ -70,6 +74,8 @@ export function TransportPill() {
   const bleStatus = useBleStore(s => s.status);
   const meshConfigured = useSettingsStore(s => s.meshConfigured);
   const bleConfigured = useSettingsStore(s => s.bleConfigured);
+  const mediaOverTor = useSettingsStore(s => s.mediaOverTor); // #320: private-mode badge
+  const torBusy = useSettingsStore(s => s.torBusy);
   const [open, setOpen] = useState(false);
 
   // #233: the Logos node is the PRIMARY transport — always shown, red/failed when
@@ -80,6 +86,9 @@ export function TransportPill() {
   const ble = bleTri(bleStatus);
   const showMesh = meshConfigured && mesh !== 'offline';
   const showBle = bleConfigured && ble !== 'offline';
+  // #320: show a shield badge when private mode (Tor) is on or bootstrapping.
+  const torTri: Tri = torBusy ? 'connecting' : mediaOverTor ? 'online' : 'offline';
+  const showTor = torTri !== 'offline';
 
   return (
     <>
@@ -91,6 +100,7 @@ export function TransportPill() {
         <TransportGlyph tri={logosTri(nodeStatus)} kind="logos" />
         {showMesh && <TransportGlyph tri={mesh} kind="mesh" />}
         {showBle && <TransportGlyph tri={ble} kind="ble" />}
+        {showTor && <TransportGlyph tri={torTri} kind="tor" />}
       </Pressable>
       <TransportsModal visible={open} onClose={() => setOpen(false)} />
     </>

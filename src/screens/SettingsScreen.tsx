@@ -59,9 +59,10 @@ function Row({
   );
 }
 
-// #318: embedded Tor (kmp-tor) is wired in (TorModule.kt + TorBootstrapModal), so the
-// "Route media over Tor" toggle is live.
-const TOR_TOGGLE_READY = true;
+// #318/#320: the Tor control moved to the transports surface (TransportsModal →
+// "Private mode"), where connection-level state lives — so the Settings→Privacy toggle
+// is retired to avoid two homes for one switch. Kept as a flag for easy rollback.
+const TOR_TOGGLE_READY = false;
 
 /** A notification-preference row: label + sublabel on the left, Switch on the right. */
 function ToggleRow({

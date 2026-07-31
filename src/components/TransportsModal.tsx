@@ -19,6 +19,7 @@ import {colors, type, spacing, radii, layout} from '../theme';
 import {Logo} from './Logo';
 import {MeshLogo} from './MeshLogo';
 import {BleLogo} from './BleLogo';
+import {ShieldLogo} from './ShieldLogo';
 import {TRI_COLOR, triColorFor, logosTri, meshTri, bleTri, type Tri} from './tri';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -68,6 +69,20 @@ export function TransportsModal({
   const bleRefreshAdvertiseId = useBleStore(s => s.refreshAdvertiseId);
   const bleAdvertiseIdentity = useSettingsStore(s => s.bleAdvertiseIdentity); // #214
   const setBleAdvertiseIdentity = useSettingsStore(s => s.setBleAdvertiseIdentity);
+
+  // #320/#318: Private mode (Tor) — a privacy LAYER over Logos, not a transport.
+  const mediaOverTor = useSettingsStore(s => s.mediaOverTor);
+  const torBusy = useSettingsStore(s => s.torBusy);
+  const torPct = useSettingsStore(s => s.torBootstrapPercent);
+  const enableTor = useSettingsStore(s => s.enableTor);
+  const disableTor = useSettingsStore(s => s.disableTor);
+  const cancelTor = useSettingsStore(s => s.cancelTor);
+  const torTri: Tri = torBusy ? 'connecting' : mediaOverTor ? 'online' : 'offline';
+  const onToggleTor = (next: boolean) => {
+    if (next) enableTor().catch(() => {});
+    else if (torBusy) cancelTor(); // toggled off mid-bootstrap → abort
+    else disableTor();
+  };
 
   const logosState = logosTri(nodeStatus);
   const meshState = meshTri(meshStatus);
@@ -209,6 +224,37 @@ export function TransportsModal({
               />
             </View>
           )}
+
+          {/* --- Private mode (Tor) — a privacy LAYER over Logos, not a transport --- */}
+          <View style={styles.divider} />
+          <View style={styles.row}>
+            <ShieldLogo size={24} color={triColorFor(torTri, 'logos')} strokeWidth={2} />
+            <View style={styles.rowText}>
+              <Text style={styles.name}>Private mode</Text>
+              <Text
+                style={[
+                  styles.status,
+                  torTri !== 'offline' && {color: triColorFor(torTri, 'logos')},
+                ]}>
+                {torBusy
+                  ? `Starting Tor… ${torPct}%`
+                  : mediaOverTor
+                  ? 'On — media routed over Tor'
+                  : 'Off'}
+              </Text>
+            </View>
+            <Switch
+              testID="tor-switch"
+              value={mediaOverTor || torBusy}
+              onValueChange={onToggleTor}
+              trackColor={{false: colors.border, true: colors.accent}}
+              thumbColor={colors.text}
+            />
+          </View>
+          <Text style={styles.hint}>
+            Routes media through Tor so the storage node sees a Tor exit, not your IP.
+            Content is always end-to-end encrypted; this hides the network metadata. Slower.
+          </Text>
         </Pressable>
       </Pressable>
     </Modal>
@@ -248,6 +294,8 @@ const styles = StyleSheet.create({
   },
   subName: {...type.body, color: colors.text},
   status: {...type.label, color: colors.textDim},
+  divider: {height: 1, backgroundColor: colors.border, marginVertical: spacing.xs},
+  hint: {...type.label, color: colors.textFaint, lineHeight: 16},
   setupBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
