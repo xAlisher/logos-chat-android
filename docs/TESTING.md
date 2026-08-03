@@ -21,6 +21,8 @@ identity on the device.
 
 - **Your address & icon.** You get a hex address and a pixel-identicon that is *you*
   everywhere. Share your address (My address → QR / share) so others can add you.
+- **Set an avatar (optional).** Side menu → tap your avatar (it has a small pencil badge) →
+  *Set photo*. It replaces the identicon for your contacts; identicon stays the default.
 - **Add a contact.** Scan their QR or paste their address → optionally label them →
   Add. Labels are local and never leave your device.
 - **Set a PIN (optional but recommended).** Settings → Security → Set PIN. A 6-digit
@@ -60,6 +62,27 @@ identity on the device.
 - [ ] A group where some members are mesh-only and one member has both mesh + internet:
       can everyone still reach each other through that one bridge?
 
+### 5. New in v0.8.x — avatars, sharing contacts, privacy-hardened groups
+- [ ] **Custom avatar** (#314): side menu → tap your avatar (pencil badge) → **Set photo**.
+      Peers should see your photo instead of the identicon — in chats, the list, and your
+      QR code. Try **Change** and **Remove** from the same menu (Remove falls back to the
+      identicon for everyone).
+- [ ] **Share a contact** (#330 / #342): open a contact's address (chat ⋯ → *Show address*,
+      or a contact in Contacts). **Send** drops a tappable **contact card** into a chosen
+      chat — the recipient taps **Add** to start a conversation with that person. **Share**
+      sends the address out via the OS share sheet (QR image or text).
+- [ ] **Group sync-loss warning** (#348): if a group goes quiet for you (you stop receiving,
+      and your own messages don't land) you should now see a **"You've fallen out of sync —
+      ask to be re-added"** line instead of the group silently dying. Hard to force on
+      purpose — but **report it if a group goes silent WITHOUT that line**, or if the line
+      appears when the group is actually fine.
+- [ ] **Privacy-hardened groups** (#344): create a group with **Storage off** (toggle on the
+      New-group screen, or *Group Info → Storage*). The group becomes **text & voice only** —
+      no photos, video, or GIFs — and a **lock badge** appears on its avatar everywhere.
+      Check: media buttons disappear in the composer, existing media shows a "media disabled"
+      placeholder, an in-chat line notes the change, and other members see the same. Tap the
+      **(i)** for what it protects (and what it doesn't). Voice notes and text still work.
+
 ## Known limitations (no need to report these)
 
 - **Groups don't survive a Logos node restart yet.** A group created in an earlier
@@ -67,6 +90,8 @@ identity on the device.
   (Tracked; a rebuildable-snapshot fix is in progress.)
 - MeshCore/BLE media (images, voice) over the radio isn't wired yet — text + location.
 - First mesh send after connecting can take ~a minute (lightpush peer warm-up).
+- **Storage-off groups block media on purpose.** No photo/video/GIF buttons and a "media
+  disabled" placeholder on old media is the feature, not a bug — text & voice still work.
 
 ## How to report
 
@@ -74,7 +99,7 @@ Open an issue at **https://github.com/xAlisher/peers/issues** with:
 
 - **What you did** (steps), **what you expected**, **what happened**.
 - **Which transport** (Logos / MeshCore / Bluetooth) and whether you had internet.
-- **App version** — Menu → About (e.g. `v0.7.63`), and your device model + Android version.
+- **App version** — Menu → About (e.g. `v0.8.3`), and your device model + Android version.
 - A screenshot if it's visual.
 
 If something crashed, a logcat helps a lot if you can grab one:
