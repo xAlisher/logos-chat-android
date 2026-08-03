@@ -17,6 +17,8 @@ export function ForwardPicker({
   onPick: (convoPk: number) => void;
 }) {
   const conversations = useChatStore(s => s.conversations);
+  // #344: a storage-off group's avatar carries a lock badge here too.
+  const storageOff = useChatStore(s => s.storageOff);
   const rows = sortedConversations(Object.values(conversations));
 
   return (
@@ -43,6 +45,7 @@ export function ForwardPicker({
                   seed={item.peerAddress ?? String(item.convoPk)}
                   kind={convoKind(item)}
                   size={32}
+                  locked={item.isGroup && (storageOff[item.convoPk] ?? false)}
                 />
                 <Text style={styles.name} numberOfLines={1}>
                   {convoDisplayName(item)}

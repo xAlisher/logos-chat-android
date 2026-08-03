@@ -15,6 +15,7 @@ import {displayBody} from '../messages/reply';
 import {isMediaContent, mediaLabel} from '../messages/media';
 import {encodePin} from '../messages/pins';
 import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
+import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -295,6 +296,14 @@ interface ChatState {
   clearMemberStatuses: (convoPk: number) => void;
   /** #228: load persisted system notes for a thread into memory (on thread open). */
   hydrateSystemLines: (convoPk: number) => Promise<void>;
+  /** #344: per-group storage opt-out — true ⇒ this group is text-only (no media
+   *  sent/fetched), folded from the newest gcfg1: marker + persisted to KV. */
+  storageOff: Record<number, boolean>;
+  /** #344: creator-only — flip a group's storage on/off. Broadcasts a gcfg1: marker,
+   *  updates `storageOff[convoPk]`, and persists to KV. No-op for non-creators. */
+  setGroupStorage: (convoPk: number, off: boolean) => Promise<void>;
+  /** #344: load the persisted storage-off flag for a group into memory (on open). */
+  hydrateGroupStorage: (convoPk: number) => Promise<void>;
   /** #112: 'live' | 'dead' | 'unknown' per group, filled lazily by probeGroup. */
   liveness: Record<number, string>;
   /** #112: probe whether the lib can still operate this group. */
@@ -390,6 +399,13 @@ function persistSystemLines(convoPk: number, notes: SystemNote[]): void {
   LogosChat.setSetting(sysLineKey(convoPk), JSON.stringify(notes)).catch(() => {});
 }
 
+// #344: per-group storage-off flag persists in the KV store so the text-only mode
+// survives an app restart (like the folded pfp/systemline state).
+const gcfgKey = (convoPk: number) => `gcfg:${convoPk}`;
+function persistGroupStorage(convoPk: number, off: boolean): void {
+  LogosChat.setSetting(gcfgKey(convoPk), off ? 'off' : 'on').catch(() => {});
+}
+
 /**
  * #195: how long we wait for an invitee's `members_changed` "joined" before we
  * stop pretending it's on its way. An invitee whose node has no subscribed peers
@@ -427,6 +443,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messages: {},
   members: {},
   systemLines: {},
+  storageOff: {},
   liveness: {},
   reachedEnd: {},
   loadingMore: {},
@@ -447,6 +464,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: {},
       members: {},
       systemLines: {},
+      storageOff: {},
       liveness: {},
       reachedEnd: {},
       loadingMore: {},
@@ -1353,6 +1371,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  // #344: creator-only — flip a group's storage on/off. Guard on createdByMe (the
+  // only per-conversation "am I the creator" signal we store; there is no creator
+  // ADDRESS persisted, hence the trusted-community MVP caveat on the inbound fold).
+  // Broadcast a gcfg1: marker so members enforce it, set state, and persist to KV.
+  setGroupStorage: async (convoPk: number, off: boolean) => {
+    const convo = get().conversations[convoPk];
+    if (!convo?.createdByMe) return; // creator-gated
+    // #344: announce the transition once (guard on an actual change — undefined
+    // normalises to storage-on/off=false, the default — so an idempotent re-set is
+    // silent). pushSystemLine also dedups consecutive dupes as a backstop.
+    const wasOff = get().storageOff[convoPk] ?? false;
+    set(s => ({storageOff: {...s.storageOff, [convoPk]: off}}));
+    persistGroupStorage(convoPk, off);
+    if (wasOff !== off) {
+      get().pushSystemLine(
+        convoPk,
+        off
+          ? 'Storage turned off — text & voice only'
+          : 'Storage turned on — media enabled',
+      );
+    }
+    try {
+      await get().send(convoPk, encodeGroupCfg({storageOff: off}));
+    } catch (e: any) {
+      useNodeStore.setState({error: `couldn't update storage setting: ${e?.message ?? e}`});
+    }
+  },
+
+  hydrateGroupStorage: async (convoPk: number) => {
+    // Already in memory (set/folded this session) → nothing to load.
+    if (get().storageOff[convoPk] != null) return;
+    try {
+      const raw = await LogosChat.getSetting(gcfgKey(convoPk));
+      if (raw == null || raw.length === 0) return;
+      const off = raw === 'off';
+      set(s =>
+        s.storageOff[convoPk] != null
+          ? {}
+          : {storageOff: {...s.storageOff, [convoPk]: off}},
+      );
+    } catch {
+      // corrupt/missing KV — treat as storage on (default), non-fatal.
+    }
+  },
+
   probeGroup: async (convoPk: number) => {
     const state = await LogosChat.groupLiveness(convoPk);
     set(s => ({liveness: {...s.liveness, [convoPk]: state}}));
@@ -1906,6 +1969,43 @@ addLogosChatListener(e => {
         const ref = parsePfp(e.detail);
         if (ref != null) {
           useAvatarStore.getState().setContactAvatar(e.sender, ref);
+        }
+      }
+    }
+    // #344: an inbound gcfg1: marker announces the group's storage on/off choice.
+    // Honor the newest (this event IS the newest for its convo). MVP caveat: for a
+    // trusted community we do NOT hard-verify sender==creator here — no creator
+    // ADDRESS is stored, only a local createdByMe flag — so any member's gcfg1:
+    // marker is honored. Residual: a malicious member could flip the flag (a
+    // usability regression, not a storage leak — it can only make the group MORE
+    // restrictive; media a member declines to send is never uploaded). Folded
+    // control message, never a bubble (native + timeline suppression).
+    if (
+      e.kind === 'message' &&
+      e.direction === 'in' &&
+      e.convoPk != null &&
+      e.detail != null &&
+      isGroupCfgContent(e.detail)
+    ) {
+      const cfg = parseGroupCfg(e.detail);
+      if (cfg != null) {
+        const convoPk = e.convoPk;
+        // #344: a live inbound marker is a real transition (a member sees the
+        // creator's flip) — announce it once, guarded on an actual change.
+        const wasOff = useChatStore.getState().storageOff[convoPk] ?? false;
+        useChatStore.setState(st => ({
+          storageOff: {...st.storageOff, [convoPk]: cfg.storageOff},
+        }));
+        persistGroupStorage(convoPk, cfg.storageOff);
+        if (wasOff !== cfg.storageOff) {
+          useChatStore
+            .getState()
+            .pushSystemLine(
+              convoPk,
+              cfg.storageOff
+                ? 'Storage turned off — text & voice only'
+                : 'Storage turned on — media enabled',
+            );
         }
       }
     }

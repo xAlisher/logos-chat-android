@@ -113,6 +113,7 @@ import {
 } from '../messages/reactions';
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
 import {isPfpContent, foldPfps} from '../messages/pfp';
+import {isGroupCfgContent, foldGroupCfgs} from '../messages/groupcfg';
 import {isLeaveContent} from '../messages/leave';
 import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
 import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
@@ -335,12 +336,16 @@ function Bubble({
   quoted,
   replyText,
   onQuotedPress,
+  storageOff,
 }: {
   msg: Message;
   attribution: Attribution | null;
   // #251: the sender identicon's color follows the conversation's transport
   // (mesh green / BLE blue / Logos orange), not a hardcoded contact orange.
   avatarKind: AvatarKind;
+  // #344: this group has storage off (text-only) → media bubbles render a
+  // placeholder and never fetch from Storage; the sender identicon skips its avatar.
+  storageOff?: boolean;
   onRetry: () => void;
   onLongPress: (pageY: number) => void;
   onOpenImage: (path: string) => void;
@@ -386,7 +391,10 @@ function Bubble({
   const imgDims = image != null ? fitImage(image.meta.width, image.meta.height) : null;
   // #300: store1: media hosted on Logos Storage — fetched+decrypted on demand.
   const mediaRef = isMediaContent(raw) ? parseMedia(raw) : null;
-  const media = useMediaBlob(mediaRef);
+  // #344: in a storage-off group, a media message renders a placeholder and MUST
+  // NOT fetch — pass null to useMediaBlob so no Storage request ever fires.
+  const mediaBlocked = storageOff === true && mediaRef != null;
+  const media = useMediaBlob(mediaBlocked ? null : mediaRef);
   const mediaDims = mediaRef != null ? fitImage(mediaRef.width, mediaRef.height) : null;
   const relay = parseRelay(raw);
   const displayText = relay?.text ?? raw;
@@ -407,7 +415,7 @@ function Bubble({
           A tiny identicon (#118) makes senders distinct in a busy group thread. */}
       {effAttr != null && (
         <View style={styles.attrRow} testID={`attr-${effAttr.address}`}>
-          <HexAvatar seed={effAttr.address} kind={avatarKind} size={16} />
+          <HexAvatar seed={effAttr.address} kind={avatarKind} size={16} disableImage={storageOff} />
           {/* #122: primary line white; the hex is the gray secondary when a
               label exists, and the white primary itself when there's no label. */}
           {effAttr.label != null ? (
@@ -473,7 +481,21 @@ function Bubble({
             </Text>
           </Pressable>
         )}
-        {mediaRef != null && mediaDims != null ? (
+        {mediaBlocked && mediaDims != null ? (
+          // #344: storage-off group — never fetch/show the blob. Show a placeholder
+          // sized to the bubble so the timeline doesn't jump.
+          <View
+            style={[
+              styles.mediaBox,
+              {width: mediaDims.width, height: mediaDims.height},
+            ]}
+            testID="media-disabled">
+            <Text
+              style={[type.caption, {color: own ? colors.onAccent : colors.textDim, textAlign: 'center', paddingHorizontal: spacing.md}]}>
+              media disabled in this group
+            </Text>
+          </View>
+        ) : mediaRef != null && mediaDims != null ? (
           // #300: Logos-Storage media. Ready → GIFs animate in <Image> (Fresco
           // animated-gif); videos play muted+looping in <MediaVideo>. Loading/error keep
           // the bubble sized so the timeline doesn't jump.
@@ -655,6 +677,9 @@ export function ChatScreen() {
   const recreateGroup = useChatStore(s => s.recreateGroup);
   const liveness = useChatStore(s => s.liveness[convoPk]);
   const systemLines = useChatStore(s => s.systemLines[convoPk]);
+  // #344: per-group storage opt-out — text-only when true.
+  const storageOff = useChatStore(s => s.storageOff[convoPk] ?? false);
+  const hydrateGroupStorage = useChatStore(s => s.hydrateGroupStorage);
   const nodeStatus = useNodeStore(s => s.status);
   const nodeError = useNodeStore(s => s.error);
   const clearError = useNodeStore(s => s.clearError);
@@ -761,6 +786,8 @@ export function ChatScreen() {
       loadMessages(convoPk);
       // #228: load persisted invited/joined system notes so they survive restart.
       hydrateSystemLines(convoPk).catch(() => {});
+      // #344: load the persisted storage-off flag so text-only mode survives restart.
+      hydrateGroupStorage(convoPk).catch(() => {});
       // #112: a group from an earlier node session cannot be operated (#103).
       // Probe once on focus so the thread can say so instead of failing on send.
       // #167: a MeshCore channel is is_group=true but NOT a Logos MLS group — the
@@ -774,7 +801,7 @@ export function ChatScreen() {
         loadMembers(convoPk).catch(() => {});
       }
       return () => setActive(null);
-    }, [convoPk, setActive, loadMessages, hydrateSystemLines, probeGroup, loadMembers, route.params.isGroup]),
+    }, [convoPk, setActive, loadMessages, hydrateSystemLines, hydrateGroupStorage, probeGroup, loadMembers, route.params.isGroup]),
   );
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
@@ -1049,7 +1076,7 @@ export function ChatScreen() {
         // Leading identicon matches the conversation list (#118): a group is
         // seeded by its shared lib id (azure), a 1:1 by the peer address (orange).
         const avatar = (
-          <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={28} />
+          <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={28} disableImage={storageOff} locked={isGroup && storageOff} />
         );
         if (isGroup) {
           return (
@@ -1559,7 +1586,7 @@ export function ChatScreen() {
   const msgByKey = useMemo(() => {
     const map = new Map<string, {author: string; snippet: string}>();
     for (const m of messages) {
-      if (isReactionContent(m.text) || isPinContent(m.text) || isLeaveContent(m.text) || isPfpContent(m.text)) continue;
+      if (isReactionContent(m.text) || isPinContent(m.text) || isLeaveContent(m.text) || isPfpContent(m.text) || isGroupCfgContent(m.text)) continue;
       const k = messageKey(authorOf(m), m.text);
       if (!map.has(k)) map.set(k, {author: authorOf(m), snippet: quotePreview(m.text)});
     }
@@ -1636,6 +1663,39 @@ export function ChatScreen() {
     }
   }, [messages, authorOf, myAddress]);
 
+  // #344: fold gcfg1: markers on this timeline → the group's storage on/off (newest
+  // wins), pushed into chatStore so the composer + render enforce it. A live marker
+  // also lands via chatStore's inbound ingestion; this covers history already in the
+  // DB (e.g. a marker sent before this session). Only when there IS a gcfg in
+  // history do we set it — else hydrateGroupStorage / the KV default stands.
+  useEffect(() => {
+    const folded = foldGroupCfgs(
+      messages.map(m => ({body: m.text, at: m.at, seq: m.msgPk})),
+    );
+    if (folded == null) return;
+    const prev = useChatStore.getState().storageOff[convoPk];
+    if (prev !== folded) {
+      useChatStore.setState(s => ({
+        storageOff: {...s.storageOff, [convoPk]: folded},
+      }));
+      // #344: announce a transition, but only when there was a KNOWN prior value —
+      // an undefined→value fold is initial hydration from history (opening the
+      // chat), not a change to report. Real live flips are announced at their
+      // source (setGroupStorage / the inbound db_changed fold), and pushSystemLine
+      // dedups consecutive dupes, so this only covers a history re-fold.
+      if (prev !== undefined) {
+        useChatStore
+          .getState()
+          .pushSystemLine(
+            convoPk,
+            folded
+              ? 'Storage turned off — text & voice only'
+              : 'Storage turned on — media enabled',
+          );
+      }
+    }
+  }, [messages, convoPk]);
+
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [
       // #264/#266: reaction + pin markers are folded above, not rendered as bubbles.
@@ -1645,7 +1705,8 @@ export function ChatScreen() {
             !isReactionContent(m.text) &&
             !isPinContent(m.text) &&
             !isLeaveContent(m.text) &&
-            !isPfpContent(m.text),
+            !isPfpContent(m.text) &&
+            !isGroupCfgContent(m.text), // #344: storage-config marker, never a bubble
         )
         .map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
       ...(systemLines ?? []).map(sn => ({
@@ -1905,6 +1966,7 @@ export function ChatScreen() {
             <Bubble
               msg={m}
               attribution={attribution}
+              storageOff={storageOff}
               quoted={quoted}
               replyText={parsedReply?.body}
               onQuotedPress={
@@ -2233,26 +2295,42 @@ export function ChatScreen() {
             </AnimatedPressable>
           </View>
           <View style={styles.actionRow}>
-            <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} testID="composer-image">
-              <ImageIcon size={22} color={colors.textDim} />
-            </Pressable>
-            <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} testID="composer-camera">
-              <CameraIcon size={22} color={colors.textDim} />
-            </Pressable>
+            {/* #344: storage off → hide the media affordances (image/camera/GIF/video);
+                text/location/mic/reactions/reply stay. No blob is ever sent, so the
+                Storage node sees nothing for this group (docs/adr/0002). */}
+            {!storageOff && (
+              <>
+                <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} testID="composer-image">
+                  <ImageIcon size={22} color={colors.textDim} />
+                </Pressable>
+                <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} testID="composer-camera">
+                  <CameraIcon size={22} color={colors.textDim} />
+                </Pressable>
+              </>
+            )}
             <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} testID="composer-location">
               <LocationIcon size={22} color={colors.textDim} />
             </Pressable>
-            {/* #306: GIF (gifs only) via Logos Storage (encrypt -> upload -> store1: marker). */}
-            <Pressable style={styles.actionBtn} onPress={() => sendGif(convoPk)} disabled={attaching} hitSlop={6} testID="composer-gif">
-              <Text style={styles.gifBtn}>GIF</Text>
-            </Pressable>
-            {/* #306/#307: dedicated Video button — picks video/* only, stages a poster. */}
-            <Pressable style={styles.actionBtn} onPress={onPickVideo} disabled={attaching} hitSlop={6} testID="composer-video">
-              <FilmIcon size={22} color={colors.textDim} />
-            </Pressable>
+            {!storageOff && (
+              <>
+                {/* #306: GIF (gifs only) via Logos Storage (encrypt -> upload -> store1: marker). */}
+                <Pressable style={styles.actionBtn} onPress={() => sendGif(convoPk)} disabled={attaching} hitSlop={6} testID="composer-gif">
+                  <Text style={styles.gifBtn}>GIF</Text>
+                </Pressable>
+                {/* #306/#307: dedicated Video button — picks video/* only, stages a poster. */}
+                <Pressable style={styles.actionBtn} onPress={onPickVideo} disabled={attaching} hitSlop={6} testID="composer-video">
+                  <FilmIcon size={22} color={colors.textDim} />
+                </Pressable>
+              </>
+            )}
             <Pressable style={styles.actionBtn} onPress={onStartRecord} disabled={attaching} hitSlop={6} testID="composer-mic">
               <MicIcon size={22} color={colors.textDim} />
             </Pressable>
+            {storageOff && (
+              <Text style={styles.storageHint} numberOfLines={1} testID="storage-off-hint">
+                Storage off — text &amp; voice only
+              </Text>
+            )}
             {attaching && <ActivityIndicator size="small" color={colors.textDim} />}
           </View>
         </View>
@@ -2383,6 +2461,18 @@ export function ChatScreen() {
           if (c != null) {
             forwardMessage(c, pk);
             ToastAndroid.show('Forwarded', ToastAndroid.SHORT);
+            // #343: when the forwarded content is a shared-contact (addr1:) card
+            // — the AddressModal "Send" path — jump into that chat afterwards.
+            // Plain message forwards (bubble menu) stay put as before.
+            if (isAddrContent(c)) {
+              const target = useChatStore.getState().conversations[pk];
+              navigation.navigate('Chat', {
+                convoPk: pk,
+                convoName:
+                  target != null ? convoDisplayName(target) : `peer #${pk}`,
+                isGroup: target?.isGroup ?? false,
+              });
+            }
           }
         }}
       />
@@ -2759,6 +2849,8 @@ const styles = StyleSheet.create({
   },
   actionRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg, paddingLeft: spacing.xs},
   actionBtn: {padding: spacing.xs},
+  // #344: composer hint when the group is text-only.
+  storageHint: {...type.caption, color: colors.textDim, flexShrink: 1},
   // #205: recording bar.
   recDot: {width: 12, height: 12, borderRadius: 6, backgroundColor: colors.unread},
   recTime: {...type.body, color: colors.text, marginLeft: spacing.sm},

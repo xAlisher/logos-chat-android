@@ -115,12 +115,13 @@ class EventCallbackManager {
 
     private fun notifyIfNeeded(outcome: ChatRepo.Outcome) {
       if (outcome.kind != "message" || outcome.direction != "in") return
-      // #264/#266/#314: reactions + pins + avatar markers are folded-in markers, not chat
-      // messages — never notify.
+      // #264/#266/#314/#344: reactions + pins + avatar + group-config markers are
+      // folded-in markers, not chat messages — never notify.
       if (outcome.text.startsWith("react1:") ||
           outcome.text.startsWith("pin1:") ||
           outcome.text.startsWith("leave1:") ||
-          outcome.text.startsWith("pfp1:"))
+          outcome.text.startsWith("pfp1:") ||
+          outcome.text.startsWith("gcfg1:"))
           return
       val resumed = isResumed()
       if (resumed && ChatRepo.activeConvoPk == outcome.convoPk) return

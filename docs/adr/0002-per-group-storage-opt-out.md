@@ -31,7 +31,7 @@ the group *creator* sets the policy for their group.
 Add a **per-group storage toggle**, creator-controlled, **default ON** (media works as today).
 When a creator switches **storage OFF** for a group:
 
-- The group becomes **text / location / reactions / replies only** — no GIF, photo, video, or
+- The group becomes **text & voice (plus location / reactions / replies) only** — no GIF, photo, video, or
   rendered custom avatars.
 - The client **enforces on send** (media + avatar affordances hidden/disabled) **and on
   receive** (refuse to fetch `store2:` markers; render a "media disabled in this group"
@@ -40,7 +40,7 @@ When a creator switches **storage OFF** for a group:
   (`pfp1:` → `store2:`), so a storage-off group falls back to identicons rather than fetching
   peers' photos.
 - The flag lives in group state (creator-set) and is surfaced in Group Info
-  ("Storage off — text only, no media").
+  ("Storage off — text & voice only, no photos/video").
 
 A storage-off group is thus fully on the private path: sealed-envelope messaging (graph
 hidden) **plus zero storage footprint**.

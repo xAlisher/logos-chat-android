@@ -2,7 +2,7 @@
 // "Add member" reuses the polished Scan screen in addMember mode (camera + paste),
 // which calls addMember and pops back here.
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Text, TextInput, View, Pressable, FlatList, ToastAndroid, StyleSheet, Vibration} from 'react-native';
+import {Text, TextInput, View, Pressable, FlatList, Switch, ToastAndroid, StyleSheet, Vibration} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {useFocusEffect, useNavigation, useRoute} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
@@ -14,6 +14,8 @@ import {VerifiedBadge} from '../components/VerifiedBadge';
 import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon, MeshIcon} from '../components/OverflowMenu';
 import {LabelModal} from '../components/LabelModal';
 import {MeshMapModal} from '../components/MeshMapModal';
+import {InfoIcon} from '../components/InfoIcon';
+import {StorageInfoModal} from '../components/StorageInfoModal';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
@@ -38,7 +40,12 @@ export function GroupInfoScreen() {
   const mapMeshIdentity = useChatStore(s => s.mapMeshIdentity);
   const unmapMeshIdentity = useChatStore(s => s.unmapMeshIdentity);
   const startConversation = useChatStore(s => s.startConversation);
+  // #344: per-group storage opt-out. Creator can toggle; everyone sees the state.
+  const storageOff = useChatStore(s => s.storageOff[convoPk] ?? false);
+  const setGroupStorage = useChatStore(s => s.setGroupStorage);
+  const hydrateGroupStorage = useChatStore(s => s.hydrateGroupStorage);
   // The member a row-menu / label editor is acting on.
+  const [storageInfoOpen, setStorageInfoOpen] = useState(false); // #344 (i) explainer
   const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
   const [menuMemberY, setMenuMemberY] = useState(0); // #157: tap Y to anchor the menu
   const [labelMember, setLabelMember] = useState<{
@@ -94,7 +101,9 @@ export function GroupInfoScreen() {
   useFocusEffect(
     useCallback(() => {
       loadMembers(convoPk);
-    }, [convoPk, loadMembers]),
+      // #344: load the persisted storage-off flag so the row reflects reality on open.
+      hydrateGroupStorage(convoPk).catch(() => {});
+    }, [convoPk, loadMembers, hydrateGroupStorage]),
   );
 
   /**
@@ -270,6 +279,7 @@ export function GroupInfoScreen() {
             seed={convo?.libConvoId ?? `pk${convoPk}`}
             kind="group"
             size={48}
+            locked={storageOff}
           />
           <View style={styles.headerText}>
             {editingName ? (
@@ -318,6 +328,57 @@ export function GroupInfoScreen() {
           </View>
         </View>
       </View>
+
+      {/* #344: per-group storage opt-out. Creator gets a toggle; non-creators see a
+          read-only note when it's off. When off, the group is text/location/reactions/
+          replies only — no media is sent or fetched, so the Storage node sees nothing
+          for this group (docs/adr/0002). */}
+      {convo?.createdByMe ? (
+        <View style={styles.storageRow} testID="group-storage-row">
+          <View style={styles.storageText}>
+            <View style={styles.storageLabelRow}>
+              <Text style={[type.title, {color: colors.text}]}>Storage</Text>
+              <Pressable
+                onPress={() => setStorageInfoOpen(true)}
+                hitSlop={10}
+                testID="group-storage-info">
+                <InfoIcon size={15} color={colors.textFaint} />
+              </Pressable>
+            </View>
+            {/* #344: the Switch shows storage ENABLED (media on) — ON is the default.
+                The stored flag is storageOff (true = OFF), so display/write the inverse. */}
+            <Text style={[type.caption, {color: colors.textDim}]}>
+              {storageOff
+                ? 'No content, no metadata leaks through the Storage node.'
+                : 'Heavy media sending added. Some content metadata could leak.'}
+            </Text>
+          </View>
+          <Switch
+            testID="group-storage-switch"
+            value={!storageOff}
+            onValueChange={v => setGroupStorage(convoPk, !v)}
+            trackColor={{false: colors.border, true: colors.accent}}
+            thumbColor={colors.text}
+          />
+        </View>
+      ) : (
+        storageOff && (
+          <Pressable
+            style={styles.storageRow}
+            testID="group-storage-row"
+            onPress={() => setStorageInfoOpen(true)}>
+            <View style={styles.storageText}>
+              <View style={styles.storageLabelRow}>
+                <Text style={[type.title, {color: colors.text}]}>Storage: off</Text>
+                <InfoIcon size={15} color={colors.textFaint} />
+              </View>
+              <Text style={[type.caption, {color: colors.textDim}]}>
+                No content, no metadata leaks through the Storage node.
+              </Text>
+            </View>
+          </Pressable>
+        )
+      )}
 
       <FlatList
         data={members}
@@ -386,6 +447,10 @@ export function GroupInfoScreen() {
           setMapMember(null);
         }}
       />
+      <StorageInfoModal
+        visible={storageInfoOpen}
+        onClose={() => setStorageInfoOpen(false)}
+      />
     </View>
   );
 }
@@ -400,6 +465,20 @@ const styles = StyleSheet.create({
   },
   headerRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   headerText: {flex: 1, gap: spacing.xs},
+  // #344: storage opt-out row (between the header and the roster).
+  storageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    backgroundColor: colors.panel,
+  },
+  storageText: {flex: 1, gap: spacing.xs},
+  storageLabelRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   list: {padding: spacing.lg},
   memberRow: {
     flexDirection: 'row',

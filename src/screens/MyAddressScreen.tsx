@@ -4,7 +4,9 @@
 // never change anything — the button only looked broken.
 import React, {useEffect, useRef, useState} from 'react';
 import type Svg from 'react-native-svg';
-import LogosChat from '../native/LogosChat';
+import {useNavigation} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
+import LogosChat, {shortAddress} from '../native/LogosChat';
 import {
   Text,
   View,
@@ -20,14 +22,18 @@ import {QrCard} from '../components/QrCard';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
-import {useChatStore} from '../stores/chatStore';
+import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {useAvatarStore} from '../stores/avatarStore';
 import {useMediaBlob} from '../native/mediaCache';
 import {ForwardPicker} from '../components/ForwardPicker';
 import {encodeAddressPayload} from '../lib/addressPayload';
 import {encodeAddr} from '../messages/address';
+import type {RootStackParamList} from '../navigation/types';
+
+type Nav = NativeStackNavigationProp<RootStackParamList>;
 
 export function MyAddressScreen() {
+  const navigation = useNavigation<Nav>();
   const status = useNodeStore(s => s.status);
   const myAddress = useNodeStore(s => s.myAddress);
   const error = useNodeStore(s => s.error);
@@ -219,6 +225,14 @@ export function MyAddressScreen() {
                 encodeAddr(myAddress, includeLabel && hasLabel ? myLabel : undefined),
               )
               .catch(() => {});
+            // #343: jump into the chat we just sent our address into.
+            const target = useChatStore.getState().conversations[pk];
+            navigation.navigate('Chat', {
+              convoPk: pk,
+              convoName:
+                target != null ? convoDisplayName(target) : `peer #${pk}`,
+              isGroup: target?.isGroup ?? false,
+            });
           }
           setForwardOpen(false);
         }}

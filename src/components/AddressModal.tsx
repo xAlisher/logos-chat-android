@@ -3,15 +3,17 @@
 // ContactLabelModal, which mixed "look at the address" with "name this contact".
 // The QR mirrors My-address (same QrCard + centered identicon badge, #118) so a
 // peer can scan you back the same way.
-import React, {useEffect, useState} from 'react';
-import {Modal, Pressable, Text, View, StyleSheet} from 'react-native';
+import React, {useEffect, useRef, useState} from 'react';
+import {Modal, Pressable, Text, View, StyleSheet, Share} from 'react-native';
+import type Svg from 'react-native-svg';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {colors, type, spacing, radii} from '../theme';
 import {HexAvatar} from './HexAvatar';
 import {QrCard} from './QrCard';
 import {XIcon} from './XIcon';
 import {VerifiedBadge} from './VerifiedBadge';
-import {shortAddress} from '../native/LogosChat';
+import LogosChat, {shortAddress} from '../native/LogosChat';
+import {encodeAddressPayload} from '../lib/addressPayload';
 
 export function AddressModal({
   visible,
@@ -34,6 +36,9 @@ export function AddressModal({
   onForward?: (address: string, label?: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // #342: ref to the QR's <Svg> so Share can capture it to a PNG (mirrors
+  // MyAddressScreen's qrSvgRef → LogosChat.shareIdentityImage flow).
+  const qrSvgRef = useRef<React.ElementRef<typeof Svg>>(null);
 
   useEffect(() => {
     if (visible) {
@@ -53,6 +58,40 @@ export function AddressModal({
     if (address != null) {
       Clipboard.setString(address);
       setCopied(true);
+    }
+  };
+
+  // #342: OS-share this contact's address to any app — mirrors MyAddressScreen's
+  // onShare: try to share the QR+sigil as a PNG (capture the <Svg> via
+  // toDataURL → native ACTION_SEND(image)); fall back to sharing the address
+  // text/URI (encodeAddressPayload — bare hex, or a peers: URI when labelled).
+  const onShare = async () => {
+    if (address == null) {
+      return;
+    }
+    const payload = encodeAddressPayload(address, label);
+    const svg = qrSvgRef.current as unknown as
+      | {toDataURL?: (cb: (b64: string) => void) => void}
+      | null;
+    if (svg?.toDataURL) {
+      try {
+        const b64 = await new Promise<string>((resolve, reject) => {
+          const t = setTimeout(() => reject(new Error('capture timeout')), 4000);
+          svg.toDataURL!(data => {
+            clearTimeout(t);
+            data ? resolve(data) : reject(new Error('empty capture'));
+          });
+        });
+        await LogosChat.shareIdentityImage(b64);
+        return;
+      } catch {
+        // fall through to the text/URI share below
+      }
+    }
+    try {
+      await Share.share({message: payload, title: title ?? 'Address'});
+    } catch {
+      // user dismissed the sheet or share failed — nothing to recover.
     }
   };
 
@@ -93,7 +132,13 @@ export function AddressModal({
 
           {address != null && (
             <View style={styles.qrWrap}>
-              <QrCard data={address} size={200} badgeSeed={address} badgeKind="contact" />
+              <QrCard
+                data={address}
+                size={200}
+                badgeSeed={address}
+                badgeKind="contact"
+                svgRef={qrSvgRef}
+              />
             </View>
           )}
 
@@ -110,6 +155,14 @@ export function AddressModal({
               <Text style={[type.title, {color: colors.onAccent}]}>
                 {copied ? 'Copied' : 'Copy'}
               </Text>
+            </Pressable>
+            {/* #342: OS-share the address out to any app (QR image, text fallback). */}
+            <Pressable
+              style={styles.shareBtn}
+              onPress={onShare}
+              disabled={address == null}
+              testID="contact-share">
+              <Text style={[type.title, {color: colors.accent}]}>Share</Text>
             </Pressable>
             {/* #330: send this address into a chat as a tappable card. */}
             {onForward != null && (
@@ -185,6 +238,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   forwardBtn: {
+    flex: 1,
+    borderColor: colors.accent,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  // #342: OS Share — bordered secondary action matching Send.
+  shareBtn: {
     flex: 1,
     borderColor: colors.accent,
     borderWidth: 1,

@@ -71,6 +71,7 @@ function ConversationRow({
   preview,
   meshEntry,
   bleNearby,
+  locked,
   onPress,
   onLongPress,
 }: {
@@ -80,6 +81,8 @@ function ConversationRow({
   meshEntry: {pubkey: string; name: string | null} | null;
   // #246: true when this BLE-DM peer's identity is currently heard nearby.
   bleNearby: boolean;
+  // #344: true when this is a storage-off group — its avatar gets a lock badge.
+  locked: boolean;
   onPress: () => void;
   onLongPress: (pageY: number) => void;
 }) {
@@ -95,7 +98,7 @@ function ConversationRow({
       delayLongPress={300}
       testID={`convo-${convo.convoPk}`}>
       {isBle && <View style={styles.bleBar} />}
-      <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={32} />
+      <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={32} locked={locked} />
       <View style={styles.rowBody}>
         <View style={styles.titleRow}>
           <Text
@@ -199,6 +202,8 @@ export function ConversationsScreen() {
   // #160: subscribe to the in-memory system notes so the list re-renders when a
   // system event fires and surfaces it as the row preview.
   const systemLines = useChatStore(s => s.systemLines);
+  // #344: storage-off groups get a lock badge on their avatar in the list + row menu.
+  const storageOff = useChatStore(s => s.storageOff);
   // #174: local mesh-map cache (address→{pubkey,name}) so a mapped 1:1 peer shows
   // the green mesh badge on its row, same as Contacts / Group info.
   const meshMap = useChatStore(s => s.meshMap);
@@ -439,6 +444,7 @@ export function ConversationsScreen() {
                   item.peerAddress != null &&
                   nearbyContacts.includes(item.peerAddress.toLowerCase())
                 }
+                locked={item.isGroup && (storageOff[item.convoPk] ?? false)}
                 onPress={() => openChat(item)}
                 onLongPress={pageY => onRowLongPress(item, pageY)}
               />
@@ -476,7 +482,12 @@ export function ConversationsScreen() {
         header={
           rowMenu != null ? (
             <View style={styles.rowMenuHeader}>
-              <HexAvatar seed={avatarSeed(rowMenu)} kind={convoKind(rowMenu)} size={32} />
+              <HexAvatar
+                seed={avatarSeed(rowMenu)}
+                kind={convoKind(rowMenu)}
+                size={32}
+                locked={rowMenu.isGroup && (storageOff[rowMenu.convoPk] ?? false)}
+              />
               <Text
                 style={[type.title, {color: colors.text, flexShrink: 1}]}
                 numberOfLines={1}>

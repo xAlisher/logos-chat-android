@@ -352,6 +352,16 @@ export function ContactsScreen() {
               .catch(e =>
                 useNodeStore.setState({error: `send failed: ${e?.message ?? e}`}),
               );
+            // #343: jump into the chat we just shared the contact into.
+            const target = useChatStore.getState().conversations[pk];
+            navigation.navigate('Chat', {
+              convoPk: pk,
+              convoName:
+                target != null
+                  ? convoDisplayName(target)
+                  : shortAddress(forwardAddr.address),
+              isGroup: target?.isGroup ?? false,
+            });
           }
           setForwardAddr(null);
         }}

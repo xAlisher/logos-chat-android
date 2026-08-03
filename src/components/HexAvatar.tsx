@@ -16,6 +16,7 @@ import React, {useEffect} from 'react';
 import {View, Image} from 'react-native';
 import Svg, {Rect} from 'react-native-svg';
 import {colors} from '../theme';
+import {LockIcon} from './LockIcon';
 import {useAvatarStore} from '../stores/avatarStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMediaBlob} from '../native/mediaCache';
@@ -95,10 +96,18 @@ export function HexAvatar({
   seed,
   kind,
   size = 40,
+  disableImage = false,
+  locked = false,
 }: {
   seed: string;
   kind: AvatarKind;
   size?: number;
+  // #344: force the generated identicon and SKIP the custom-avatar image branch —
+  // used in a storage-off group so a peer's avatar never triggers a Storage fetch.
+  disableImage?: boolean;
+  // #344: overlay a small lock-in-a-circle badge (bottom-right) when this is a
+  // storage-off group's avatar — the same overlay pattern as SideMenu's pencil badge.
+  locked?: boolean;
 }) {
   // #314: a custom avatar (a tiny E2E media blob) overrides the identicon when set.
   // My own avatar keys on my address; a peer's on their address. Groups/mesh/ble seeds
@@ -107,21 +116,57 @@ export function HexAvatar({
   const isMine =
     myAddress != null && seed.toLowerCase() === myAddress.toLowerCase();
   const key = seed.toLowerCase();
-  const ref: MediaRef | null = useAvatarStore(s =>
+  const storedRef: MediaRef | null = useAvatarStore(s =>
     isMine ? s.mine : s.refs[key] ?? null,
   );
+  // #344: in a storage-off group, never fetch a peer's avatar from Storage — fall
+  // back to the identicon by nulling the ref (the useMediaBlob hook then idles).
+  const ref = disableImage ? null : storedRef;
   const ensureHydrated = useAvatarStore(s => s.ensureHydrated);
   useEffect(() => {
-    if (!isMine) ensureHydrated(seed);
-  }, [isMine, seed, ensureHydrated]);
+    if (!isMine && !disableImage) ensureHydrated(seed);
+  }, [isMine, disableImage, seed, ensureHydrated]);
   // Hooks must run unconditionally — pass null when there's no ref (the hook idles).
   const media = useMediaBlob(ref);
-  if (ref != null && media.status === 'ready') {
+
+  // #344: wrap the rendered avatar with a bottom-right lock badge when this is a
+  // storage-off group's avatar. Scales with `size`; no-op (returns the avatar as-is)
+  // when not locked, so the identicon/image render is unchanged otherwise.
+  const withLock = (avatar: React.ReactNode) => {
+    if (!locked) {
+      return avatar;
+    }
+    const badgeSize = Math.round(size * 0.5);
+    const iconSize = Math.round(size * 0.38);
     return (
+      <View style={{width: size, height: size}}>
+        {avatar}
+        <View
+          style={{
+            position: 'absolute',
+            bottom: -2,
+            right: -2,
+            width: badgeSize,
+            height: badgeSize,
+            borderRadius: badgeSize / 2,
+            backgroundColor: colors.accent,
+            borderWidth: 1.5,
+            borderColor: colors.canvas,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <LockIcon size={iconSize} color={colors.onAccent} />
+        </View>
+      </View>
+    );
+  };
+
+  if (ref != null && media.status === 'ready') {
+    return withLock(
       <Image
         source={{uri: 'file://' + media.path}}
         style={{width: size, height: size, borderRadius: size * 0.22}}
-      />
+      />,
     );
   }
 
@@ -138,7 +183,7 @@ export function HexAvatar({
     />
   ));
 
-  return (
+  return withLock(
     <View
       style={{
         width: size,
@@ -150,7 +195,7 @@ export function HexAvatar({
       <Svg width={size} height={size}>
         {rects}
       </Svg>
-    </View>
+    </View>,
   );
 }
 

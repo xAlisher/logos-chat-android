@@ -8,6 +8,7 @@ import {
   View,
   Pressable,
   ActivityIndicator,
+  Switch,
   StyleSheet,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
@@ -15,6 +16,8 @@ import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {colors, type, spacing, radii} from '../theme';
 import {ErrorToast} from '../components/ErrorToast';
 import {KeyboardAwareScreen} from '../components/KeyboardAwareScreen';
+import {InfoIcon} from '../components/InfoIcon';
+import {StorageInfoModal} from '../components/StorageInfoModal';
 import {useChatStore} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
@@ -28,8 +31,11 @@ export function NewGroupScreen() {
   const status = useNodeStore(s => s.status);
   const meshStatus = useMeshStore(s => s.status);
   const createGroup = useChatStore(s => s.createGroup);
+  const setGroupStorage = useChatStore(s => s.setGroupStorage);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [storageOff, setStorageOff] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = status === 'running';
@@ -52,6 +58,11 @@ export function NewGroupScreen() {
     setError(null);
     try {
       const convoPk = await createGroup(name.trim(), description.trim() || undefined);
+      // #344: if the creator chose a storage-off (text & voice only) group, set it
+      // now — broadcasts the gcfg1: marker so joining members inherit the policy.
+      if (storageOff) {
+        await setGroupStorage(convoPk, true).catch(() => {});
+      }
       // #114: land on Add Members, not the empty thread — and `replace` so
       // Back can't return to this form (the group already exists; resubmit
       // would create a second one).
@@ -98,6 +109,37 @@ export function NewGroupScreen() {
             testID="group-desc-input"
           />
         </View>
+        {/* #344: opt this group out of media storage at creation. Text & voice
+            still work; no photos/video/GIFs are sent or fetched, so the storage
+            node sees nothing for this group. */}
+        <View style={styles.storageRow}>
+          <View style={styles.storageText}>
+            <View style={styles.storageLabelRow}>
+              <Text style={styles.fieldLabel}>Storage</Text>
+              <Pressable
+                onPress={() => setInfoOpen(true)}
+                hitSlop={10}
+                testID="new-group-storage-info">
+                <InfoIcon size={15} color={colors.textFaint} />
+              </Pressable>
+            </View>
+            {/* #344: the Switch shows storage ENABLED (media on) — ON is the default.
+                Local state stays `storageOff` (true = OFF), so display/write the inverse. */}
+            <Text style={[type.caption, {color: colors.textFaint}]}>
+              {storageOff
+                ? 'No content, no metadata leaks through the Storage node.'
+                : 'Heavy media sending added. Some content metadata could leak.'}
+            </Text>
+          </View>
+          <Switch
+            testID="new-group-storage-switch"
+            value={!storageOff}
+            onValueChange={v => setStorageOff(!v)}
+            disabled={busy}
+            trackColor={{false: colors.border, true: colors.accent}}
+            thumbColor={colors.text}
+          />
+        </View>
         <Pressable
           style={[styles.createBtn, !canCreate && styles.btnDisabled]}
           disabled={!canCreate}
@@ -118,6 +160,7 @@ export function NewGroupScreen() {
           Next: invite members to the group.
         </Text>
       </KeyboardAwareScreen>
+      <StorageInfoModal visible={infoOpen} onClose={() => setInfoOpen(false)} />
       <ErrorToast message={error} onDismiss={() => setError(null)} />
     </View>
   );
@@ -140,6 +183,9 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   descInput: {minHeight: 72, textAlignVertical: 'top'},
+  storageRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  storageText: {flex: 1, gap: spacing.xs},
+  storageLabelRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   createBtn: {
     backgroundColor: colors.accent,
     borderRadius: radii.card,
