@@ -14,7 +14,10 @@ export type NodeStatus =
 export interface LogosChatEvent {
   source: 'module' | 'lib' | 'repo';
   // node_status | message_received | conversation_started | members_changed |
-  // inbound_error | db_changed
+  // inbound_error | db_changed | group_desynced
+  // #348: 'group_desynced' (source 'lib') — the local member is stuck on an old
+  // MLS epoch and cannot recover in-band; `event` JSON carries {convoId} (the lib
+  // group convo id). The UI surfaces a "you've fallen out of sync" notice.
   eventType: string;
   status?: NodeStatus; // when eventType === 'node_status'
   detail?: string; // node_status detail; also members_changed {"left":[…]} JSON (#116)

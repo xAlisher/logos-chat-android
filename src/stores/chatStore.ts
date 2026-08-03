@@ -1657,6 +1657,58 @@ function notifyJoin(convoPk: number) {
 
 addLogosChatListener(e => {
   const s = useChatStore.getState();
+  // #348: the lib reports we're stuck on an old MLS epoch and can't recover
+  // in-band (a persistent future-epoch stall, not transient out-of-order). This
+  // event carries no durable state (handleLibEvent returns null), so it is only
+  // ever the raw 'lib' push — surface a tappable "you've fallen out of sync"
+  // notice so the user can ask a still-reachable member to re-add them.
+  if (e.source === 'lib' && e.eventType === 'group_desynced') {
+    let libConvoId: string | null = null;
+    try {
+      libConvoId = JSON.parse(e.event ?? '{}').convoId ?? null;
+    } catch {
+      // malformed payload — nothing to resolve.
+    }
+    if (libConvoId != null) {
+      const convo = Object.values(s.conversations).find(
+        c => c.libConvoId === libConvoId,
+      );
+      if (convo != null) {
+        const convoPk = convo.convoPk;
+        // Don't restack: one desync notice per thread (native edge-triggers, but
+        // a persisted line could otherwise re-append on a later fire).
+        const already = (s.systemLines[convoPk] ?? []).some(
+          n => n.info === 'desynced',
+        );
+        if (!already) {
+          const me = useNodeStore.getState().myAddress?.toLowerCase();
+          // Best-effort re-add contact: the first non-self group member (there is
+          // no stored "creator" flag — any member can re-add us). Falls back to
+          // undefined, in which case the notice is shown without a tap target.
+          const pushDesync = () => {
+            const roster = useChatStore.getState().members[convoPk] ?? [];
+            const target = roster.find(
+              m => !m.isSelf && m.address.toLowerCase() !== me,
+            );
+            useChatStore
+              .getState()
+              .pushSystemLine(
+                convoPk,
+                "You've fallen out of sync — ask to be re-added",
+                'desynced',
+                target?.address,
+              );
+          };
+          if (s.members[convoPk] != null) {
+            pushDesync();
+          } else {
+            s.loadMembers(convoPk).then(pushDesync).catch(pushDesync);
+          }
+        }
+      }
+    }
+    return;
+  }
   if (e.source === 'repo' && e.eventType === 'db_changed') {
     // #252: a JOINER just joined/rejoined a group (group_ready fires only on the
     // joiner — the creator makes the group directly). Auto-send a join-ack so the

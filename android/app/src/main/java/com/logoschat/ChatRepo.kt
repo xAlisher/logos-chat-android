@@ -25,6 +25,8 @@ object ChatRepo {
   const val EVENT_MESSAGE_RECEIVED = 2
   const val EVENT_MEMBERS_CHANGED = 3
   const val EVENT_INBOUND_ERROR = 4
+  // #348: local member is stuck on an old MLS epoch and can't recover in-band.
+  const val EVENT_CONVERSATION_DESYNCED = 5
 
   /**
    * #194: continuation marker a recreated group carries in its metadata
@@ -174,6 +176,10 @@ object ChatRepo {
               evt.optString("content"),
               if (evt.isNull("senderAccount")) null else evt.optString("senderAccount"))
       EVENT_MEMBERS_CHANGED -> onMembersChanged(evt.optString("convoId"))
+      // #348: epoch-desync carries no durable state — the raw "lib" event is still
+      // forwarded to JS (see LogosChatModule.deliverLibEvent), which renders the
+      // "you've fallen out of sync" notice.
+      EVENT_CONVERSATION_DESYNCED -> null
       else -> null // inbound_error → no durable state
     }
   }

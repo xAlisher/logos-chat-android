@@ -1831,10 +1831,29 @@ export function ChatScreen() {
                     : undefined
                 }
                 // #195: a stuck invite offers a one-tap re-invite for its address.
-                actionLabel={info === 'join-failed' ? 'Re-invite' : undefined}
+                // #348: a desync notice offers "Ask to be re-added" — pings a
+                // still-reachable member over the 1:1 (full auto-recovery is #350).
+                actionLabel={
+                  info === 'join-failed'
+                    ? 'Re-invite'
+                    : info === 'desynced' && item.sys.infoAddress != null
+                    ? 'Ask to be re-added'
+                    : undefined
+                }
                 onAction={
                   info === 'join-failed' && item.sys.infoAddress != null
                     ? () => onReinvite(item.sys.infoAddress!)
+                    : info === 'desynced' && item.sys.infoAddress != null
+                    ? () => {
+                        const gname =
+                          convo != null
+                            ? convoDisplayName(convo)
+                            : route.params.convoName;
+                        openDirectWith(
+                          item.sys.infoAddress!,
+                          `I've fallen out of sync in "${gname}" — could you remove and re-add me?`,
+                        );
+                      }
                     : undefined
                 }>
                 {item.sys.text}

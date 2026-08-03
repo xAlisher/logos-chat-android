@@ -38,6 +38,7 @@ class EventCallbackManager {
           ChatRepo.EVENT_MESSAGE_RECEIVED -> "message_received"
           ChatRepo.EVENT_MEMBERS_CHANGED -> "members_changed"
           ChatRepo.EVENT_INBOUND_ERROR -> "inbound_error"
+          ChatRepo.EVENT_CONVERSATION_DESYNCED -> "group_desynced"
           else -> "unknown"
         }
 
