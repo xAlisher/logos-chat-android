@@ -114,10 +114,12 @@ class EventCallbackManager {
 
     private fun notifyIfNeeded(outcome: ChatRepo.Outcome) {
       if (outcome.kind != "message" || outcome.direction != "in") return
-      // #264/#266: reactions + pins are folded-in markers, not chat messages — never notify.
+      // #264/#266/#314: reactions + pins + avatar markers are folded-in markers, not chat
+      // messages — never notify.
       if (outcome.text.startsWith("react1:") ||
           outcome.text.startsWith("pin1:") ||
-          outcome.text.startsWith("leave1:"))
+          outcome.text.startsWith("leave1:") ||
+          outcome.text.startsWith("pfp1:"))
           return
       val resumed = isResumed()
       if (resumed && ChatRepo.activeConvoPk == outcome.convoPk) return
@@ -147,6 +149,8 @@ class EventCallbackManager {
                 if (t.contains(":video/")) "🎬 Video"
                 else if (t.contains(":image/gif:")) "GIF"
                 else "📎 Media"
+            // #330: a shared contact address (addr1:) — a real, visible message.
+            t.startsWith("addr1:") -> "Shared a contact"
             else -> t
           }
       MessageNotifier.notifyMessage(ctx, outcome.convoPk, name, body)

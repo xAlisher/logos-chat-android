@@ -9,7 +9,7 @@
 // a badge is present so the modules the badge covers stay recoverable.
 import React, {useMemo} from 'react';
 import {View, StyleSheet} from 'react-native';
-import Svg, {Path, Rect, Text as SvgText} from 'react-native-svg';
+import Svg, {Path, Rect, Text as SvgText, Image, Defs, ClipPath} from 'react-native-svg';
 import qrcode from 'qrcode-generator';
 import {colors, radii} from '../theme';
 import {identiconCells, AVATAR_N} from './HexAvatar';
@@ -21,6 +21,7 @@ export function QrCard({
   size = 260,
   badgeSeed,
   badgeKind = 'contact',
+  badgeImageUri,
   svgRef,
   caption,
 }: {
@@ -29,6 +30,9 @@ export function QrCard({
   /** When set, draw this identicon in the center of the QR (#118). */
   badgeSeed?: string;
   badgeKind?: 'contact' | 'group';
+  /** #330: when set, draw this local image (the custom avatar) in the center of the
+   *  QR instead of the identicon cells. Falls back to the identicon when absent. */
+  badgeImageUri?: string;
   /** #241: ref to the inner <Svg> so a parent can capture it (toDataURL). */
   svgRef?: React.Ref<React.ElementRef<typeof Svg>>;
   /** #260: a caption baked UNDER the QR (e.g. "peers.tech") so it travels with a
@@ -102,26 +106,55 @@ export function QrCard({
               ry={backing * 0.24}
               fill={colors.qrBg}
             />
-            {/* Dark tile — same ground as the list avatars. */}
-            <Rect
-              x={t0}
-              y={t0}
-              width={tile}
-              height={tile}
-              rx={tile * 0.22}
-              ry={tile * 0.22}
-              fill={colors.canvas}
-            />
-            {cells.map(c => (
-              <Rect
-                key={`${c.x}-${c.y}`}
-                x={i0 + c.x * cell}
-                y={i0 + c.y * cell}
-                width={cell + 0.02}
-                height={cell + 0.02}
-                fill={c.fill}
-              />
-            ))}
+            {badgeImageUri != null ? (
+              // #330: a custom avatar photo, clipped to the same rounded tile.
+              <>
+                <Defs>
+                  <ClipPath id="qrBadge">
+                    <Rect
+                      x={t0}
+                      y={t0}
+                      width={tile}
+                      height={tile}
+                      rx={tile * 0.22}
+                      ry={tile * 0.22}
+                    />
+                  </ClipPath>
+                </Defs>
+                <Image
+                  x={t0}
+                  y={t0}
+                  width={tile}
+                  height={tile}
+                  href={{uri: badgeImageUri}}
+                  preserveAspectRatio="xMidYMid slice"
+                  clipPath="url(#qrBadge)"
+                />
+              </>
+            ) : (
+              <>
+                {/* Dark tile — same ground as the list avatars. */}
+                <Rect
+                  x={t0}
+                  y={t0}
+                  width={tile}
+                  height={tile}
+                  rx={tile * 0.22}
+                  ry={tile * 0.22}
+                  fill={colors.canvas}
+                />
+                {cells.map(c => (
+                  <Rect
+                    key={`${c.x}-${c.y}`}
+                    x={i0 + c.x * cell}
+                    y={i0 + c.y * cell}
+                    width={cell + 0.02}
+                    height={cell + 0.02}
+                    fill={c.fill}
+                  />
+                ))}
+              </>
+            )}
           </>
         )}
       </Svg>

@@ -12,6 +12,7 @@ import {colors, type, spacing, radii} from '../theme';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
 import {AddressModal} from '../components/AddressModal';
+import {ForwardPicker} from '../components/ForwardPicker';
 import {LabelModal} from '../components/LabelModal';
 import {MeshMapModal} from '../components/MeshMapModal';
 import {
@@ -25,6 +26,7 @@ import {
 import {QrIcon} from '../components/QrIcon';
 import {useChatStore, convoDisplayName} from '../stores/chatStore';
 import {knownContacts, filterContacts} from '../stores/chatStore';
+import {encodeAddr} from '../messages/address';
 import type {KnownContact} from '../stores/chatStore';
 import {shortAddress} from '../native/LogosChat';
 import {useNodeStore} from '../stores/nodeStore';
@@ -73,6 +75,8 @@ export function ContactsScreen() {
   const [menuY, setMenuY] = useState(0); // #157: tap Y to anchor the menu
 
   const [addressContact, setAddressContact] = useState<KnownContact | null>(null);
+  // #330: share a contact's address into a chat (open the conversation picker).
+  const [forwardAddr, setForwardAddr] = useState<{address: string; label?: string} | null>(null);
   const [labelContact, setLabelContact] = useState<KnownContact | null>(null);
   const [mapContact, setMapContact] = useState<KnownContact | null>(null); // #210
 
@@ -332,6 +336,25 @@ export function ContactsScreen() {
         label={addressContact?.label ?? null}
         verified={addressContact?.verified ?? false}
         onClose={() => setAddressContact(null)}
+        // #330: share this contact into a chat (AddressModal closes first, then
+        // we open the conversation picker to avoid nested Modals).
+        onForward={(address, label) => setForwardAddr({address, label})}
+      />
+      {/* #330: pick a conversation → send the contact as an addr1: card. */}
+      <ForwardPicker
+        visible={forwardAddr != null}
+        onClose={() => setForwardAddr(null)}
+        onPick={pk => {
+          if (forwardAddr != null) {
+            useChatStore
+              .getState()
+              .send(pk, encodeAddr(forwardAddr.address, forwardAddr.label))
+              .catch(e =>
+                useNodeStore.setState({error: `send failed: ${e?.message ?? e}`}),
+              );
+          }
+          setForwardAddr(null);
+        }}
       />
       <LabelModal
         visible={labelContact != null}

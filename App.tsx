@@ -16,6 +16,7 @@ import {useSettingsStore} from './src/stores/settingsStore';
 import {useSecurityStore} from './src/stores/securityStore';
 import {useNodeStore} from './src/stores/nodeStore';
 import {useBleStore} from './src/stores/bleStore';
+import {useAvatarStore} from './src/stores/avatarStore';
 import {shouldRestoreBleEngage} from './src/stores/bleState';
 
 /**
@@ -143,6 +144,8 @@ function App() {
       // Hydrate the cached address first so My-address draws the QR instantly,
       // before the node finishes booting (#119).
       await useNodeStore.getState().hydrateAddress();
+      // #314: restore my own custom avatar so it renders before any pfp1: is re-received.
+      await useAvatarStore.getState().hydrate();
       await useNodeStore.getState().autoStart();
       // #259: re-engage BLE-mesh if the user left it on last session (applies the
       // persisted broadcast-identity flag). Runs after load() so the pref is read.

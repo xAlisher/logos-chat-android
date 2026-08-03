@@ -20,7 +20,12 @@ import {QrCard} from '../components/QrCard';
 import {ErrorToast} from '../components/ErrorToast';
 import {useNodeStore} from '../stores/nodeStore';
 import {useSettingsStore} from '../stores/settingsStore';
+import {useChatStore} from '../stores/chatStore';
+import {useAvatarStore} from '../stores/avatarStore';
+import {useMediaBlob} from '../native/mediaCache';
+import {ForwardPicker} from '../components/ForwardPicker';
 import {encodeAddressPayload} from '../lib/addressPayload';
+import {encodeAddr} from '../messages/address';
 
 export function MyAddressScreen() {
   const status = useNodeStore(s => s.status);
@@ -31,12 +36,20 @@ export function MyAddressScreen() {
   // #240: the user's own local label — read-only here; when set, we offer to
   // embed it in the QR so a peer scanning me back can prefill their contact name.
   const myLabel = useSettingsStore(s => s.displayName);
+  // #314/#330: custom avatar — read-only here; used as the QR badge image. The
+  // set/change/remove controls now live in the side menu (avatar tap).
+  const myAvatar = useAvatarStore(s => s.mine);
+  // Resolve the local blob path of my avatar so we can badge the QR with it.
+  // Hooks rule: call unconditionally — useMediaBlob accepts null (myAvatar may be null).
+  const media = useMediaBlob(myAvatar);
   // #241: ref to the QR's <Svg> so we can capture it to a PNG and share the image.
   const qrSvgRef = useRef<React.ElementRef<typeof Svg>>(null);
   const hasLabel = myLabel.trim().length > 0;
   // Opt-in, OFF by default — a bare-address QR stays the interoperable form.
   const [includeLabel, setIncludeLabel] = useState(false);
   const [copied, setCopied] = useState(false);
+  // #330: forward my address into a chat (open the conversation picker).
+  const [forwardOpen, setForwardOpen] = useState(false);
   const running = status === 'running';
 
 
@@ -128,6 +141,9 @@ export function MyAddressScreen() {
                 size={260}
                 badgeSeed={myAddress}
                 badgeKind="contact"
+                badgeImageUri={
+                  media.status === 'ready' ? 'file://' + media.path : undefined
+                }
                 svgRef={qrSvgRef}
                 caption="peers.tech"
               />
@@ -175,6 +191,13 @@ export function MyAddressScreen() {
                   />
                 </View>
               )}
+              {/* #330: send my address into an existing chat as a tappable card. */}
+              <Pressable
+                testID="send-address-to-chat"
+                style={styles.sendToChatBtn}
+                onPress={() => setForwardOpen(true)}>
+                <Text style={[type.title, {color: colors.accent}]}>Send</Text>
+              </Pressable>
             </>
           )}
         </View>
@@ -183,6 +206,23 @@ export function MyAddressScreen() {
           they add you with it. it does NOT change between restarts.
         </Text>
       </ScrollView>
+      {/* #330: pick a conversation → send my address as an addr1: card. */}
+      <ForwardPicker
+        visible={forwardOpen}
+        onClose={() => setForwardOpen(false)}
+        onPick={pk => {
+          if (myAddress != null) {
+            useChatStore
+              .getState()
+              .send(
+                pk,
+                encodeAddr(myAddress, includeLabel && hasLabel ? myLabel : undefined),
+              )
+              .catch(() => {});
+          }
+          setForwardOpen(false);
+        }}
+      />
       <ErrorToast message={error} onDismiss={clearError} />
     </View>
   );
@@ -213,6 +253,18 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
   labelText: {flex: 1, gap: spacing.xs},
+  // #330: "Send to a chat" — a full-width secondary action under Copy/Share.
+  sendToChatBtn: {
+    alignSelf: 'stretch',
+    borderColor: colors.accent,
+    borderWidth: 1,
+    borderRadius: radii.card,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.sm,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   // #241: Copy + Share sit side by side, each taking half the card width.
   btnRow: {
     flexDirection: 'row',

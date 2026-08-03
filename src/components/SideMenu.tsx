@@ -5,6 +5,7 @@
 // + backdrop, matching the app's other custom overlays (no drawer nav dep).
 import React, {useEffect, useRef, useState} from 'react';
 import {
+  Alert,
   Animated,
   Easing,
   Modal,
@@ -21,8 +22,11 @@ import {BleLogo} from './BleLogo';
 import {colors, type, spacing} from '../theme';
 import {HexAvatar} from './HexAvatar';
 import {QrIcon} from './QrIcon';
+import {OverflowMenu, PencilIcon, TrashIcon, type MenuItem} from './OverflowMenu';
 import {shortAddress} from '../native/LogosChat';
 import {useSettingsStore} from '../stores/settingsStore';
+import {useAvatarStore} from '../stores/avatarStore';
+import {useChatStore} from '../stores/chatStore';
 
 // #167 (docs/mesh-transport.md): transport-grouped views. Logos filters
 // (chats/groups) vs MeshCore filters (channels = mesh groups, dms = mesh 1:1).
@@ -199,6 +203,45 @@ export function SideMenu({
     }
   };
 
+  // #314/#330: avatar set/change/remove — moved out of My-Address into the drawer.
+  // Tap the avatar → a Change/Remove menu anchored near the tapped Y (#157 pattern).
+  const myAvatar = useAvatarStore(s => s.mine);
+  const setAvatar = useChatStore(s => s.setAvatar);
+  const clearAvatar = useChatStore(s => s.clearAvatar);
+  const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
+  const [menuY, setMenuY] = useState(0);
+  const avatarItems: MenuItem[] = [
+    {
+      key: 'set',
+      label: myAvatar != null ? 'Change photo' : 'Set photo',
+      icon: <PencilIcon color={colors.textDim} />,
+      onPress: () => setAvatar(),
+    },
+    ...(myAvatar != null
+      ? [
+          {
+            key: 'remove',
+            label: 'Remove',
+            icon: <TrashIcon color={colors.unread} />,
+            destructive: true,
+            onPress: () =>
+              Alert.alert(
+                'Remove avatar',
+                'Remove your avatar? Peers will see your identicon again.',
+                [
+                  {text: 'Cancel', style: 'cancel'},
+                  {
+                    text: 'Remove',
+                    style: 'destructive',
+                    onPress: () => clearAvatar(),
+                  },
+                ],
+              ),
+          } as MenuItem,
+        ]
+      : []),
+  ];
+
   useEffect(() => {
     Animated.timing(anim, {
       toValue: visible ? 1 : 0,
@@ -258,7 +301,21 @@ export function SideMenu({
         {/* Identity header — my avatar + address on the left, my-address QR on
             the right (moved out of the main header, #152). */}
         <View style={styles.header}>
-          <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={48} />
+          {/* #314/#330: tap the avatar to set/change/remove it; a pencil badge
+              signals it's editable. */}
+          <Pressable
+            style={styles.avatarWrap}
+            hitSlop={8}
+            onPress={e => {
+              setMenuY(e.nativeEvent.pageY);
+              setAvatarMenuOpen(true);
+            }}
+            testID="menu-avatar">
+            <HexAvatar seed={myAddress ?? 'me'} kind="contact" size={48} />
+            <View style={styles.pencilBadge}>
+              <PencilIcon size={11} color={colors.onAccent} />
+            </View>
+          </Pressable>
           <View style={styles.headerText}>
             {editingName ? (
               <TextInput
@@ -410,6 +467,15 @@ export function SideMenu({
         </View>
         </ScrollView>
       </Animated.View>
+      {/* #314/#330: avatar Change/Remove menu (reuses OverflowMenu). */}
+      <OverflowMenu
+        visible={avatarMenuOpen}
+        items={avatarItems}
+        onClose={() => setAvatarMenuOpen(false)}
+        anchor="point"
+        anchorY={menuY}
+        testID="avatar-menu"
+      />
     </Modal>
   );
 }
@@ -444,6 +510,21 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingHorizontal: spacing.sm,
     paddingBottom: spacing.md,
+  },
+  // #314/#330: the tappable avatar + its pencil badge overlay.
+  avatarWrap: {position: 'relative'},
+  pencilBadge: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: colors.accent,
+    borderWidth: 1.5,
+    borderColor: colors.canvas,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerText: {flex: 1, gap: 2},
   headerName: {...type.title, color: colors.text},

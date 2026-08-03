@@ -12,10 +12,14 @@
 //
 // Seeds: a 1:1 uses the peer's stable address; a group uses its SHARED lib
 // conversation id, so every member of a group sees the same group avatar.
-import React from 'react';
-import {View} from 'react-native';
+import React, {useEffect} from 'react';
+import {View, Image} from 'react-native';
 import Svg, {Rect} from 'react-native-svg';
 import {colors} from '../theme';
+import {useAvatarStore} from '../stores/avatarStore';
+import {useNodeStore} from '../stores/nodeStore';
+import {useMediaBlob} from '../native/mediaCache';
+import type {MediaRef} from '../messages/media';
 
 // Dark → near-white. The top of each ramp is close to white so bright cells pop.
 const LOGOS_RAMP = ['#B8420E', '#FF5000', '#FF7A33', '#FFB27A', '#FFE4D0'];
@@ -96,6 +100,31 @@ export function HexAvatar({
   kind: AvatarKind;
   size?: number;
 }) {
+  // #314: a custom avatar (a tiny E2E media blob) overrides the identicon when set.
+  // My own avatar keys on my address; a peer's on their address. Groups/mesh/ble seeds
+  // never have a pfp, so getRef returns null and the identicon below renders unchanged.
+  const myAddress = useNodeStore(s => s.myAddress);
+  const isMine =
+    myAddress != null && seed.toLowerCase() === myAddress.toLowerCase();
+  const key = seed.toLowerCase();
+  const ref: MediaRef | null = useAvatarStore(s =>
+    isMine ? s.mine : s.refs[key] ?? null,
+  );
+  const ensureHydrated = useAvatarStore(s => s.ensureHydrated);
+  useEffect(() => {
+    if (!isMine) ensureHydrated(seed);
+  }, [isMine, seed, ensureHydrated]);
+  // Hooks must run unconditionally — pass null when there's no ref (the hook idles).
+  const media = useMediaBlob(ref);
+  if (ref != null && media.status === 'ready') {
+    return (
+      <Image
+        source={{uri: 'file://' + media.path}}
+        style={{width: size, height: size, borderRadius: size * 0.22}}
+      />
+    );
+  }
+
   const cell = size / AVATAR_N;
   const rects = identiconCells(seed, kind).map(c => (
     <Rect

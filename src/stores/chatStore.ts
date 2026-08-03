@@ -14,6 +14,8 @@ import {encodeReaction} from '../messages/reactions';
 import {displayBody} from '../messages/reply';
 import {isMediaContent, mediaLabel} from '../messages/media';
 import {encodePin} from '../messages/pins';
+import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
+import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
@@ -45,6 +47,7 @@ export interface MediaSend {
 }
 import {useNodeStore} from './nodeStore';
 import {useMeshStore} from './meshStore';
+import {useAvatarStore} from './avatarStore';
 import {convoDisplayName} from './conversationView';
 
 export type {ConversationRow as Conversation, MessageRow as Message};
@@ -133,6 +136,12 @@ export function conversationPreview(
     ? '🎤 Voice message'
     : isLocationContent(lt)
     ? '📍 Location'
+    : isAddrContent(lt)
+    ? // #330: a shared contact card — name it when a label travelled.
+      (() => {
+        const a = parseAddr(lt);
+        return a?.label != null ? `Contact: ${a.label}` : 'Shared a contact';
+      })()
     : lt;
   return {text, at: convo.lastMessageAt, isSystem: false};
 }
@@ -208,6 +217,13 @@ interface ChatState {
    * `store1:` marker (cid + key) — the blob rides Storage, not the wire. Logos-only.
    */
   sendGif: (convoPk: number) => Promise<void>;
+  /**
+   * #314: pick a photo, downscale it hard (256px), encrypt + upload it to Logos Storage,
+   * store it as the local user's own avatar, and broadcast a `pfp1:` marker to every Logos
+   * conversation so peers replace the identicon with it. Resolves when the broadcast is done.
+   */
+  setAvatar: () => Promise<void>;
+  clearAvatar: () => Promise<void>;
   /** #307: pick a video (video/* only) to STAGE in the composer (guards + pick, no send). */
   stageVideo: (convoPk: number) => Promise<PickedRawMedia | null>;
   /**
@@ -752,6 +768,78 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await get().send(convoPk, marker);
     } catch (e: any) {
       useNodeStore.setState({error: `gif upload failed: ${e?.message ?? e}`});
+    }
+  },
+
+  // #314: set my custom avatar — pick a photo, downscale HARD (256px, ~50KB budget) so the
+  // blob is tiny, encrypt + upload it to Logos Storage, cache it as `mine`, then broadcast a
+  // pfp1: marker to every Logos conversation so peers render it in place of the identicon.
+  setAvatar: async () => {
+    if (useNodeStore.getState().status !== 'running') {
+      useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to set an avatar'});
+      return;
+    }
+    let picked;
+    try {
+      picked = parsePicked(await ImagePicker.pickImage(256, 50_000));
+    } catch (e: any) {
+      useNodeStore.setState({error: String(e?.message ?? e)});
+      return;
+    }
+    if (picked == null) return; // cancelled
+    try {
+      useNodeStore.setState({error: 'uploading avatar…'});
+      // uploadEncrypted takes a file path — persist the picked JPEG to app storage first.
+      const path = await ImagePicker.saveBase64Jpeg(picked.base64);
+      const {cid, key, cap} = await Storage.uploadEncrypted(path, '');
+      useNodeStore.setState({error: null});
+      const ref = {
+        cid,
+        key,
+        cap,
+        mime: 'image/jpeg',
+        width: picked.width,
+        height: picked.height,
+        // uploadEncrypted ALWAYS size-pads (store2, StorageModule.kt:93). The marker
+        // encodes store2 either way, but `mine` is held as this raw ref (never re-parsed
+        // from a marker), so it must carry padded:true or my OWN avatar downloads without
+        // stripping the pad header → corrupt image. Peers parse the store2 marker → fine.
+        padded: true,
+      };
+      useAvatarStore.getState().setMine(ref);
+      // Broadcast to every current Logos conversation (media rides Storage, which mesh/ble
+      // peers can't fetch — so only Logos convos). Best-effort per convo; keep it simple.
+      const marker = encodePfp(ref);
+      const convos = Object.values(get().conversations).filter(
+        c => (c.transport ?? 'logos') === 'logos',
+      );
+      for (const c of convos) {
+        try {
+          await get().send(c.convoPk, marker);
+        } catch {
+          // a single failed convo must not abort the rest of the broadcast
+        }
+      }
+    } catch (e: any) {
+      useNodeStore.setState({error: `avatar upload failed: ${e?.message ?? e}`});
+    }
+  },
+
+  // #314: remove my avatar — wipe it locally AND broadcast a pfp1:clear to every Logos
+  // conversation so peers drop the cached photo and fall back to my identicon (not just a
+  // local wipe). Best-effort per convo, like setAvatar's broadcast.
+  clearAvatar: async () => {
+    useAvatarStore.getState().setMine(null);
+    const marker = encodePfpClear();
+    const convos = Object.values(get().conversations).filter(
+      c => (c.transport ?? 'logos') === 'logos',
+    );
+    for (const c of convos) {
+      try {
+        await get().send(c.convoPk, marker);
+      } catch {
+        // a single failed convo must not abort the rest of the broadcast
+      }
     }
   },
 
@@ -1746,6 +1834,27 @@ addLogosChatListener(e => {
       if (convo?.isGroup) {
         clearPendingInvite(e.convoPk, e.sender.toLowerCase());
         s.setMemberStatus(e.convoPk, e.sender, 'joined');
+      }
+    }
+    // #314: an inbound pfp1: marker announces a contact's custom avatar. Cache it (keyed by
+    // sender) + persist so HexAvatar renders it in place of the identicon. It's a folded
+    // marker, never a bubble — native suppression keeps it out of notify/preview/unread, and
+    // the ChatScreen fold keeps it out of the timeline.
+    if (
+      e.kind === 'message' &&
+      e.direction === 'in' &&
+      e.sender != null &&
+      e.detail != null &&
+      isPfpContent(e.detail)
+    ) {
+      if (isPfpClear(e.detail)) {
+        // #314: the peer removed their avatar → drop the cached photo.
+        useAvatarStore.getState().clearContactAvatar(e.sender);
+      } else {
+        const ref = parsePfp(e.detail);
+        if (ref != null) {
+          useAvatarStore.getState().setContactAvatar(e.sender, ref);
+        }
       }
     }
     s.refreshConversations();

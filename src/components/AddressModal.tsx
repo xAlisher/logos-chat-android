@@ -19,6 +19,7 @@ export function AddressModal({
   label,
   verified = false,
   onClose,
+  onForward,
 }: {
   visible: boolean;
   address: string | null;
@@ -27,6 +28,10 @@ export function AddressModal({
   /** #153: show the verified badge next to the title. */
   verified?: boolean;
   onClose: () => void;
+  /** #330: share this address into a chat. When provided, a "Send to a chat"
+   *  button appears; it closes this modal first (avoid nested Modals) then hands
+   *  the address+label to the parent to open a ForwardPicker. */
+  onForward?: (address: string, label?: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -96,15 +101,32 @@ export function AddressModal({
             {address ?? '(unknown address)'}
           </Text>
 
-          <Pressable
-            style={styles.copyBtn}
-            onPress={onCopy}
-            disabled={address == null}
-            testID="contact-copy">
-            <Text style={[type.title, {color: colors.onAccent}]}>
-              {copied ? 'Copied' : 'Copy'}
-            </Text>
-          </Pressable>
+          <View style={styles.btnRow}>
+            <Pressable
+              style={styles.copyBtn}
+              onPress={onCopy}
+              disabled={address == null}
+              testID="contact-copy">
+              <Text style={[type.title, {color: colors.onAccent}]}>
+                {copied ? 'Copied' : 'Copy'}
+              </Text>
+            </Pressable>
+            {/* #330: send this address into a chat as a tappable card. */}
+            {onForward != null && (
+              <Pressable
+                style={styles.forwardBtn}
+                onPress={() => {
+                  onClose();
+                  if (address != null) {
+                    onForward(address, label ?? undefined);
+                  }
+                }}
+                disabled={address == null}
+                testID="contact-forward">
+                <Text style={[type.title, {color: colors.accent}]}>Send</Text>
+              </Pressable>
+            )}
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -151,8 +173,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
+  // #330: Copy + "Send to a chat" sit side by side when forwarding is offered.
+  btnRow: {flexDirection: 'row', gap: spacing.md, alignSelf: 'stretch'},
   copyBtn: {
+    flex: 1,
     backgroundColor: colors.accent,
+    borderRadius: radii.card,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+    minHeight: 48,
+    justifyContent: 'center',
+  },
+  forwardBtn: {
+    flex: 1,
+    borderColor: colors.accent,
+    borderWidth: 1,
     borderRadius: radii.card,
     alignSelf: 'stretch',
     alignItems: 'center',

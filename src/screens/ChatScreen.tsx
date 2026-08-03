@@ -55,6 +55,7 @@ import {
   type MenuItem,
 } from '../components/OverflowMenu';
 import {AddressModal} from '../components/AddressModal';
+import {AddressCard} from '../components/AddressCard';
 import {LabelModal} from '../components/LabelModal';
 import {MeshInfoModal} from '../components/MeshInfoModal';
 import {InfoIcon} from '../components/InfoIcon';
@@ -111,9 +112,11 @@ import {
   type ReactionState,
 } from '../messages/reactions';
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
+import {isPfpContent, foldPfps} from '../messages/pfp';
 import {isLeaveContent} from '../messages/leave';
 import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
 import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
+import {isAddrContent, parseAddr, encodeAddr} from '../messages/address';
 import {useMediaBlob} from '../native/mediaCache';
 import {MediaVideo} from '../components/MediaVideo';
 import {VideoFullscreen} from '../components/VideoFullscreen';
@@ -123,6 +126,7 @@ import Storage from '../native/Storage';
 import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
+import {useAvatarStore} from '../stores/avatarStore';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -690,7 +694,13 @@ export function ChatScreen() {
   const [recording, setRecording] = useState(false); // #205 voice
   const [recElapsed, setRecElapsed] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [addressOpen, setAddressOpen] = useState(false);
+  // #124/#330: the address shown in the AddressModal — the thread peer (header
+  // "Show address") OR a shared-contact card's address ("View").
+  const [addressTarget, setAddressTarget] = useState<{
+    address: string | null;
+    label: string | null;
+    verified: boolean;
+  } | null>(null);
   // The contact the label editor is for: the thread peer (header menu) OR the
   // sender of a long-pressed bubble (works for group members too).
   const [labelTarget, setLabelTarget] = useState<{
@@ -933,6 +943,30 @@ export function ChatScreen() {
     [startConversation, navigation],
   );
 
+  // #330: "Add contact" on a shared-address card — reuse-or-create the 1:1 with
+  // this address (carrying the shared label as the local nickname) and open it.
+  const onAddSharedContact = useCallback(
+    async (address: string, label?: string) => {
+      try {
+        const existing = findDirectConvo(address);
+        const pk =
+          existing != null
+            ? existing.convoPk
+            : await startConversation(address, {nickname: label});
+        const target = useChatStore.getState().conversations[pk];
+        navigation.navigate('Chat', {
+          convoPk: pk,
+          convoName:
+            target != null ? convoDisplayName(target) : shortAddress(address),
+          isGroup: false,
+        });
+      } catch (e: any) {
+        useNodeStore.setState({error: `could not add contact: ${e?.message ?? e}`});
+      }
+    },
+    [startConversation, navigation],
+  );
+
   const hasLabel = convo?.nickname != null && convo.nickname.length > 0;
 
   // One menu for the whole thread (#104 1:1, #107 groups).
@@ -976,7 +1010,12 @@ export function ChatScreen() {
           key: 'show-address',
           label: 'Show address',
           icon: <QrIcon size={20} color={colors.textDim} />,
-          onPress: () => setAddressOpen(true),
+          onPress: () =>
+            setAddressTarget({
+              address: convo?.peerAddress ?? null,
+              label: convo?.nickname ?? null,
+              verified: convo?.verified ?? false,
+            }),
         },
         {
           key: 'delete',
@@ -1520,7 +1559,7 @@ export function ChatScreen() {
   const msgByKey = useMemo(() => {
     const map = new Map<string, {author: string; snippet: string}>();
     for (const m of messages) {
-      if (isReactionContent(m.text) || isPinContent(m.text) || isLeaveContent(m.text)) continue;
+      if (isReactionContent(m.text) || isPinContent(m.text) || isLeaveContent(m.text) || isPfpContent(m.text)) continue;
       const k = messageKey(authorOf(m), m.text);
       if (!map.has(k)) map.set(k, {author: authorOf(m), snippet: quotePreview(m.text)});
     }
@@ -1560,6 +1599,7 @@ export function ChatScreen() {
               !isReactionContent(m.text) &&
               !isPinContent(m.text) &&
               !isLeaveContent(m.text) &&
+              !isPfpContent(m.text) &&
               messageKey(authorOf(m), m.text) === pinnedKey,
           ) ?? null,
     [pinnedKey, messages, authorOf],
@@ -1578,12 +1618,34 @@ export function ChatScreen() {
     }
   }, [messages, authorOf, myAddress, convoPk, setMemberStatus]);
 
+  // #314: fold pfp1: markers on this timeline → the latest avatar per PEER, pushed into
+  // avatarStore so HexAvatar renders it. A peer's marker also lands via chatStore's inbound
+  // ingestion; this catch-all covers history already in the DB. My OWN avatar is authoritative
+  // from KV/setMine (so Remove sticks) — it is deliberately NOT re-derived from history here.
+  useEffect(() => {
+    const refs = foldPfps(
+      messages.map(m => ({author: authorOf(m), body: m.text, at: m.at, seq: m.msgPk})),
+    );
+    const store = useAvatarStore.getState();
+    const me = (myAddress ?? '').toLowerCase();
+    for (const [author, ref] of refs) {
+      if (author.toLowerCase() === me) continue;
+      // null ⇒ their newest marker was pfp1:clear → drop any cached avatar.
+      if (ref == null) store.clearContactAvatar(author);
+      else store.setContactAvatar(author, ref);
+    }
+  }, [messages, authorOf, myAddress]);
+
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [
       // #264/#266: reaction + pin markers are folded above, not rendered as bubbles.
       ...messages
         .filter(
-          m => !isReactionContent(m.text) && !isPinContent(m.text) && !isLeaveContent(m.text),
+          m =>
+            !isReactionContent(m.text) &&
+            !isPinContent(m.text) &&
+            !isLeaveContent(m.text) &&
+            !isPfpContent(m.text),
         )
         .map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
       ...(systemLines ?? []).map(sn => ({
@@ -1780,6 +1842,27 @@ export function ChatScreen() {
             );
           }
           const m = item.msg;
+          // #330: a shared-contact card (addr1:) is a real, visible message —
+          // render it as a tappable card for BOTH incoming and outgoing bubbles.
+          if (isAddrContent(m.text)) {
+            const shared = parseAddr(m.text);
+            if (shared != null) {
+              return (
+                <AddressCard
+                  address={shared.address}
+                  label={shared.label}
+                  onAdd={() => onAddSharedContact(shared.address, shared.label)}
+                  onView={() =>
+                    setAddressTarget({
+                      address: shared.address,
+                      label: shared.label ?? null,
+                      verified: false,
+                    })
+                  }
+                />
+              );
+            }
+          }
           const attribution = resolveAttribution(m, isGroup, convo);
           const rKey = messageKey(authorOf(m), m.text); // #264
           // #295: if this bubble is a reply, resolve the quoted original.
@@ -2319,11 +2402,16 @@ export function ChatScreen() {
         onClose={() => setVideoFs(null)}
       />
       <AddressModal
-        visible={addressOpen}
-        address={convo?.peerAddress ?? null}
-        label={convo?.nickname ?? null}
-        verified={convo?.verified ?? false}
-        onClose={() => setAddressOpen(false)}
+        visible={addressTarget != null}
+        address={addressTarget?.address ?? null}
+        label={addressTarget?.label ?? null}
+        verified={addressTarget?.verified ?? false}
+        onClose={() => setAddressTarget(null)}
+        // #330: forward the shown address into a chat (reuses the message
+        // forward flow — an addr1: marker sends via the normal text path).
+        onForward={(address, label) =>
+          setForwardContent(encodeAddr(address, label))
+        }
       />
       <LabelModal
         visible={labelTarget != null}
