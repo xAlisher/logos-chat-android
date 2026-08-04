@@ -284,3 +284,56 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
   back-gesture can't be) and confirm a short drag springs back (proving it's MY handler, not
   a coincidence). Lesson: to verify a custom gesture, use an input that ONLY my code could be
   responding to, and treat any "huh, that's weird" mid-test as a failed assertion, not noise.
+
+---
+
+## 2026-08-04 — v0.8.1→0.8.3 arc (avatars, share-a-contact, sync-loss detect, privacy groups) + metadata-privacy reframe
+
+### Wins
+- **[process] Hold-for-user-test on #344 before release was the right call.** Alisher asked to hold
+  privacy-hardened groups until he'd tested them; hands-on he surfaced real improvements the spec
+  missed — reframe the toggle to opt-out "Storage" (default on), "text & voice" not "text only", a
+  lock badge on the group avatar everywhere, and a system line on change. None of these would have
+  come from a green gate. Shipped-broken avoided; the wetware loop earns its cost on UX-heavy work.
+- **[process] Review-gate caught the `padded` round-trip bug (#314) pre-ship.** Diffing the agent's
+  code (not trusting cargo/tsc green) surfaced that `mine` would render my own avatar corrupt. Fixed
+  before build. "Diff behaviour vs baseline, not just run its tests" held.
+- **[process] Qamar (kimi) is live via OpenRouter — routed the #344 touch-point enumeration to it**
+  (103 file:line points, ~2min, read-only lane) and kept all writes in-house under the review gate.
+  Correct division: Qamar for read-only inventory, in-house agents for code with blast radius.
+- **[project] Marker-over-message beats native metadata for per-group config (#344).** A `gcfg1:`
+  folded marker gave a toggleable, synced, no-native-rebuild "Storage off" — where the MLS metadata
+  route would have been create-time-only + a rebuild.
+- **[process] Community-node reframe reopened #337.** Took the storage team's "private storage is
+  unsolved" as real, then red-teamed the *frame*: it assumes a global permissionless protocol; ours
+  is community-run nodes, which relaxes non-collusion/cost/incentive — reopening community-scale PIR.
+  (⛰️ outgrow your sources.)
+
+### Fails
+- **[process] rn-modal-gesture RECURRED (#353) — StorageInfoModal not scrollable.** Moment:
+  delegated the info-modal build to a coding agent. Wrong action: didn't paste the scroll recipe
+  into the spec, so the agent cloned AddressModal's `<Pressable style={card}>` — which steals the
+  ScrollView's pan. Root cause: the `rn-modal-gesture` skill lives in fieldcraft for *me*; delegated
+  agents don't read it, and the AddressModal pattern is the attractor (fine until content scrolls).
+  Fix: added a **delegation note** to the skill — when handing an agent a modal with a ScrollView,
+  paste the recipe. Bug filed #353, parked for v0.8.4.
+- **[process] Patch regen silently dropped 8 files (near-miss, #348 build).** Moment: regenerating
+  `libchat-android-arm64.patch` after the build had reset `libchat-build` to `d2124fd`+applied-patch.
+  Wrong action: ran `git diff d2124fd > patch` and overwrote — it shrank 6454→5539 lines; I launched
+  a rebuild with the broken patch. Root cause: `git diff` omits untracked files, and the patch's
+  *created* files (graph-hiding tests, migrations) were untracked after checkout+apply → dropped.
+  Caught by noticing the size drop + a patch-vs-patch file-set compare. Fix: `git add -N` the
+  untracked source before diffing + verify superset + one clean rebuild. Documented in PK §10f.
+- **[project] Labeled storage-off "text only" when voice works.** Moment: writing the #344 copy.
+  Wrong action: assumed no-media ⇒ text-only. Root cause: didn't check the voice-note send path —
+  `voc1:` rides base64 over the messaging pipe, not Logos Storage, so it's safe in a storage-off
+  group. Caught by Alisher; copy fixed to "text & voice" everywhere + verified the path.
+
+### Skills / doc updates from this batch
+- Process → fieldcraft: **`broadcast-state-local-copy`** (new, the round-trip/own-copy bug) +
+  **`rn-modal-gesture` delegation note** (recurrence fix) + **triggers.md** row. kimi memory → WORKING.
+- Project → **PROJECT_KNOWLEDGE §10f** (marker features, epoch-detect, gcfg1/storageOff, patch-regen
+  gotcha, storage-privacy posture). **ADR 0002** (per-group storage opt-out).
+- Issues: filed epic **#347** + subs #348–#352, **#344/#345/#346** (metadata), **#342/#343** (follow-ups),
+  **#353** (modal scroll). Closed #261/#314/#330/#342/#343/#344/#348. Reframed #317/#322/#333/#335/#337.
+- Released v0.8.1 / v0.8.2 / v0.8.3 (GitHub + F-Droid + landing + fleet + tester announce).

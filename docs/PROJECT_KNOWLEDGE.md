@@ -511,3 +511,67 @@ the GrapheneOS Pixel.
 | Mesh config (shipped) | #254 (node-config parity), #186 (radio picker), #257 (waveform), #240/#241/#260 (QR label/share/caption) |
 | Self-hosted / transports | #219 (delivery node epic), #221 (WSS), #265 (custom node — UI), #268 (Wi-Fi/LAN transport) |
 | **LogosMesh (epic)** | **#269** → #270–#279 (Logos-native mesh firmware for ESP32/LoRa; all 5 Bitle pillars). Not started. |
+
+## 10f. Marker features, native detection, per-group config (2026-08-03/04 batch, v0.8.1→0.8.3)
+
+Shipped in one arc: **v0.8.1** custom avatars (#314) + share-a-contact (#330); **v0.8.2** group
+sync-loss detection (#348); **v0.8.3** privacy-hardened groups (#344) + OS-share (#342) +
+jump-to-convo (#343). Epic **#347** (group epoch-desync resilience) filed; #348 is its first slice.
+
+### The `store2`-round-trip bug — a locally-held ref must obey the codec's defaults (#314)
+Custom avatars (`pfp1:` marker → E2E blob on Logos Storage) shipped a bug caught in review: the
+local `avatarStore.mine` held the **raw** `MediaRef` with `padded` undefined, but native
+`uploadEncrypted` **always** pads (store2, StorageModule.kt), and `useMediaBlob` reads
+`padded ?? false`. A *sent* gif dodges it (it re-parses the stored `store2:` marker → `padded:true`);
+`mine` never round-trips a marker, so my OWN avatar downloaded un-stripped → corrupt (peers fine).
+**Rule:** any value that travels as `encode→parse` AND is also held raw in memory has two code
+paths; the parser's defaults are the spec — round-trip the local copy (or set the invariant, here
+`padded:true`) and **test the OWN path**, the peer path hides the bug. → fieldcraft skill
+`broadcast-state-local-copy`.
+
+### HexAvatar is the single choke point for cross-cutting avatar UI
+Set/photo/lock-badge/disable-fetch all branch inside `HexAvatar` (`useMediaBlob(ref)`→Image else
+identicon; `disableImage` prop nulls the ref; `locked` prop overlays a badge). 20+ render sites
+inherit for free — never touch each site. Same pattern for the message renderer: one
+`isXContent(body)` branch in the timeline `renderItem`.
+
+### Epoch-desync is observable BEFORE decrypt (#348)
+An inbound MLS frame carries `group_id`+`epoch` in the CLEAR (readable pre-decrypt, no group
+secret), and GroupV1's Phase-1b sealed **outer** envelope is **epoch-stable** — so a member stuck
+on an old epoch can still unseal it and observe "incoming epoch N+2, mine N". Detector =
+edge-triggered stall counter in `group_v1.rs` (`stall_step`, pure + unit-tested): count
+future-epoch buffers with no bridging commit; fire once past threshold; reset on any real commit.
+Surfaced via a new `ConvoOutcome.epoch_desync` → `Event::ConversationDesynced` → wrapper FFI tag 5
+→ Kotlin `"group_desynced"` → chatStore → a tappable "ask to be re-added" SystemLine. In-band
+recovery is impossible once the commit expired (MLS needs the commit or a fresh Welcome) — de-mls
+"recovery mode" is steward-election, not lagging-member re-key.
+
+### Per-group config via a folded marker — no native rebuild (#344)
+"Storage off" rides a creator-gated **`gcfg1:` marker** (`src/messages/groupcfg.ts`), folded
+per-group newest-wins into `storageOff: Record<convoPk, boolean>` (KV `gcfg:<pk>`). Reuses the
+message path like `pin1:`/`pfp1:` — no MLS-metadata change, and it's toggleable anytime (unlike
+group metadata, which has no post-creation set path). **`storageOff` true = OFF** everywhere in
+enforcement; the *toggle display* is inverted ("Storage" ON = media enabled, the opt-out default) —
+never invert the stored semantics. Enforcement: composer media buttons hidden, `useMediaBlob(null)`
+on media in an off group (no fetch), `HexAvatar disableImage` (avatars → identicon), native
+`gcfg1:` suppression. **Voice notes are safe in storage-off groups** — they ride `voc1:` base64
+over the messaging pipe (`voiceMsg.ts`), NOT Logos Storage. So "storage off" = **text & voice**,
+not "text only" (copy bug caught by Alisher).
+
+### liblogoschat build: regenerating the patch must include untracked files (near-miss)
+The build (`scripts/build-android-arm64.sh`) does `git checkout -f d2124fd` in `libchat-build` then
+applies `patches/libchat-android-arm64.patch` — so **core edits live in the patch, not the working
+tree**. Regenerate with `cd libchat-build && git diff d2124fd > ...patch` — BUT `git diff` **omits
+untracked files**, and after a build the patch's *created* files (test_graph_hiding*, mls_extensions,
+migrations) are untracked → a naive re-diff silently DROPS them (patch shrank 6454→5539 lines,
+would break a clean build). **Fix:** `git ls-files --others --exclude-standard | grep -v <build-vendored dirs> | xargs git add -N` before the diff, then verify the new patch's `diff --git` file-set is a **superset** of the old (patch-vs-patch), and prove it with one clean rebuild (checkout+apply). The wrapper (`wrapper/src/lib.rs`) is vendored separately via `cp` — not in the patch.
+
+### Storage-data metadata privacy: no full fix, but the community stance reopens it
+From straight talk with the storage/crypto team (private): hiding *which* encrypted blob you fetch
+is genuinely unsolved at data scale — PIR is too expensive + can't assume operator non-collusion +
+data-has-identity; mixnets are a band-aid that fail as volume grows. BUT that's the **global
+permissionless** frame; Peers is **community-run nodes** (ADR 0001) → operator-selected
+non-collusion + bounded corpus + no incentive layer relax exactly those constraints, reopening
+community-scale 2-server PIR (#337). The one *complete* mitigation shippable today is **not to play**
+— a storage-off group has zero storage footprint (#344, ADR 0002). Mix is the right tool for
+**messaging** (ephemeral/low-volume), not storage data — scope #333/#335 to messaging.
