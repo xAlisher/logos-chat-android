@@ -150,27 +150,61 @@ class StorageModule(reactContext: ReactApplicationContext) :
     Thread {
       try {
         if (!configured()) throw IllegalStateException("storage not configured")
-        // Cache decrypted blobs under cacheDir/media/<cid>; serve a cache hit immediately.
+        // #388: the CID / key / cap come from an untrusted sender's marker. Validate with a
+        // strict allowlist + length bound BEFORE any network or file use.
+        if (!StorageRef.validCid(cid)) throw IllegalArgumentException("invalid media cid")
+        if (!StorageRef.validKeyB64(keyB64)) throw IllegalArgumentException("invalid media key")
+        if (!StorageRef.validCap(cap)) throw IllegalArgumentException("invalid media cap")
+
+        // #388: cache filename is SHA-256(cid), never the raw cid → no path traversal / collision.
         val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
-        val dest = File(dir, cid)
+        val dest = File(dir, StorageRef.cacheName(cid))
         if (dest.exists() && dest.length() > 0) {
           promise.resolve(dest.absolutePath)
           return@Thread
         }
         // #302: present the per-blob capability on GET (proxy 403s without a valid one).
-        val url = if (cap.isNotEmpty()) "$base/data/$cid?cap=$cap" else "$base/data/$cid"
+        // #388: URL components are percent-encoded (defence in depth on top of validation).
+        val url = StorageRef.buildDataUrl(base, cid, cap)
         val conn = openConn(url).apply {
           requestMethod = "GET"
+          instanceFollowRedirects = false // #388: never follow a redirect off the storage node
           connectTimeout = 15000
           readTimeout = 60000
           setRequestProperty("Authorization", "Bearer $token")
         }
         val code = conn.responseCode
+        if (code in 300..399) throw RuntimeException("unexpected redirect ($code)")
         if (code !in 200..299) {
           val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"
           throw RuntimeException("download failed ($code): ${err.take(200)}")
         }
-        val blob = conn.inputStream.readBytes()
+        // #388: reject an unexpected response type (an HTML error/login page is not media).
+        val ctype = conn.contentType ?: ""
+        if (ctype.startsWith("text/html") || ctype.startsWith("application/json")) {
+          throw RuntimeException("unexpected content-type: $ctype")
+        }
+        // #388: bound the download. Reject up-front on an oversized Content-Length, then read
+        // with a streaming counter that aborts past the ciphertext ceiling (no unbounded read).
+        val max = StorageRef.MAX_CIPHERTEXT_BYTES
+        val declared = conn.contentLengthLong
+        if (declared in 1..Long.MAX_VALUE && declared > max) {
+          throw RuntimeException("media too large ($declared > $max)")
+        }
+        val blob =
+            conn.inputStream.use { ins ->
+              val out = java.io.ByteArrayOutputStream()
+              val chunk = ByteArray(64 * 1024)
+              var total = 0L
+              while (true) {
+                val n = ins.read(chunk)
+                if (n < 0) break
+                total += n
+                if (total > max) throw RuntimeException("media exceeds max size ($max bytes)")
+                out.write(chunk, 0, n)
+              }
+              out.toByteArray()
+            }
         conn.disconnect()
         if (blob.size <= IV_LEN) throw RuntimeException("blob too short")
 

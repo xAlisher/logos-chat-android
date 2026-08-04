@@ -47,7 +47,21 @@ export function isMediaContent(s: string): boolean {
   return s.startsWith(MEDIA_PREFIX) || s.startsWith(MEDIA_PREFIX_V2);
 }
 
-/** Parse a `store1:`/`store2:` marker; null for non-markers or malformed input. */
+// #388: peer-controlled marker fields flow into an authenticated storage URL and a cache
+// file path. Validate each with a strict allowlist + bound BEFORE use. Mirrors the native
+// StorageRef allowlists (defence in depth — the native module re-validates before fetch).
+const MAX_CID_LEN = 128;
+const MAX_CAP_LEN = 256;
+const MAX_MIME_LEN = 128;
+const MAX_DIM = 100_000;
+// CID: base58/base32 style — alphanumeric + unreserved marks, NEVER '/', ':', '?', '#', '&',
+// '.', whitespace (traversal / URL injection).
+const CID_RE = /^[A-Za-z0-9_~-]{1,128}$/;
+const CAP_RE = /^[A-Fa-f0-9]{1,256}$/;
+const KEY_RE = /^[A-Za-z0-9+/=]{4,64}$/; // base64; exact 32-byte length enforced natively
+const MIME_RE = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,63}\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,63}$/;
+
+/** Parse a `store1:`/`store2:` marker; null for non-markers, malformed, or invalid fields. */
 export function parseMedia(s: string): MediaRef | null {
   const v2 = s.startsWith(MEDIA_PREFIX_V2);
   const prefix = v2 ? MEDIA_PREFIX_V2 : MEDIA_PREFIX;
@@ -57,9 +71,23 @@ export function parseMedia(s: string): MediaRef | null {
   const [cid, key, mime, w, h, cap] = parts;
   const width = Number(w);
   const height = Number(h);
-  if (!cid || !key || !mime || !Number.isFinite(width) || !Number.isFinite(height)) {
+  // #388: strict field validation — reject traversal/injection/oversized/malformed markers.
+  if (
+    cid.length > MAX_CID_LEN ||
+    !CID_RE.test(cid) ||
+    !KEY_RE.test(key) ||
+    mime.length > MAX_MIME_LEN ||
+    !MIME_RE.test(mime) ||
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > MAX_DIM ||
+    height > MAX_DIM
+  ) {
     return null;
   }
+  if (cap !== undefined && (cap.length > MAX_CAP_LEN || !CAP_RE.test(cap))) return null;
   return {cid, key, mime, width, height, padded: v2, ...(cap ? {cap} : {})};
 }
 

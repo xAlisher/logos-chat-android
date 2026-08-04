@@ -48,4 +48,47 @@ describe('media marker', () => {
     expect(parseMedia('store2:cid:key:image/gif:320')).toBeNull(); // too few
     expect(parseMedia('store2:cid:key:image/gif:x:y')).toBeNull(); // non-numeric dims
   });
+
+  // #388: peer-controlled fields must be validated — reject traversal/injection/oversized/malformed.
+  describe('#388 field validation', () => {
+    const K = 'a2V5YjY0MTIzNDU2Nzg5MA=='; // benign base64 key sample
+
+    it('accepts a well-formed marker', () => {
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:320:240`)).not.toBeNull();
+    });
+
+    it('rejects CID path traversal / separators', () => {
+      expect(parseMedia(`store2:../secret:${K}:image/gif:320:240`)).toBeNull();
+      expect(parseMedia(`store2:a/b:${K}:image/gif:320:240`)).toBeNull();
+      expect(parseMedia(`store2:${'z'.repeat(129)}:${K}:image/gif:320:240`)).toBeNull();
+    });
+
+    it('rejects URL/query injection chars in CID', () => {
+      // '?', '#', '&', '=' don't contain ':' so they survive the split as one CID field
+      expect(parseMedia(`store2:cid?cap=x:${K}:image/gif:320:240`)).toBeNull();
+      expect(parseMedia(`store2:cid#frag:${K}:image/gif:320:240`)).toBeNull();
+      expect(parseMedia(`store2:cid&admin=1:${K}:image/gif:320:240`)).toBeNull();
+    });
+
+    it('rejects oversized / non-integer / zero dimensions', () => {
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:999999:240`)).toBeNull(); // > MAX_DIM
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:0:240`)).toBeNull();
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:3.5:240`)).toBeNull();
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:-5:240`)).toBeNull();
+    });
+
+    it('rejects malformed mime', () => {
+      expect(parseMedia(`store2:zDvZRwCID:${K}:noslash:320:240`)).toBeNull();
+      expect(parseMedia(`store2:zDvZRwCID:${K}:../x:320:240`)).toBeNull();
+    });
+
+    it('rejects a non-hex / over-long cap', () => {
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:320:240:nothex!`)).toBeNull();
+      expect(parseMedia(`store2:zDvZRwCID:${K}:image/gif:320:240:${'a'.repeat(257)}`)).toBeNull();
+    });
+
+    it('rejects a bad key (wrong charset)', () => {
+      expect(parseMedia('store2:zDvZRwCID:has space:image/gif:320:240')).toBeNull();
+    });
+  });
 });
