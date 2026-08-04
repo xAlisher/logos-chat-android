@@ -1797,6 +1797,8 @@ export function ChatScreen() {
           <Pressable
             onPress={() => setMeshInfoOpen(true)}
             hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="About mesh mirroring"
             style={styles.meshInfoBtn}
             testID="mesh-info">
             <InfoIcon color={meshMode ? MESH_GREEN : colors.textDim} />
