@@ -62,7 +62,7 @@ export function LabelModal({
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
-        <Pressable style={styles.card} onPress={() => {}} testID="label-modal">
+        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="label-modal">
           <View style={styles.headingRow}>
             {address != null && address.length > 0 && (
               <HexAvatar seed={address} kind={avatarKind} size={40} />

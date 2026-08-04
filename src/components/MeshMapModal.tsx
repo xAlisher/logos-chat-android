@@ -82,7 +82,7 @@ export function MeshMapModal({
       onRequestClose={onClose}
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => {}} testID="mesh-map-modal">
+        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="mesh-map-modal">
           <View style={styles.headingRow}>
             {memberAddress != null && memberAddress.length > 0 && (
               <HexAvatar seed={memberAddress} kind="contact" size={40} />

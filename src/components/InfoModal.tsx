@@ -61,7 +61,7 @@ export function InfoModal({
             backdrop (no close) and no JS responder claims the touch, so a real
             finger drag reaches the ScrollView (a responder claim held slow drags;
             only fast flings/adb swipes bypassed it). */}
-        <View style={styles.card} testID={testID}>
+        <View style={styles.card} accessibilityViewIsModal testID={testID}>
           <View style={styles.headingRow}>
             <InfoIcon size={24} color={colors.accent} />
             <Text style={styles.heading}>{title}</Text>

@@ -165,7 +165,7 @@ export function PinFlowModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={() => onClose(false)}>
       <View style={styles.backdrop}>
-        <View style={styles.card}>
+        <View style={styles.card} accessibilityViewIsModal>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.prompt}>{error ?? prompt()}</Text>
           <PinPad value={pin} onChange={setPin} error={error != null} disabled={busy} />

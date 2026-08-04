@@ -27,7 +27,7 @@ export function TorBootstrapModal({
       onRequestClose={onCancel}
       statusBarTranslucent>
       <View style={styles.root}>
-        <View style={styles.card} testID="tor-bootstrap-modal">
+        <View style={styles.card} accessibilityViewIsModal testID="tor-bootstrap-modal">
           <View style={styles.headingRow}>
             <ActivityIndicator color={colors.accent} />
             <Text style={styles.heading}>Starting Tor…</Text>

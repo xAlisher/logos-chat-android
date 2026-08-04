@@ -41,7 +41,7 @@ export function BackupPassphraseModal({
       onRequestClose={onClose}
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => {}} testID="backup-passphrase-modal">
+        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="backup-passphrase-modal">
           <Text style={styles.heading}>Encrypt backup</Text>
           <Text style={styles.helper}>
             Includes your conversations, messages, and contacts. It does not include your

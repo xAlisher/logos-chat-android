@@ -26,7 +26,7 @@ export function StorageInfoModal({
       onRequestClose={onClose}
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} onPress={() => {}} testID="storage-info-modal">
+        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="storage-info-modal">
           <View style={styles.titleRow}>
             <Text style={styles.title}>Storage</Text>
             <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close" testID="storage-info-close">
