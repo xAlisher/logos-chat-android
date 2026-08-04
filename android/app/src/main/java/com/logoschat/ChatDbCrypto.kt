@@ -4,11 +4,34 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase as PlainDb
 import android.util.Log
 import androidx.sqlite.db.SupportSQLiteOpenHelper
-import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import java.io.File
 import java.security.SecureRandom
 import net.zetetic.database.sqlcipher.SQLiteDatabase as CipherDb
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
+
+/**
+ * #358 — the ChatDb open decision, factored out of [ChatDbCrypto.factory]'s I/O so it is
+ * unit-testable (Keystore + SQLCipher can't run under Robolectric). There is deliberately
+ * NO plaintext outcome: the DB opens encrypted only when everything is ready, otherwise we
+ * refuse to open it (data is preserved on disk for recovery). See ChatDbCryptoDecisionTest.
+ */
+internal enum class DbOpenDecision {
+  ENCRYPTED,
+  FAIL_CLOSED,
+}
+
+/**
+ * @param sqlcipherLoaded the SQLCipher native engine loaded
+ * @param keyAvailable a usable Keystore-wrapped passphrase was obtained/created
+ * @param dbEncrypted the db is (now) encrypted — i.e. migration succeeded / fresh-encrypted
+ */
+internal fun decideOpen(
+    sqlcipherLoaded: Boolean,
+    keyAvailable: Boolean,
+    dbEncrypted: Boolean,
+): DbOpenDecision =
+    if (sqlcipherLoaded && keyAvailable && dbEncrypted) DbOpenDecision.ENCRYPTED
+    else DbOpenDecision.FAIL_CLOSED
 
 /**
  * #258 Phase 2: encrypt the app-side ChatDb (`logoschat_mls.db`) at rest with
@@ -36,66 +59,60 @@ object ChatDbCrypto {
   private const val DB_NAME = "logoschat_mls.db"
 
   /**
-   * The OpenHelper factory ChatDb should use: SQLCipher when the db is (now)
-   * encrypted, framework (plaintext) otherwise.
+   * The OpenHelper factory ChatDb should use: the SQLCipher factory when the db can
+   * be opened encrypted, otherwise THROW (never plaintext).
    *
-   * #358 — FAIL CLOSED. Previously any crypto problem silently returned the
-   * plaintext framework factory. The dangerous case is downgrading an
-   * already-encrypted DB (or a device that was supposed to be encrypted) to
-   * plaintext: opening an encrypted DB with the plaintext engine can't read it,
-   * and silently creating a NEW plaintext DB beside it is the leak. So:
-   *   - if the DB is already encrypted (or was supposed to be), a sqlcipher load
-   *     failure or a key-unwrap failure THROWS instead of returning plaintext;
-   *   - a genuine first run still creates the key + encrypts (no throw);
-   *   - the one grey case — fresh install where the Keystore is genuinely
-   *     unusable — also throws rather than silently running plaintext (see the
-   *     keyHex == null branch + TODO below).
-   * The only remaining framework (plaintext) return is a migration that failed on
-   * a not-yet-encrypted plaintext DB, which is NOT a downgrade (data preserved).
+   * #358 — FAIL CLOSED. Previously any crypto problem could silently return the
+   * plaintext framework factory. The decision is now a single pure gate
+   * ([decideOpen]): the encrypted factory is returned ONLY when the SQLCipher engine
+   * loaded AND a Keystore-wrapped key is available AND the db is (now) encrypted —
+   * i.e. either a genuine first run (created encrypted) or migration succeeded. Every
+   * other case fails closed:
+   *   - sqlcipher can't load, or the key can't be unwrapped/created (Keystore unusable);
+   *   - migration of a not-yet-encrypted plaintext db FAILED while crypto was available
+   *     (the old code returned a plaintext factory here — the P0 this fix closes).
+   * In every fail-closed case the on-disk data (plaintext db + any `.migbak`) is left
+   * intact for recovery/export.
+   * TODO(#358): surface a 'secure storage unavailable' + export screen instead of a crash.
    */
   fun factory(context: Context): SupportSQLiteOpenHelper.Factory {
     val prefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
     // "This DB is (or was meant to be) encrypted" — either the migration flag is
-    // set OR a Keystore-wrapped passphrase already exists. Never downgrade these.
+    // set OR a Keystore-wrapped passphrase already exists. Logged for diagnostics.
     val wasEncrypted =
         prefs.getBoolean(KEY_CHATDB_ENCRYPTED, false) ||
             prefs.getString(KEY_CHATDB_KEY_ENC, null) != null
 
-    try {
-      System.loadLibrary("sqlcipher")
-    } catch (t: Throwable) {
-      if (wasEncrypted) {
-        Log.e(TAG, "sqlcipher native load failed (${t.message}); refusing to downgrade encrypted ChatDb")
-        throw IllegalStateException(
-            "secure storage unavailable — refusing to open the encrypted database in plaintext", t)
-      }
-      // Fresh install and SQLCipher can't load → we can't encrypt a new DB either.
-      // Fail closed rather than silently create a plaintext DB.
-      // TODO(#358): needs a user-facing 'secure storage unavailable' screen instead of a crash
-      Log.e(TAG, "sqlcipher native load failed (${t.message}); refusing plaintext fallback")
-      throw IllegalStateException(
-          "secure storage unavailable — refusing to open the database in plaintext", t)
-    }
+    val sqlcipherLoaded =
+        try {
+          System.loadLibrary("sqlcipher")
+          true
+        } catch (t: Throwable) {
+          Log.e(TAG, "sqlcipher native load failed (${t.message})")
+          false
+        }
 
-    val keyHex = keyHexOrNull(context)
-    if (keyHex == null) {
-      // keyHexOrNull returns null in two sub-cases, both of which MUST fail closed:
-      //   (a) an EXISTING wrapped key could not be unwrapped (wasEncrypted) — never
-      //       re-key / open plaintext beside an encrypted DB;
-      //   (b) a fresh-install create round-trip failed (Keystore genuinely unusable).
-      // TODO(#358): needs a user-facing 'secure storage unavailable' screen instead of a crash
-      Log.e(TAG, "no secure ChatDb key (Keystore unusable); refusing plaintext fallback")
-      throw IllegalStateException(
-          "secure storage unavailable — refusing to open the encrypted database in plaintext")
-    }
-    return if (migrateIfNeeded(context, keyHex)) {
-      SupportOpenHelperFactory(keyHex.toByteArray(Charsets.UTF_8))
-    } else {
-      // Migration of a not-yet-encrypted PLAINTEXT db failed → data preserved as
-      // plaintext. This is NOT a downgrade of an encrypted DB (an already-encrypted
-      // DB short-circuits migrateIfNeeded via the KEY_CHATDB_ENCRYPTED flag), so the
-      // framework factory here is safe. See migrateIfNeeded.
-      FrameworkSQLiteOpenHelperFactory()
+    // Only touch the key / run migration when the engine is present (both have side
+    // effects: keyHexOrNull may create+store a key, migrateIfNeeded may re-encrypt).
+    val keyHex = if (sqlcipherLoaded) keyHexOrNull(context) else null
+    val dbEncrypted = sqlcipherLoaded && keyHex != null && migrateIfNeeded(context, keyHex)
+
+    return when (decideOpen(sqlcipherLoaded, keyHex != null, dbEncrypted)) {
+      DbOpenDecision.ENCRYPTED -> SupportOpenHelperFactory(keyHex!!.toByteArray(Charsets.UTF_8))
+      DbOpenDecision.FAIL_CLOSED -> {
+        // #358 P0 — never open (or create) the DB in plaintext when it is, or was meant
+        // to be, encrypted. This now INCLUDES the case where crypto is available but the
+        // one-time plaintext→encrypted migration failed (the pre-#358 code returned a
+        // plaintext framework factory here, allowing plaintext reads/writes). The on-disk
+        // data (plaintext db + any .migbak from migrateIfNeeded) is left intact for
+        // recovery/export.
+        // TODO(#358): needs a user-facing 'secure storage unavailable' + export screen instead of a crash
+        Log.e(
+            TAG,
+            "ChatDb secure open unavailable (sqlcipher=$sqlcipherLoaded key=${keyHex != null} enc=$dbEncrypted wasEnc=$wasEncrypted); refusing plaintext")
+        throw IllegalStateException(
+            "secure storage unavailable — refusing to open the database in plaintext")
+      }
     }
   }
 

@@ -34,9 +34,9 @@ object NodeRuntime {
   // only after the relay is up. Takes precedence over the direct node so delivery
   // libp2p egresses via a Tor exit. Empty = route delivery directly.
   const val KV_DELIVERY_RELAY_NODE = "deliveryRelayNode"
-  private const val SECURE_PREFS = "logoschat_secure"
-  private const val KEY_DB_KEY = "dbKey" // legacy plaintext (pre-#258); migrated below
-  private const val KEY_DB_KEY_ENC = "dbKeyEnc" // #258: Keystore-wrapped dbKey
+  internal const val SECURE_PREFS = "logoschat_secure" // internal: NodeRuntimeDbKeyTest (#358)
+  internal const val KEY_DB_KEY = "dbKey" // legacy plaintext (pre-#258); migrated below
+  internal const val KEY_DB_KEY_ENC = "dbKeyEnc" // #258: Keystore-wrapped dbKey
   private const val IDENTITY_FILE = "logoschat-identity.bin"
   // #258: the identity seed encrypted at rest (Keystore-wrapped). The plaintext
   // IDENTITY_FILE exists only transiently, while the node is opening.
@@ -105,7 +105,9 @@ object NodeRuntime {
    * would orphan the encrypted store (and creating a new plaintext one beside it
    * is the leak). First-run creation is unchanged.
    */
-  private fun dbKey(context: Context): String {
+  // #358: `internal` (not private) so the fail-closed fresh-key path is unit-testable
+  // (NodeRuntimeDbKeyTest). See the fresh-key branch (case 3) below.
+  internal fun dbKey(context: Context): String {
     val prefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
 
     // 1) Preferred: the Keystore-wrapped key. If it exists, the store is encrypted
@@ -138,8 +140,9 @@ object NodeRuntime {
       return plain
     }
 
-    // 3) Fresh install: generate, wrap (verified), store. No plaintext persisted
-    //    unless the Keystore is unusable (then plaintext so the node still opens).
+    // 3) Fresh install: generate, wrap (verified), store. #358 P0 — FAIL CLOSED: if the
+    //    Keystore is unusable we THROW rather than persisting a plaintext store key beside
+    //    the (about-to-be) encrypted store. That plaintext fallback key was the leak.
     val bytes = ByteArray(32)
     SecureRandom().nextBytes(bytes)
     val hex = bytes.joinToString("") { "%02x".format(it) }
@@ -149,12 +152,17 @@ object NodeRuntime {
         prefs.edit().putString(KEY_DB_KEY_ENC, blob).commit()
         return hex
       }
-      Log.e(TAG, "dbKey Keystore round-trip mismatch on create; plaintext fallback")
+      Log.e(TAG, "dbKey Keystore round-trip mismatch on create; refusing plaintext fallback")
     } catch (t: Throwable) {
-      Log.e(TAG, "dbKey Keystore wrap failed on create (${t.message}); plaintext fallback")
+      Log.e(TAG, "dbKey Keystore wrap failed on create (${t.message}); refusing plaintext fallback")
+      // TODO(#358): needs a user-facing 'secure storage unavailable' screen instead of a crash
+      throw IllegalStateException(
+          "secure storage unavailable — refusing to persist a plaintext store key", t)
     }
-    prefs.edit().putString(KEY_DB_KEY, hex).commit()
-    return hex
+    // Round-trip mismatch (no exception) → also fail closed; never persist plaintext.
+    // TODO(#358): needs a user-facing 'secure storage unavailable' screen instead of a crash
+    throw IllegalStateException(
+        "secure storage unavailable — store key round-trip mismatch on create")
   }
 
   // #258: decrypt the sealed identity to the plaintext path the wrapper reads at
