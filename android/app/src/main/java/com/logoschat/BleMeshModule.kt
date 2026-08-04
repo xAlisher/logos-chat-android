@@ -128,6 +128,9 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
   // BLE MAC rotated isn't dialled again; and addr->idHex to clean up on disconnect.
   private val linkedIds = java.util.Collections.synchronizedSet(HashSet<String>())
   private val idByAddr = java.util.concurrent.ConcurrentHashMap<String, String>()
+  // #364: pre-JS-bridge admission control — size cap + per-source/global rate limit + replay
+  // dedup for unauthenticated GATT ingress. Not authentication; a handshake is remaining #364.
+  private val ingressGate = BleIngressGate()
 
   // -- capability query -------------------------------------------------------
 
@@ -448,7 +451,7 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
             offset: Int,
             value: ByteArray,
         ) {
-          if (characteristic.uuid == MESH_CHAR_UUID) emitPacket(value)
+          if (characteristic.uuid == MESH_CHAR_UUID) emitPacket(device.address, value)
           if (responseNeeded) {
             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
           }
@@ -535,7 +538,8 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
-          if (characteristic.uuid == MESH_CHAR_UUID) emitPacket(characteristic.value ?: return)
+          if (characteristic.uuid == MESH_CHAR_UUID)
+              emitPacket(gatt.device.address, characteristic.value ?: return)
         }
       }
 
@@ -578,7 +582,14 @@ class BleMeshModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  private fun emitPacket(value: ByteArray) {
+  private fun emitPacket(source: String, value: ByteArray) {
+    // #364: gate unauthenticated ingress before it reaches JS — drop oversized, flooded, or
+    // replayed frames. (JS bleFlood still dedups end-to-end for multi-path delivery.)
+    val verdict = ingressGate.admit(source, value, System.currentTimeMillis())
+    if (verdict != BleIngressGate.Verdict.ACCEPT) {
+      Log.d(TAG, "ble ingress dropped ($verdict) ${value.size}B from $source")
+      return
+    }
     val params = Arguments.createMap().apply {
       putString("eventType", "packet")
       putString("data", String(value, Charsets.UTF_8))

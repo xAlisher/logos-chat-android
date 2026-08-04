@@ -203,6 +203,14 @@ export function TransportsModal({
             />
           </View>
 
+          {/* #364: name the nearby-discovery risk plainly — BLE is off by default. */}
+          {bleAvailability.supported && (
+            <Text style={styles.bleRisk}>
+              While on, your phone advertises and scans over Bluetooth, so nearby devices can
+              detect that a Peers device is present. Turn it on only for offline/nearby messaging.
+            </Text>
+          )}
+
           {/* #214: opt-in — broadcast a rotating, contact-resolvable identity so
               contacts can see you're nearby. Off = anonymous presence count. */}
           {bleAvailability.supported && (
@@ -295,6 +303,7 @@ const styles = StyleSheet.create({
   },
   subName: {...type.body, color: colors.text},
   status: {...type.label, color: colors.textDim},
+  bleRisk: {...type.caption, color: colors.textFaint, lineHeight: 17, paddingHorizontal: spacing.md},
   divider: {height: 1, backgroundColor: colors.border, marginVertical: spacing.xs},
   hint: {...type.label, color: colors.textFaint, lineHeight: 16},
   setupBtn: {
