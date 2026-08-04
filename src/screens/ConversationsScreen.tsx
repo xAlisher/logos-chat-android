@@ -37,6 +37,7 @@ import {
   useChatStore,
   sortedConversations,
   convoDisplayName,
+  conversationA11yLabel,
   conversationPreview,
 } from '../stores/chatStore';
 import type {Conversation, ConvoPreview} from '../stores/chatStore';
@@ -91,18 +92,9 @@ function ConversationRow({
   // mixed All view (its home section is Bluetooth mesh / DMs).
   const isBle = convo.transport === 'ble';
   // #395: one composed TalkBack label from STATE — name + type + unread + key states.
-  // Deliberately omits the message preview and the raw address (privacy lens): the summary
-  // conveys who/what/how-many, and entering the chat reads the content.
-  const a11yLabel = [
-    convoDisplayName(convo),
-    convo.isGroup ? `group, ${convo.memberCount} members` : null,
-    convo.verified ? 'verified' : null,
-    locked ? 'storage off' : null,
-    isBle ? 'over Bluetooth mesh' : null,
-    convo.unread > 0 ? `${convo.unread} unread` : null,
-  ]
-    .filter(Boolean)
-    .join(', ');
+  // Omits the message preview and never carries the FULL address (privacy lens); the
+  // leading name is the visible row title verbatim. See conversationA11yLabel.
+  const a11yLabel = conversationA11yLabel(convo, {locked, isBle});
   return (
     <Pressable
       style={styles.row}

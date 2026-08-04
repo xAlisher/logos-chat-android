@@ -278,6 +278,39 @@ export function convoDisplayName(c: ConversationRow): string {
 }
 
 /**
+ * #395: the composed TalkBack name for a conversation row, built from STATE —
+ * who/what/how-many, in the order a sighted user scans the row.
+ *
+ * Privacy lens: the label adds NOTHING that isn't already rendered in the row.
+ * It omits the message preview (entering the chat reads the content) and never
+ * carries the FULL peer address. The leading component is exactly
+ * `convoDisplayName` — the same string drawn as the visible row title — so the
+ * accessible name matches the visible label (WCAG 2.5.3 "Label in Name").
+ *
+ * Note for future edits (#412 review): for an unnamed 1:1 that title is a
+ * SHORTENED address, so the short form does reach TalkBack. That is deliberate,
+ * not a leak — replacing it with an opaque `contact #pk` would hide nothing (the
+ * identical short form stays on screen) while leaving a TalkBack user unable to
+ * tell two unnamed rows apart or to match what a sighted helper reads out. The
+ * fix for address-shaped names is a user-set nickname, not a divergent label.
+ */
+export function conversationA11yLabel(
+  c: ConversationRow,
+  state: {locked: boolean; isBle: boolean},
+): string {
+  return [
+    convoDisplayName(c),
+    c.isGroup ? `group, ${c.memberCount} members` : null,
+    c.verified ? 'verified' : null,
+    state.locked ? 'storage off' : null,
+    state.isBle ? 'over Bluetooth mesh' : null,
+    c.unread > 0 ? `${c.unread} unread` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/**
  * #212: honest "last seen" from the last INBOUND message timestamp (ms). Passive —
  * no heartbeat, no extra traffic; it only reflects when the peer last actually sent
  * us something. Returns '' when never (ts<=0) so callers can hide the line.
