@@ -29,7 +29,7 @@ export function StorageInfoModal({
         <Pressable style={styles.card} onPress={() => {}} testID="storage-info-modal">
           <View style={styles.titleRow}>
             <Text style={styles.title}>Storage</Text>
-            <Pressable onPress={onClose} hitSlop={10} testID="storage-info-close">
+            <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close" testID="storage-info-close">
               <XIcon size={22} color={colors.textDim} />
             </Pressable>
           </View>

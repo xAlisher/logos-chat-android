@@ -130,8 +130,8 @@ export function VideoFullscreen({
         )}
 
         {/* Close */}
-        <Pressable style={styles.close} onPress={close} hitSlop={16} testID="video-close">
-          <Text style={styles.closeText}>✕</Text>
+        <Pressable style={styles.close} onPress={close} hitSlop={16} accessibilityRole="button" accessibilityLabel="Close video" testID="video-close">
+          <Text style={styles.closeText} importantForAccessibility="no">✕</Text>
         </Pressable>
 
         {/* Controls bar */}
@@ -139,14 +139,18 @@ export function VideoFullscreen({
           <Pressable
             onPress={() => setPaused(p => !p)}
             hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={paused ? 'Play video' : 'Pause video'}
             testID="video-playpause"
             style={styles.playBtn}>
-            <Text style={styles.playText}>{paused ? '►' : '❚❚'}</Text>
+            <Text style={styles.playText} importantForAccessibility="no">{paused ? '►' : '❚❚'}</Text>
           </Pressable>
           <Text style={styles.time}>{fmt(current)}</Text>
           <Pressable
             style={styles.track}
             onLayout={e => setBarWidth(e.nativeEvent.layout.width)}
+            accessibilityRole="adjustable"
+            accessibilityLabel="Video position"
             onPress={onSeekBar}>
             <View style={styles.trackBg} />
             <View style={[styles.trackFill, {width: `${progress * 100}%`}]} />
