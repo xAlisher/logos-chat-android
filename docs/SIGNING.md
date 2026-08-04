@@ -37,6 +37,18 @@ RELEASE_KEY_PASSWORD=********
 The keystore file and these passwords stay on your machine (the `.p12` is already gitignored in
 `~/basecamp/fdroid`). Do **not** put them in the repo.
 
+Each value may equivalently come from a **plain environment variable of the same name** (for a
+release job that would rather export than write `gradle.properties`), or from `-P` flags:
+
+```sh
+RELEASE_STORE_FILE=$HOME/basecamp/fdroid/keystore.p12 \
+RELEASE_STORE_PASSWORD=… RELEASE_KEY_ALIAS=peers-release RELEASE_KEY_PASSWORD=… \
+  ./gradlew assembleRelease -x lint -PassertReleaseSigned
+```
+
+Project property wins over the environment; a blank value counts as **unset** (so an empty
+`RELEASE_STORE_FILE=` can't half-configure the signing config or fool the guard).
+
 ## Build a signed release
 
 ```sh
