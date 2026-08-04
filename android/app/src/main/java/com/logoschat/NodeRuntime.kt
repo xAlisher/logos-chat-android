@@ -96,21 +96,28 @@ object NodeRuntime {
    * The store-encryption key, STABLE across restarts. #258: preferred form is a
    * Keystore-wrapped blob; legacy plaintext is migrated on first run and only
    * deleted after a verified unwrap round-trip (so a Keystore failure can never
-   * orphan the store). Falls back to plaintext ONLY if the Keystore is unusable,
-   * so the node always opens.
+   * orphan the store). Falls back to plaintext ONLY if the Keystore is unusable
+   * on a fresh key, so the node always opens.
+   *
+   * #358 — FAIL CLOSED on an existing wrapped key: if a Keystore-wrapped key
+   * already exists (the store is encrypted with it) but can't be unwrapped, THROW
+   * rather than falling through to regenerate/return a fresh key — a fresh key
+   * would orphan the encrypted store (and creating a new plaintext one beside it
+   * is the leak). First-run creation is unchanged.
    */
   private fun dbKey(context: Context): String {
     val prefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
 
-    // 1) Preferred: the Keystore-wrapped key.
+    // 1) Preferred: the Keystore-wrapped key. If it exists, the store is encrypted
+    //    with it — an unwrap failure MUST fail closed (never re-key an existing store).
     prefs.getString(KEY_DB_KEY_ENC, null)?.let { blob ->
       try {
         return KeystoreCrypto.unwrap(blob)
       } catch (t: Throwable) {
-        // Only dangerous if we'd already dropped the plaintext — but we only drop
-        // it after a verified round-trip (below), and Keystore keys survive
-        // restarts/updates. Log and fall through to any plaintext fallback.
-        Log.e(TAG, "dbKey unwrap failed: ${t.message}")
+        Log.e(TAG, "dbKey unwrap failed: ${t.message}; refusing to re-key the existing encrypted store")
+        // TODO(#358): needs a user-facing 'secure storage unavailable' screen instead of a crash
+        throw IllegalStateException(
+            "secure storage unavailable — refusing to re-key the existing encrypted store", t)
       }
     }
 
@@ -204,7 +211,11 @@ object NodeRuntime {
       val node = relay ?: direct
       if (node != null) {
         Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", node, true)
-        Log.i(TAG, "delivery service node: '${node}'${if (relay != null) " (Tor relay)" else ""}")
+        // #360: the node multiaddr (host/IP + peerId) is network-metadata — only log it
+        // in DEBUG; in release just note that a custom/relay node is in use.
+        if (BuildConfig.DEBUG)
+            Log.i(TAG, "delivery service node: '${node}'${if (relay != null) " (Tor relay)" else ""}")
+        else Log.i(TAG, "delivery service node set${if (relay != null) " (Tor relay)" else ""}")
       }
     } catch (t: Throwable) {
       Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")
@@ -231,6 +242,18 @@ object NodeRuntime {
     // inherits this process's env). Empty/unset KV → no-op → default fleet behaviour.
     applyDeliveryPeerEnv()
     if (!setupDone) {
+      // #360: in release, cap the Rust lib's log level so info-level lines (which can
+      // carry message content / addresses) don't reach logcat. overwrite=false respects
+      // an explicitly-set RUST_LOG; DEBUG keeps full verbosity. NOTE: efficacy depends on
+      // the Rust side reading RUST_LOG at chatSetup init (not at .so load) — the proper
+      // fix is defaulting RUST_LOG=warn in the wrapper's release build (see report).
+      if (!BuildConfig.DEBUG) {
+        try {
+          Os.setenv("RUST_LOG", "warn", false)
+        } catch (t: Throwable) {
+          Log.w(TAG, "could not set RUST_LOG (non-fatal): ${t.message}")
+        }
+      }
       NodeBridge.chatSetup() // stdout/stderr -> logcat pump, once per process
       setupDone = true
     }
@@ -250,7 +273,10 @@ object NodeRuntime {
     address = NodeBridge.chatGetAddress(ctx)
     installationName = NodeBridge.chatInstallationName(ctx)
     sealIdentity(context) // #258: encrypt the seed at rest, drop the plaintext
-    Log.i(TAG, "node up: address=${address ?: "?"} installation=${installationName ?: "?"}")
+    // #360: our own address + installation name are identity PII — only log in DEBUG.
+    if (BuildConfig.DEBUG)
+        Log.i(TAG, "node up: address=${address ?: "?"} installation=${installationName ?: "?"}")
+    else Log.i(TAG, "node up")
     setStatus("running")
     return null
   }

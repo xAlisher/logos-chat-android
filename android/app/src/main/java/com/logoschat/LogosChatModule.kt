@@ -64,7 +64,13 @@ class EventCallbackManager {
     }
 
     private fun deliverLibEvent(eventType: Int, json: String) {
-      Log.i(TAG, "lib event [$eventType]: ${json.take(300)}")
+      // #360: the raw event JSON carries message content + peer addresses — only
+      // log it in DEBUG. In release log just the event type + payload length.
+      if (BuildConfig.DEBUG) {
+        Log.i(TAG, "lib event [$eventType]: ${json.take(300)}")
+      } else {
+        Log.i(TAG, "lib event [$eventType] ${json.length}B")
+      }
       // PERSIST FIRST: the SQLite write happens here, on the events HandlerThread,
       // unconditionally — before any JS forwarding.
       val outcome =
@@ -469,7 +475,9 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     val addr = d.peerAddressOf(convoPk) ?: return null
     val fresh = NodeBridge.chatCreateConversation(c, addr) ?: return null
     d.setLibConvoId(convoPk, fresh)
-    Log.w("logos-chat-bridge", "rebound stale convo $convoPk -> $fresh ($addr)")
+    // #360: $addr is a peer address (PII) — only include it in DEBUG.
+    Log.w("logos-chat-bridge", "rebound stale convo $convoPk -> $fresh" +
+        if (BuildConfig.DEBUG) " ($addr)" else "")
     return fresh
   }
 

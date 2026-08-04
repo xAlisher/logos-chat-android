@@ -100,7 +100,8 @@ export const useNodeStore = create<NodeState>((set, get) => ({
 
 // Single subscription for the app lifetime.
 addLogosChatListener(e => {
-  console.log('[LogosChatEvent]', JSON.stringify(e));
+  // #360: the event carries message content + peer addresses — only log it in dev.
+  if (__DEV__) console.log('[LogosChatEvent]', JSON.stringify(e));
   if (e.eventType === 'node_status' && e.status) {
     useNodeStore.setState({status: e.status});
     if (e.status === 'error' && e.detail) {
@@ -122,7 +123,8 @@ addLogosChatListener(e => {
       // epoch, a duplicate welcome) are NOT failures — surfacing them as red
       // toasts made ordinary use look broken. Still in logcat above.
       if (isBenignInboundError(message)) {
-        console.log('[LogosChat] benign inbound error:', benignReason(message));
+        // #360: the raw lib error message can echo payload detail — dev-only.
+        if (__DEV__) console.log('[LogosChat] benign inbound error:', benignReason(message));
         return;
       }
       useNodeStore.setState({error: message});

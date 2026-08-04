@@ -297,7 +297,9 @@ object ChatRepo {
     // addresses that LEFT (present locally, gone from the lib) so the thread can
     // show "<x> left". Carried in the outcome text as JSON for JS to format.
     val left = reconcileRoster(convoPk, libConvoId)
-    Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId left=$left")
+    // #360: `left` is a list of peer addresses — only log it in DEBUG.
+    if (BuildConfig.DEBUG) Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId left=$left")
+    else Log.i(TAG, "group members changed: convo=$convoPk lib=$libConvoId (${left.size} left)")
     val detail = if (left.isEmpty()) "" else JSONObject().put("left", JSONArray(left)).toString()
     return Outcome("members_changed", convoPk, "in", detail)
   }
@@ -424,7 +426,9 @@ object ChatRepo {
     }
     if (convoPk == null) {
       convoPk = d.insertConversation(senderAccount, libConvoId, null, now)
-      Log.i(TAG, "new inbound conversation convo=$convoPk lib=$libConvoId sender=${senderAccount ?: "?"}")
+      // #360: sender is a peer address (PII) — only include it in DEBUG.
+      Log.i(TAG, "new inbound conversation convo=$convoPk lib=$libConvoId" +
+          if (BuildConfig.DEBUG) " sender=${senderAccount ?: "?"}" else "")
     } else if (senderAccount != null && !d.isGroup(convoPk) && d.peerAddressOf(convoPk) == null) {
       // 1:1 only: learn the peer address from the first verified sender. In a
       // group there are many senders, so we never overwrite the conversation's
@@ -438,7 +442,9 @@ object ChatRepo {
       if (canonical != null && canonical != convoPk) {
         d.mergeDirectConversation(fromPk = convoPk, intoPk = canonical, newLibConvoId = libConvoId)
         convoPk = canonical
-        Log.i(TAG, "reconciled inbound 1:1 into existing contact account=$senderAccount lib=$libConvoId")
+        // #360: account is a peer address (PII) — only include it in DEBUG.
+        Log.i(TAG, "reconciled inbound 1:1 into existing contact lib=$libConvoId" +
+            if (BuildConfig.DEBUG) " account=$senderAccount" else "")
       } else {
         d.setPeerAddress(convoPk, senderAccount)
       }
@@ -511,7 +517,9 @@ object ChatRepo {
         d.insertConversation(
             null, libConvoId, null, now, isGroup = true, groupName = name, createdByMe = true)
     if (!selfAddress.isNullOrBlank()) d.addGroupMember(convoPk, selfAddress, isSelf = true, addedAt = now)
-    Log.i(TAG, "created group convo=$convoPk lib=$libConvoId name=$name")
+    // #360: the group name is user-supplied content (PII) — only log it in DEBUG.
+    Log.i(TAG, "created group convo=$convoPk lib=$libConvoId" +
+        if (BuildConfig.DEBUG) " name=$name" else "")
     return convoPk
   }
 
