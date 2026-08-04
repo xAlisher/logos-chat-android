@@ -32,3 +32,12 @@ jobs:
       - name: Kotlin unit tests (Robolectric — schema, epochs, merge, ns-timestamp)
         working-directory: android
         run: ./gradlew testDebugUnitTest
+      - name: Assert release build disables cleartext traffic (#363)
+        working-directory: android
+        run: |
+          ./gradlew :app:processReleaseManifest
+          MANIFEST=$(find app/build/intermediates -path '*merged_manifest*release*' -name AndroidManifest.xml | head -1)
+          echo "release manifest: $MANIFEST"
+          grep -q 'usesCleartextTraffic="false"' "$MANIFEST" \
+            || { echo "::error::release manifest permits cleartext traffic (#363)"; exit 1; }
+          echo "OK: release disables cleartext traffic"
