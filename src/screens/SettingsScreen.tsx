@@ -103,6 +103,11 @@ export function SettingsScreen() {
   const vibration = useSettingsStore(s => s.vibration);
   const setNotifPref = useSettingsStore(s => s.setNotifPref);
   const setNotif = (pref: NotifPref) => (on: boolean) => setNotifPref(pref, on);
+  // #359: show message content/sender in notifications (default OFF — private).
+  const showNotificationContent = useSettingsStore(s => s.showNotificationContent);
+  const setShowNotificationContent = useSettingsStore(
+    s => s.setShowNotificationContent,
+  );
   // #318: metadata-privacy — route media through Tor (embedded kmp-tor).
   const mediaOverTor = useSettingsStore(s => s.mediaOverTor);
   const torBootstrapPercent = useSettingsStore(s => s.torBootstrapPercent);
@@ -225,6 +230,14 @@ export function SettingsScreen() {
             value={vibration}
             onChange={setNotif('vibration')}
             testID="setting-notif-vibrate"
+          />
+          <View style={styles.sep} />
+          <ToggleRow
+            label="Show message content"
+            sublabel="Off keeps notifications generic (New message). The lock screen never shows content."
+            value={showNotificationContent}
+            onChange={setShowNotificationContent}
+            testID="setting-notif-content"
           />
         </View>
 

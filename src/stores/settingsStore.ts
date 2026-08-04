@@ -82,6 +82,13 @@ export const KV_NOTIF_INAPP = 'notifInApp'; // in-app banners while foregrounded
 export const KV_NOTIF_SOUND = 'notifSound';
 export const KV_NOTIF_VIBRATE = 'notifVibrate';
 
+/**
+ * #359: KV key — show message content + sender in OS notifications. Default OFF
+ * (private by default): notifications read "New message" and the lock screen never
+ * shows content. Read natively by MessageNotifier through the same KV store.
+ */
+export const KV_NOTIF_SHOW_CONTENT = 'notifShowContent';
+
 /** #232: the four boolean notification prefs, addressed by name for a generic setter. */
 export type NotifPref =
   | 'localNotifications'
@@ -149,10 +156,17 @@ interface SettingsState {
   messageSound: boolean;
   /** #232: vibrate on a new-message notification. Default on. */
   vibration: boolean;
+  /**
+   * #359: show message content + sender in OS notifications. Default OFF
+   * (private by default) — otherwise notifications read a generic "New message".
+   */
+  showNotificationContent: boolean;
   load: () => Promise<void>;
   setDisplayName: (name: string) => Promise<void>;
   /** #232: set a notification preference (persisted). */
   setNotifPref: (pref: NotifPref, on: boolean) => Promise<void>;
+  /** #359: toggle showing message content/sender in notifications (persisted). */
+  setShowNotificationContent: (on: boolean) => Promise<void>;
   /** Mark MeshCore as configured (idempotent); persisted in native kv. */
   setMeshConfigured: (configured: boolean) => Promise<void>;
   /** Mark BLE-mesh as configured (idempotent); persisted in native kv. */
@@ -193,6 +207,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   inAppNotifications: true,
   messageSound: true,
   vibration: true,
+  showNotificationContent: false, // #359: private by default
 
   load: async () => {
     try {
@@ -260,6 +275,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       } catch {
         // keep default
       }
+    }
+    // #359: notification content defaults OFF — only flip on when explicitly stored.
+    try {
+      const sc = await LogosChat.getSetting(KV_NOTIF_SHOW_CONTENT);
+      if (sc === 'true') set({showNotificationContent: true});
+    } catch {
+      // keep default
     }
   },
 
@@ -451,6 +473,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({[pref]: on} as Partial<SettingsState>);
     try {
       await LogosChat.setSetting(NOTIF_KV[pref], on ? 'true' : 'false');
+    } catch {
+      // best-effort
+    }
+  },
+
+  setShowNotificationContent: async (on: boolean) => {
+    // #359: idempotent — mirrors setLockOnBackground. Read natively by MessageNotifier.
+    if (get().showNotificationContent === on) return;
+    set({showNotificationContent: on});
+    try {
+      await LogosChat.setSetting(KV_NOTIF_SHOW_CONTENT, on ? 'true' : 'false');
     } catch {
       // best-effort
     }

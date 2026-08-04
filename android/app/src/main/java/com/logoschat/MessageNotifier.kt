@@ -31,6 +31,13 @@ object MessageNotifier {
 
   const val EXTRA_CONVO_PK = "com.logoschat.extra.CONVO_PK"
 
+  /**
+   * #359: KV flag — show message content + sender in notifications. Default OFF
+   * (private by default). Written from JS (settingsStore) via LogosChat.setSetting;
+   * read here through the same native ChatDb the rest of the bridge uses.
+   */
+  const val KV_NOTIF_SHOW_CONTENT = "notifShowContent"
+
   private fun idFor(convoPk: Long): Int = ID_BASE + (convoPk % 100_000L).toInt()
 
   private fun ensureChannel(context: Context) {
@@ -45,10 +52,37 @@ object MessageNotifier {
   /**
    * @param title conversation display name, or null for a still-unnamed
    *   (pending, manually attributed — #24) inbound conversation.
+   *
+   * #359: PRIVATE BY DEFAULT. The message text + sender name are shown only when
+   * the user opts in via "Show message content in notifications"
+   * ([KV_NOTIF_SHOW_CONTENT], default OFF). Regardless of that setting the
+   * notification is VISIBILITY_PRIVATE with a generic public version, so a locked
+   * device never surfaces content or contact names on the lock screen.
    */
   fun notifyMessage(context: Context, convoPk: Long, title: String?, text: String) {
     try {
       ensureChannel(context)
+      // #359: opt-in content, default OFF; read through the same native ChatDb kv the
+      // rest of the bridge uses (JS writes it via settingsStore/LogosChat.setSetting).
+      val showContent =
+          try {
+            ChatRepo.requireDb().kvGet(KV_NOTIF_SHOW_CONTENT) == "true"
+          } catch (_: Throwable) {
+            false // fail private
+          }
+      val isGroup =
+          try {
+            ChatRepo.requireDb().isGroup(convoPk)
+          } catch (_: Throwable) {
+            false
+          }
+      val generic = if (isGroup) "New message in a group" else "New message"
+      val appName =
+          try {
+            context.getString(R.string.app_name)
+          } catch (_: Throwable) {
+            "Peers"
+          }
       val tap =
           PendingIntent.getActivity(
               context,
@@ -58,18 +92,30 @@ object MessageNotifier {
                 putExtra(EXTRA_CONVO_PK, convoPk)
               },
               PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-      val n: Notification =
+      fun baseBuilder() =
           NotificationCompat.Builder(context, CHANNEL_MESSAGES)
-              .setContentTitle(title ?: "New conversation")
-              .setContentText(text)
-              .setStyle(NotificationCompat.BigTextStyle().bigText(text))
               .setSmallIcon(R.drawable.ic_stat_chat)
               .setColor(0xFF10B981.toInt()) // theme accent (docs/theme.md)
               .setCategory(NotificationCompat.CATEGORY_MESSAGE)
               .setPriority(NotificationCompat.PRIORITY_DEFAULT)
               .setAutoCancel(true)
+      // Lock-screen substitute: ALWAYS generic — no content, no sender.
+      val publicVersion =
+          baseBuilder().setContentTitle(appName).setContentText(generic).build()
+      val builder =
+          baseBuilder()
               .setContentIntent(tap)
-              .build()
+              .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+              .setPublicVersion(publicVersion)
+      if (showContent) {
+        builder
+            .setContentTitle(title ?: "New conversation")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+      } else {
+        builder.setContentTitle(appName).setContentText(generic)
+      }
+      val n: Notification = builder.build()
       (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
           .notify(idFor(convoPk), n)
     } catch (t: Throwable) {

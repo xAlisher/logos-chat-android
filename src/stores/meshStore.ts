@@ -323,7 +323,8 @@ async function applyConnected(
 
 // Single subscription for the app lifetime.
 addMeshListener(e => {
-  console.log('[MeshCoreEvent]', JSON.stringify(e));
+  // #360: the mesh event carries message content + addresses — only log it in dev.
+  if (__DEV__) console.log('[MeshCoreEvent]', JSON.stringify(e));
   if (e.eventType === 'status' && e.status) {
     useMeshStore.setState({status: e.status});
     // A drop clears self-info + channels + contacts; the link no longer speaks for
