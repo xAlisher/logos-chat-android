@@ -111,6 +111,10 @@ object ChatRepo {
     }
     // init() early-returns if db != null; we just nulled it, so this re-opens fresh.
     init(context)
+    // #382: the counts just dropped to 0/0 and no ChatDb statement ran (the file was
+    // deleted wholesale), so fire the change hook by hand or the FGS notification keeps
+    // showing the pre-wipe totals.
+    ChatDb.countsChanged()
     Log.i(TAG, "app-side store wiped and re-initialized (empty)")
   }
 

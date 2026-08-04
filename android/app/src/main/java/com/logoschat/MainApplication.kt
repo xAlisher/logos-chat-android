@@ -24,6 +24,10 @@ class MainApplication : Application(), ReactApplication {
     // Durable store opens with the process — before RN, before the node — so the
     // persist-before-forward path never races the JS bundle.
     ChatRepo.init(this)
+    // #382: keep the foreground-service notification honest without polling — EVERY durable
+    // mutation that moves the counts (outbound sends included) schedules the debounced,
+    // suppress-if-unchanged repost. Wired here so the DB layer stays free of the service.
+    ChatDb.onCountsChanged = { ChatService.refreshNotification() }
     NodeRuntime.attachContext(this)
     // Load libc++_shared -> librln -> liblogosdelivery -> liblogoschat -> the bridge
     // at app start so a broken chain fails loudly here, not on first JS call.

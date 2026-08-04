@@ -88,9 +88,9 @@ class EventCallbackManager {
           }
       emitToJs(params)
       if (outcome != null) {
-        // #382: a DB mutation changed the counts — refresh the FGS notification change-driven
-        // (debounced + suppressed-if-unchanged), replacing the old 30s poll.
-        ChatService.refreshNotification()
+        // #382: the FGS notification refresh is NOT triggered here — it hangs off
+        // ChatDb.onCountsChanged, so outbound sends, deletes and wipes refresh it too, not
+        // just this inbound path.
         notifyIfNeeded(outcome)
         val repoParams =
             Arguments.createMap().apply {
