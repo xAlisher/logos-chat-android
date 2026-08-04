@@ -99,7 +99,7 @@ Open an issue at **https://github.com/xAlisher/peers/issues** with:
 
 - **What you did** (steps), **what you expected**, **what happened**.
 - **Which transport** (Logos / MeshCore / Bluetooth) and whether you had internet.
-- **App version** — Menu → About (e.g. `v0.8.4-sec`), and your device model + Android version.
+- **App version** — Menu → About (e.g. `v0.8.5-a11y`), and your device model + Android version.
 - A screenshot if it's visual.
 
 If something crashed, a logcat helps a lot if you can grab one:
