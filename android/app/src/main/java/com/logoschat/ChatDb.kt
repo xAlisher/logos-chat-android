@@ -60,6 +60,11 @@ class ChatDb(
     // transports; the two copies land within this window (LoRa latency = minutes).
     const val DEDUP_WINDOW_MS = 10 * 60 * 1000L
 
+    // #361/#365: kv keys NEVER included in an export/backup. The PIN/duress verifiers
+    // are screen-lock secrets — shipping them in a plaintext (or even portable) backup
+    // enables offline guessing / duress-account discovery. Excluded from [exportJson].
+    val EXPORT_EXCLUDED_KV = setOf("pinVerifier", "duressVerifier")
+
     val CALLBACK =
         object : SupportSQLiteOpenHelper.Callback(DB_VERSION) {
           override fun onCreate(db: SupportSQLiteDatabase) = createSchema(db)
@@ -959,7 +964,8 @@ class ChatDb(
           put("version", 1)
           put("schemaVersion", DB_VERSION)
           put("exportedAt", System.currentTimeMillis())
-          put("kv", dumpTable(db, "kv"))
+          // #361/#365: never export the PIN/duress verifiers (offline-guessing risk).
+          put("kv", dumpTable(db, "kv", skipKeyColumn = "key", skipKeys = EXPORT_EXCLUDED_KV))
           put("conversations", dumpTable(db, "conversations"))
           put("messages", dumpTable(db, "messages"))
           put("group_members", dumpTable(db, "group_members"))
@@ -969,12 +975,23 @@ class ChatDb(
     return root.toString()
   }
 
-  /** Dump every row of [table] as a JSON array of {column: value} objects. */
-  private fun dumpTable(db: SupportSQLiteDatabase, table: String): JSONArray {
+  /**
+   * Dump every row of [table] as a JSON array of {column: value} objects. When [skipKeyColumn]
+   * is given, rows whose value in that column is in [skipKeys] are omitted (#361/#365: keeps
+   * the PIN/duress verifiers out of exports).
+   */
+  private fun dumpTable(
+      db: SupportSQLiteDatabase,
+      table: String,
+      skipKeyColumn: String? = null,
+      skipKeys: Set<String> = emptySet(),
+  ): JSONArray {
     val arr = JSONArray()
     db.query("SELECT * FROM $table").use { cur ->
       val cols = cur.columnNames
+      val skipIdx = if (skipKeyColumn != null) cols.indexOf(skipKeyColumn) else -1
       while (cur.moveToNext()) {
+        if (skipIdx >= 0 && cur.getString(skipIdx) in skipKeys) continue
         val obj = JSONObject()
         for (i in cols.indices) {
           when (cur.getType(i)) {

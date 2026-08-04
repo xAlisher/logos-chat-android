@@ -330,6 +330,12 @@ export function SettingsScreen() {
           A 6-digit PIN is asked on every cold launch. Three wrong attempts let you
           start over with a new identity, wiping this device's data.
         </Text>
+        <Text style={styles.helper}>
+          The PIN is a screen lock — it keeps someone who picks up your unlocked-OS phone
+          out of the app. It does not encrypt your data against a lost/stolen phone that is
+          later rooted or imaged; that protection comes from the OS keystore and full-disk
+          encryption, not the PIN.
+        </Text>
 
         {hasPin && (
           <>
