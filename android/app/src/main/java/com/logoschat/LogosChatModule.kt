@@ -1260,7 +1260,7 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         val ts =
             java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
                 .format(java.util.Date())
-        val file = java.io.File(dir, BackupCrypto.fileName(ts))
+        val file = BackupCrypto.newBackupFile(dir, ts) // collision-free even for 2 exports/second
         file.writeText(envelope, Charsets.UTF_8)
         val uri =
             androidx.core.content.FileProvider.getUriForFile(
