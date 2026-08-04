@@ -132,7 +132,7 @@ export function TransportsModal({
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
-        <Pressable style={styles.card} onPress={() => {}} testID="transports-modal">
+        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="transports-modal">
           <Text style={styles.heading}>Transports</Text>
 
           {/* --- Logos row ------------------------------------------------ */}

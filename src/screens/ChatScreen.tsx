@@ -1062,6 +1062,8 @@ export function ChatScreen() {
       <Pressable
         onPress={() => navigation.goBack()}
         hitSlop={12}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
         style={styles.headerBackBtn}
         testID="chat-back">
         <BackIcon color={colors.text} />

@@ -111,7 +111,7 @@ export function AddressModal({
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         {/* Stop taps inside the card from closing the modal. */}
-        <Pressable style={styles.card} onPress={() => {}} testID="address-modal">
+        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="address-modal">
           {/* Title row: identicon + label (or short hex) + X close. */}
           <View style={styles.titleRow}>
             {address != null && (

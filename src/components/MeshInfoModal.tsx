@@ -62,7 +62,7 @@ export function MeshInfoModal({
             touch, so a real finger DRAG is handed straight to the ScrollView. (An
             onStartShouldSetResponder here held slow finger drags; only fast flings —
             like an adb swipe — bypassed it, which masked the bug.) */}
-        <View style={styles.card} testID="mesh-info-modal">
+        <View style={styles.card} accessibilityViewIsModal testID="mesh-info-modal">
           <View style={styles.headingRow}>
             <MeshLogo size={28} color={MESH_GREEN} />
             <Text style={styles.heading}>Mesh mirroring</Text>
