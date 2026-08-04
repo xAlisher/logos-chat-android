@@ -96,8 +96,15 @@ export function VoiceBubble({
 
   return (
     <View style={styles.row}>
-      <Pressable onPress={toggle} hitSlop={8} testID="voice-play">
-        <Text style={[styles.icon, {color: tint}]}>{playing ? '■' : '▶'}</Text>
+      <Pressable
+        onPress={toggle}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={playing ? 'Pause voice message' : 'Play voice message'}
+        testID="voice-play">
+        <Text style={[styles.icon, {color: tint}]} importantForAccessibility="no">
+          {playing ? '■' : '▶'}
+        </Text>
       </Pressable>
       <View style={[styles.wave, {maxWidth: maxWaveW}]}>
         {bars.map((v, i) => (
