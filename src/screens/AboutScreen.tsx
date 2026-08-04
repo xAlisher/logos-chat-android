@@ -17,6 +17,7 @@ import {Logo} from '../components/Logo';
 import {HexAvatar} from '../components/HexAvatar';
 import {useNodeStore} from '../stores/nodeStore';
 import LogosChat, {shortAddress} from '../native/LogosChat';
+import {BackupPassphraseModal} from '../components/BackupPassphraseModal';
 
 const REPO_URL = 'https://github.com/xAlisher/peers';
 
@@ -35,14 +36,22 @@ export function AboutScreen() {
       .catch(() => {});
   }, []);
 
-  // #38: dump the app-side store to a JSON backup and open the share sheet. The
-  // native side writes the file and launches ACTION_SEND; we only toast the result.
-  const onExport = async () => {
+  const [askPass, setAskPass] = useState(false);
+
+  // #38/#361: back up the app-side store as a PASSPHRASE-ENCRYPTED file, then open the
+  // share sheet. The passphrase prompt (scope + no-recovery warning) gates the export;
+  // the native side derives the key (PBKDF2), seals with AES-GCM, and launches ACTION_SEND.
+  const onExport = () => {
     if (exporting) return;
+    setAskPass(true);
+  };
+
+  const onExportConfirm = async (passphrase: string) => {
     setExporting(true);
     try {
-      await LogosChat.exportChatData();
-      ToastAndroid.show('Data exported', ToastAndroid.SHORT);
+      await LogosChat.exportChatData(passphrase);
+      setAskPass(false);
+      ToastAndroid.show('Encrypted backup exported', ToastAndroid.SHORT);
     } catch {
       ToastAndroid.show('Export failed', ToastAndroid.SHORT);
     } finally {
@@ -145,12 +154,19 @@ export function AboutScreen() {
             {exporting ? 'Exporting…' : 'Export chat data'}
           </Text>
           <Text style={styles.helper}>
-            Save a JSON backup of your conversations, messages and contacts. Your
-            encryption identity is not included, so restoring keeps history but not
-            secure sessions.
+            Save an encrypted backup of your conversations, messages and contacts,
+            protected by a passphrase you choose. Your encryption identity and PIN are
+            not included. Keep the passphrase safe — the backup can't be opened without it.
           </Text>
         </Pressable>
       </ScrollView>
+
+      <BackupPassphraseModal
+        visible={askPass}
+        busy={exporting}
+        onClose={() => !exporting && setAskPass(false)}
+        onConfirm={onExportConfirm}
+      />
     </SafeAreaView>
   );
 }

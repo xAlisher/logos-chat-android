@@ -260,7 +260,8 @@ interface LogosChatNative {
    * Android share sheet. Resolves the on-device path of the written file. Does NOT
    * include the lib's MLS crypto identity/ratchet state (ephemeral, not portable).
    */
-  exportChatData(): Promise<string>;
+  /** #361: passphrase-encrypted backup (PBKDF2 → AES-GCM). Passphrase min length 8. */
+  exportChatData(passphrase: string): Promise<string>;
   /**
    * #241: share a PNG (base64, no data: prefix) via the OS share sheet
    * (ACTION_SEND, image/png). Used to share the my-address QR + sigil as an image.
