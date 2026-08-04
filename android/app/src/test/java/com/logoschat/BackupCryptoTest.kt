@@ -133,4 +133,20 @@ class BackupCryptoTest {
     assertTrue("shareIdentityImage attachment must be spared", identity.exists())
     assertTrue("unrelated file must be spared", unrelated.exists())
   }
+
+  /** #361 P2: two exports in the SAME second must not reuse a filename (the second would
+   *  overwrite a file the first share URI still references). */
+  @Test
+  fun newBackupFile_isCollisionFree_withinOneSecond() {
+    val dir = java.nio.file.Files.createTempDirectory("exports").toFile()
+    val ts = "20260804-120000" // same second for both
+    val a = BackupCrypto.newBackupFile(dir, ts)
+    val b = BackupCrypto.newBackupFile(dir, ts)
+    assertNotEquals("same-second exports must get distinct filenames", a.name, b.name)
+    assertTrue(a.exists())
+    assertTrue(b.exists())
+    assertTrue("still recognised as a backup file", BackupCrypto.isBackupFile(a.name))
+    assertTrue("still recognised as a backup file", BackupCrypto.isBackupFile(b.name))
+    assertTrue(a.name.endsWith(BackupCrypto.FILE_EXT))
+  }
 }

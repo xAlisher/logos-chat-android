@@ -40,6 +40,18 @@ object BackupCrypto {
   /** Name of the file an export stamped [ts] writes. */
   fun fileName(ts: String): String = "$FILE_PREFIX$ts$FILE_EXT"
 
+  /**
+   * Create a fresh, collision-free backup file in [dir] for stamp [ts]. Uses
+   * File.createTempFile so two exports in the SAME second get distinct files — a
+   * second-resolution [fileName] would otherwise overwrite a file whose share
+   * content:// URI the previous export is still handing out. Name still starts with
+   * [FILE_PREFIX] (so [isBackupFile]/pruning match) and ends with [FILE_EXT].
+   */
+  fun newBackupFile(dir: java.io.File, ts: String): java.io.File {
+    dir.mkdirs()
+    return java.io.File.createTempFile("$FILE_PREFIX$ts-", FILE_EXT, dir)
+  }
+
   /** How long a just-written backup is kept before it's eligible for pruning — long enough
    *  for a share-sheet target to consume its one-shot content:// URI. */
   const val STALE_BACKUP_AGE_MS = 60 * 60 * 1000L // 1h
