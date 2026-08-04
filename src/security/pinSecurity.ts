@@ -207,6 +207,22 @@ export function fromHex(hex: string): Uint8Array {
 export const PIN_LENGTH = 6;
 
 /**
+ * #395/#396 — the TalkBack label for the PIN dots. Derived ONLY from how many digits
+ * have been entered, NEVER from the digits themselves, so an accessibility service (which
+ * reads labels aloud) can announce progress without ever leaking the secret PIN. Because it
+ * takes a length — not the value — it is structurally impossible for it to speak a digit.
+ */
+export function pinDotsAccessibilityLabel(
+  enteredCount: number,
+  error: boolean,
+  total: number = PIN_LENGTH,
+): string {
+  const n = Math.max(0, Math.min(enteredCount, total));
+  const base = `PIN entry, ${n} of ${total} digits entered`;
+  return error ? `Incorrect PIN. ${base}` : base;
+}
+
+/**
  * PBKDF2 work factor for the PIN verifier. Deliberately modest: this runs in
  * pure JS on Hermes on *every* unlock, and the 10^6 PIN space means iterations
  * can't make an offline guess genuinely hard anyway — the real protection is the
