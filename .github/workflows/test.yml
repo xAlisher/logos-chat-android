@@ -16,6 +16,10 @@ jobs:
       - run: npm ci
       - name: JS logic tests (wire codec + store view helpers)
         run: npm run test:logic
+      - name: Dependency audit (#366) — block on critical, report the rest
+        run: |
+          npm audit --audit-level=critical
+          npm audit || true   # full high/moderate report for visibility (non-blocking)
 
   kotlin-unit:
     runs-on: ubuntu-latest
@@ -41,3 +45,6 @@ jobs:
           grep -q 'usesCleartextTraffic="false"' "$MANIFEST" \
             || { echo "::error::release manifest permits cleartext traffic (#363)"; exit 1; }
           echo "OK: release disables cleartext traffic"
+          grep -q 'android:allowBackup="false"' "$MANIFEST" \
+            || { echo "::error::release manifest allows backup (#366)"; exit 1; }
+          echo "OK: release disables backup"
