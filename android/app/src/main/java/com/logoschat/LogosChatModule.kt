@@ -1239,24 +1239,32 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
    * the lib's encrypted DB and is ephemeral by design, not portable).
    */
   @ReactMethod
-  fun exportChatData(promise: Promise) {
+  fun exportChatData(passphrase: String, promise: Promise) {
     NodeRuntime.executor.execute {
       try {
+        // #361: a backup is portable, so it can't ride the device Keystore — require a
+        // passphrase and ship an authenticated, encrypted envelope (never plaintext).
+        if (passphrase.length < 8) {
+          throw IllegalArgumentException("passphrase too short")
+        }
         val ctx = reactApplicationContext
         val json = ChatRepo.requireDb().exportJson()
+        val envelope = BackupCrypto.encrypt(passphrase, json)
         val dir = java.io.File(ctx.cacheDir, "exports")
         dir.mkdirs()
+        // #361: clean up any prior export temp files so a stale plaintext/backup never lingers.
+        dir.listFiles()?.forEach { runCatching { it.delete() } }
         val ts =
             java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
                 .format(java.util.Date())
-        val file = java.io.File(dir, "logos-chat-backup-$ts.json")
-        file.writeText(json, Charsets.UTF_8)
+        val file = java.io.File(dir, "logos-chat-backup-$ts.peersenc")
+        file.writeText(envelope, Charsets.UTF_8)
         val uri =
             androidx.core.content.FileProvider.getUriForFile(
                 ctx, "${ctx.packageName}.fileprovider", file)
         val send =
             android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-              type = "application/json"
+              type = "application/octet-stream"
               putExtra(android.content.Intent.EXTRA_STREAM, uri)
               putExtra(android.content.Intent.EXTRA_SUBJECT, file.name)
               addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
