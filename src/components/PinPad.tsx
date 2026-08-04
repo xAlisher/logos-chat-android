@@ -6,7 +6,7 @@
 import React from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {colors, type, spacing} from '../theme';
-import {PIN_LENGTH} from '../security/pinSecurity';
+import {PIN_LENGTH, pinDotsAccessibilityLabel} from '../security/pinSecurity';
 
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
 
@@ -35,10 +35,18 @@ export function PinPad({
 
   return (
     <View style={styles.root} testID={testID}>
-      <View style={styles.dots}>
+      {/* #395/#396: one grouped element announcing the COUNT entered (never the digits),
+          so TalkBack conveys progress + wrong-attempt state without leaking the PIN or
+          relying on the red-dots color alone. */}
+      <View
+        style={styles.dots}
+        accessible
+        accessibilityRole="text"
+        accessibilityLabel={pinDotsAccessibilityLabel(value.length, error)}>
         {Array.from({length: PIN_LENGTH}).map((_, i) => (
           <View
             key={i}
+            importantForAccessibility="no"
             style={[
               styles.dot,
               i < value.length && styles.dotFilled,
@@ -54,8 +62,15 @@ export function PinPad({
             style={[styles.key, (k === '' || disabled) && styles.keyGhost]}
             onPress={() => press(k)}
             disabled={k === '' || disabled}
+            accessible={k !== ''}
+            importantForAccessibility={k === '' ? 'no' : 'yes'}
+            accessibilityRole="button"
+            accessibilityLabel={k === '⌫' ? 'Delete' : k || undefined}
+            accessibilityState={{disabled: k === '' || disabled}}
             testID={k !== '' ? `pinpad-${k === '⌫' ? 'del' : k}` : undefined}>
-            <Text style={styles.keyLabel}>{k}</Text>
+            <Text style={styles.keyLabel} importantForAccessibility="no">
+              {k}
+            </Text>
           </Pressable>
         ))}
       </View>

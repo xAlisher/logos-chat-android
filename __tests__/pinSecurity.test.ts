@@ -16,6 +16,7 @@ import {
   evaluateGateAttempt,
   initialGateState,
   MAX_PIN_ATTEMPTS,
+  pinDotsAccessibilityLabel,
 } from '../src/security/pinSecurity';
 
 describe('SHA-256 / HMAC / PBKDF2 — reference vectors', () => {
@@ -147,5 +148,28 @@ describe('restart-gate state machine', () => {
       duress: null,
     });
     expect(r.outcome).toBe('wrong');
+  });
+});
+
+describe('#395/#396 — PIN accessibility label never leaks the PIN', () => {
+  it('announces the COUNT entered, not the digits', () => {
+    expect(pinDotsAccessibilityLabel(0, false)).toBe('PIN entry, 0 of 6 digits entered');
+    expect(pinDotsAccessibilityLabel(3, false)).toBe('PIN entry, 3 of 6 digits entered');
+    expect(pinDotsAccessibilityLabel(6, false)).toBe('PIN entry, 6 of 6 digits entered');
+  });
+
+  it('conveys a wrong attempt without relying on color (spoken)', () => {
+    expect(pinDotsAccessibilityLabel(0, true)).toContain('Incorrect PIN');
+  });
+
+  it('clamps out-of-range counts', () => {
+    expect(pinDotsAccessibilityLabel(9, false)).toBe('PIN entry, 6 of 6 digits entered');
+    expect(pinDotsAccessibilityLabel(-1, false)).toBe('PIN entry, 0 of 6 digits entered');
+  });
+
+  it('cannot contain a full entered PIN (structural: takes a count, not a value)', () => {
+    for (let n = 0; n <= 6; n++) {
+      expect(pinDotsAccessibilityLabel(n, n === 6)).not.toMatch(/\d{6}/);
+    }
   });
 });
