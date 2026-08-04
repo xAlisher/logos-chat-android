@@ -1252,12 +1252,15 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         val envelope = BackupCrypto.encrypt(passphrase, json)
         val dir = java.io.File(ctx.cacheDir, "exports")
         dir.mkdirs()
-        // #361: clean up any prior export temp files so a stale plaintext/backup never lingers.
-        dir.listFiles()?.forEach { runCatching { it.delete() } }
+        // #361: clean up prior *backup* temp files so a stale plaintext/backup never lingers.
+        // Scoped by filename on purpose: this dir also holds shareIdentityImage's
+        // peers-identity.png, whose one-shot URI grant may still be pending with a chooser
+        // target — a blanket wipe would delete the attachment before it is read.
+        BackupCrypto.pruneStaleBackups(dir)
         val ts =
             java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
                 .format(java.util.Date())
-        val file = java.io.File(dir, "logos-chat-backup-$ts.peersenc")
+        val file = java.io.File(dir, BackupCrypto.fileName(ts))
         file.writeText(envelope, Charsets.UTF_8)
         val uri =
             androidx.core.content.FileProvider.getUriForFile(

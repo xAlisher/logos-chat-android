@@ -33,6 +33,31 @@ object BackupCrypto {
   private const val IV_LEN = 12
   private const val TAG_BITS = 128
 
+  /** Filename prefix + extension of an exported backup file. */
+  const val FILE_PREFIX = "logos-chat-backup-"
+  const val FILE_EXT = ".peersenc"
+
+  /** Name of the file an export stamped [ts] writes. */
+  fun fileName(ts: String): String = "$FILE_PREFIX$ts$FILE_EXT"
+
+  /**
+   * True if [name] is a backup file the export flow wrote. Pre-#361 exports used the same
+   * prefix with a `.json` suffix, so stale *plaintext* backups still match and get pruned.
+   */
+  fun isBackupFile(name: String): Boolean = name.startsWith(FILE_PREFIX)
+
+  /**
+   * Delete stale backup temp files in [dir] — and *only* those.
+   *
+   * The share-sheet cache dir is shared with other outgoing attachments (e.g.
+   * `peers-identity.png` from `shareIdentityImage`) whose one-shot content:// URI may not have
+   * been consumed by the chooser target yet. A blanket wipe would pull that attachment out from
+   * under it, so cleanup is scoped by filename.
+   */
+  fun pruneStaleBackups(dir: java.io.File) {
+    dir.listFiles()?.forEach { f -> if (isBackupFile(f.name)) runCatching { f.delete() } }
+  }
+
   /** Encrypt [plaintext] under [passphrase] → a self-describing JSON envelope (no plaintext). */
   fun encrypt(passphrase: String, plaintext: String): String {
     require(passphrase.isNotEmpty()) { "empty passphrase" }

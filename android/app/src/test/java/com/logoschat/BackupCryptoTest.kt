@@ -88,4 +88,30 @@ class BackupCryptoTest {
       assertTrue(true)
     }
   }
+
+  @Test
+  fun isBackupFile_matchesBackupsNotAttachments() {
+    assertTrue(BackupCrypto.isBackupFile(BackupCrypto.fileName("20260804-120000")))
+    assertTrue(BackupCrypto.isBackupFile("logos-chat-backup-old.json")) // pre-#361 plaintext
+    assertFalse(BackupCrypto.isBackupFile("peers-identity.png")) // shareIdentityImage attachment
+    assertFalse(BackupCrypto.isBackupFile("something-else.dat"))
+    assertTrue(BackupCrypto.fileName("ts").endsWith(BackupCrypto.FILE_EXT))
+  }
+
+  /** #405 P2: cleanup must delete only backup files, never a co-located share attachment. */
+  @Test
+  fun pruneStaleBackups_deletesOnlyBackups_sparesAttachments() {
+    val dir = java.nio.file.Files.createTempDirectory("exports").toFile()
+    val enc = java.io.File(dir, BackupCrypto.fileName("20260804-120000")).apply { writeText("x") }
+    val legacyJson = java.io.File(dir, "logos-chat-backup-old.json").apply { writeText("x") }
+    val identity = java.io.File(dir, "peers-identity.png").apply { writeText("x") }
+    val unrelated = java.io.File(dir, "something-else.dat").apply { writeText("x") }
+
+    BackupCrypto.pruneStaleBackups(dir)
+
+    assertFalse("current .peersenc backup should be pruned", enc.exists())
+    assertFalse("legacy .json backup should be pruned", legacyJson.exists())
+    assertTrue("shareIdentityImage attachment must be spared", identity.exists())
+    assertTrue("unrelated file must be spared", unrelated.exists())
+  }
 }
