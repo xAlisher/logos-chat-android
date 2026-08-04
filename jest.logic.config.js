@@ -40,5 +40,6 @@ module.exports = {
     '<rootDir>/__tests__/address-marker.test.ts',
     '<rootDir>/__tests__/metadataPrivacy.test.ts',
     '<rootDir>/__tests__/a11yLabels.test.ts',
+    '<rootDir>/__tests__/videoA11y.test.ts',
   ],
 };

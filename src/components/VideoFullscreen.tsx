@@ -13,13 +13,12 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import {MediaVideo, type MediaVideoHandle} from './MediaVideo';
-
-function fmt(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}:${r < 10 ? '0' : ''}${r}`;
-}
+import {
+  VIDEO_POSITION_ACTIONS,
+  adjustVideoPosition,
+  formatClock as fmt,
+  videoPositionAccessibilityValue,
+} from '../media/videoA11y';
 
 export function VideoFullscreen({
   path,
@@ -54,12 +53,15 @@ export function VideoFullscreen({
 
   const progress = duration > 0 ? Math.min(1, current / duration) : 0;
 
+  const seekTo = (target: number) => {
+    setCurrent(target);
+    videoRef.current?.seek(target);
+  };
+
   const onSeekBar = (e: GestureResponderEvent) => {
     if (duration <= 0 || barWidth <= 0) return;
     const frac = Math.max(0, Math.min(1, e.nativeEvent.locationX / barWidth));
-    const target = frac * duration;
-    setCurrent(target);
-    videoRef.current?.seek(target);
+    seekTo(frac * duration);
   };
 
   const close = () => {
@@ -146,11 +148,22 @@ export function VideoFullscreen({
             <Text style={styles.playText} importantForAccessibility="no">{paused ? '►' : '❚❚'}</Text>
           </Pressable>
           <Text style={styles.time}>{fmt(current)}</Text>
+          {/* #395: `adjustable` promises TalkBack increment/decrement — so it must actually
+              handle those actions and report its value, not just take taps. */}
           <Pressable
             style={styles.track}
             onLayout={e => setBarWidth(e.nativeEvent.layout.width)}
             accessibilityRole="adjustable"
             accessibilityLabel="Video position"
+            accessibilityValue={videoPositionAccessibilityValue(current, duration)}
+            accessibilityActions={VIDEO_POSITION_ACTIONS}
+            onAccessibilityAction={e => {
+              const name = e.nativeEvent.actionName;
+              if (name === 'increment' || name === 'decrement') {
+                seekTo(adjustVideoPosition(current, duration, name));
+              }
+            }}
+            testID="video-seek"
             onPress={onSeekBar}>
             <View style={styles.trackBg} />
             <View style={[styles.trackFill, {width: `${progress * 100}%`}]} />
