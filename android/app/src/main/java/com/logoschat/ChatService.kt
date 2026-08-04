@@ -9,12 +9,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 
 /**
  * Foreground service (type dataSync, START_STICKY) — keeps the process (and so
@@ -29,12 +28,12 @@ import java.util.concurrent.TimeUnit
  */
 class ChatService : Service() {
 
-  private var poller: ScheduledExecutorService? = null
-
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     createChannel()
+    // startForeground MUST post immediately — build directly (records the baseline snapshot
+    // so later identical updates are suppressed). No periodic poll: updates are change-driven.
     val notif = buildNotification(this)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       startForeground(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -45,22 +44,14 @@ class ChatService : Service() {
     // START_STICKY redelivery after process death: JS is gone — restart the
     // node natively from the stored config (fresh epoch by design).
     NodeRuntime.autoRestartIfWanted()
-    if (poller == null) {
-      poller =
-          Executors.newSingleThreadScheduledExecutor { r ->
-            Thread(r, "logoschat-service-poll").apply { isDaemon = true }
-          }.also {
-            it.scheduleWithFixedDelay({ updateNotification(this) }, 30, 30, TimeUnit.SECONDS)
-          }
-    }
     Log.i(TAG, "ChatService foregrounded (dataSync, sticky)")
     return START_STICKY
   }
 
   override fun onDestroy() {
     running = false
-    poller?.shutdownNow()
-    poller = null
+    notifHandler.removeCallbacks(refreshRunnable)
+    notifState.reset()
     Log.i(TAG, "ChatService destroyed")
     super.onDestroy()
   }
@@ -71,6 +62,15 @@ class ChatService : Service() {
     const val NOTIF_ID = 7
 
     @Volatile private var running = false
+
+    // #382: change-driven (not polled) notification refresh. A dedicated thread runs a
+    // debounced repost that coalesces bursts; [notifState] suppresses unchanged content so a
+    // quiet session issues zero periodic SQLite counts and zero redundant notify() calls.
+    private const val DEBOUNCE_MS = 800L
+    private val notifThread = HandlerThread("logoschat-notif").apply { start() }
+    private val notifHandler = Handler(notifThread.looper)
+    private val notifState = NotifState()
+    private val refreshRunnable = Runnable { appContext?.let { updateNotification(it) } }
 
     fun start(context: Context) {
       val i = Intent(context, ChatService::class.java)
@@ -85,11 +85,15 @@ class ChatService : Service() {
       context.stopService(Intent(context, ChatService::class.java))
     }
 
-    /** Cheap push-style refresh on node status flips (any thread). */
+    /**
+     * #382: change-driven refresh — call on any node/message mutation (any thread). Coalesces
+     * bursts via a bounded debounce and posts only if the content actually changed. Replaces
+     * the old 30-second fixed poll.
+     */
     fun refreshNotification() {
-      val app = appContext ?: return
       if (!running) return
-      updateNotification(app)
+      notifHandler.removeCallbacks(refreshRunnable)
+      notifHandler.postDelayed(refreshRunnable, DEBOUNCE_MS)
     }
 
     @Volatile var appContext: Context? = null
@@ -105,24 +109,42 @@ class ChatService : Service() {
       }
     }
 
+    /** #382: a change-driven update — query once, and skip the notify() if unchanged. */
     private fun updateNotification(context: Context) {
       try {
+        val snap = snapshot()
+        if (!notifState.shouldPost(snap)) return // unchanged → no redundant repost
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(context))
+        nm.notify(NOTIF_ID, buildNotificationFrom(context, snap))
       } catch (t: Throwable) {
         Log.w(TAG, "notification update failed: ${t.message}")
       }
     }
 
-    private fun buildNotification(context: Context): Notification {
-      createChannelIn(context)
-      val status = NodeRuntime.status
+    /** Current notification content — the ONLY place that runs the SQLite counts (#382). */
+    private fun snapshot(): NotifSnapshot {
       val (convos, msgs) =
           try {
             ChatRepo.requireDb().counts()
           } catch (_: Throwable) {
             Pair(0, 0)
           }
+      return NotifSnapshot(NodeRuntime.status, convos, msgs)
+    }
+
+    /** startForeground's initial post — unconditional, but records the baseline snapshot so
+     *  subsequent identical [updateNotification]s are suppressed. */
+    private fun buildNotification(context: Context): Notification {
+      val snap = snapshot()
+      notifState.shouldPost(snap) // record baseline (return ignored — we always post here)
+      return buildNotificationFrom(context, snap)
+    }
+
+    private fun buildNotificationFrom(context: Context, snap: NotifSnapshot): Notification {
+      createChannelIn(context)
+      val status = snap.status
+      val convos = snap.convos
+      val msgs = snap.msgs
       val tap =
           PendingIntent.getActivity(
               context,
