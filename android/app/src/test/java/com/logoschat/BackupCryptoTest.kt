@@ -98,19 +98,38 @@ class BackupCryptoTest {
     assertTrue(BackupCrypto.fileName("ts").endsWith(BackupCrypto.FILE_EXT))
   }
 
-  /** #405 P2: cleanup must delete only backup files, never a co-located share attachment. */
+  /**
+   * #405 P2 (both findings): cleanup must delete only *backup* files (never a co-located share
+   * attachment), and only *old* ones — a just-written backup can still be getting read by a
+   * share target after the sheet returns.
+   */
   @Test
-  fun pruneStaleBackups_deletesOnlyBackups_sparesAttachments() {
+  fun pruneStaleBackups_deletesOldBackupsOnly_sparesRecentAndAttachments() {
     val dir = java.nio.file.Files.createTempDirectory("exports").toFile()
-    val enc = java.io.File(dir, BackupCrypto.fileName("20260804-120000")).apply { writeText("x") }
-    val legacyJson = java.io.File(dir, "logos-chat-backup-old.json").apply { writeText("x") }
-    val identity = java.io.File(dir, "peers-identity.png").apply { writeText("x") }
-    val unrelated = java.io.File(dir, "something-else.dat").apply { writeText("x") }
+    val now = System.currentTimeMillis()
+    val twoHoursAgo = now - 2 * 60 * 60 * 1000L
+    val oldEnc =
+        java.io.File(dir, BackupCrypto.fileName("20200101-000000")).apply {
+          writeText("x"); setLastModified(twoHoursAgo)
+        }
+    val oldJson =
+        java.io.File(dir, "logos-chat-backup-old.json").apply {
+          writeText("x"); setLastModified(twoHoursAgo)
+        }
+    val recentEnc =
+        java.io.File(dir, BackupCrypto.fileName("20260804-120000")).apply {
+          writeText("x"); setLastModified(now)
+        }
+    val identity =
+        java.io.File(dir, "peers-identity.png").apply { writeText("x"); setLastModified(twoHoursAgo) }
+    val unrelated =
+        java.io.File(dir, "something-else.dat").apply { writeText("x"); setLastModified(twoHoursAgo) }
 
-    BackupCrypto.pruneStaleBackups(dir)
+    BackupCrypto.pruneStaleBackups(dir, now - BackupCrypto.STALE_BACKUP_AGE_MS)
 
-    assertFalse("current .peersenc backup should be pruned", enc.exists())
-    assertFalse("legacy .json backup should be pruned", legacyJson.exists())
+    assertFalse("old .peersenc backup should be pruned", oldEnc.exists())
+    assertFalse("old legacy .json backup should be pruned", oldJson.exists())
+    assertTrue("recent backup (share may still be reading it) must be spared", recentEnc.exists())
     assertTrue("shareIdentityImage attachment must be spared", identity.exists())
     assertTrue("unrelated file must be spared", unrelated.exists())
   }

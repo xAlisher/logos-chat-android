@@ -40,6 +40,10 @@ object BackupCrypto {
   /** Name of the file an export stamped [ts] writes. */
   fun fileName(ts: String): String = "$FILE_PREFIX$ts$FILE_EXT"
 
+  /** How long a just-written backup is kept before it's eligible for pruning — long enough
+   *  for a share-sheet target to consume its one-shot content:// URI. */
+  const val STALE_BACKUP_AGE_MS = 60 * 60 * 1000L // 1h
+
   /**
    * True if [name] is a backup file the export flow wrote. Pre-#361 exports used the same
    * prefix with a `.json` suffix, so stale *plaintext* backups still match and get pruned.
@@ -47,15 +51,20 @@ object BackupCrypto {
   fun isBackupFile(name: String): Boolean = name.startsWith(FILE_PREFIX)
 
   /**
-   * Delete stale backup temp files in [dir] — and *only* those.
+   * Delete stale backup temp files in [dir] last modified before [olderThan] (epoch ms) — and
+   * *only* backup files.
    *
-   * The share-sheet cache dir is shared with other outgoing attachments (e.g.
-   * `peers-identity.png` from `shareIdentityImage`) whose one-shot content:// URI may not have
-   * been consumed by the chooser target yet. A blanket wipe would pull that attachment out from
-   * under it, so cleanup is scoped by filename.
+   * Two constraints, both from real Senti findings:
+   *  - Filename-scoped (never a blanket wipe): the share-sheet cache dir also holds other
+   *    outgoing attachments (e.g. `peers-identity.png` from `shareIdentityImage`) whose one-shot
+   *    content:// URI may still be pending with a chooser target.
+   *  - Age-scoped: a *just-created* backup can still be getting read by the share target after
+   *    the sheet returns, so we only prune backups older than [olderThan] — never the fresh one.
    */
-  fun pruneStaleBackups(dir: java.io.File) {
-    dir.listFiles()?.forEach { f -> if (isBackupFile(f.name)) runCatching { f.delete() } }
+  fun pruneStaleBackups(dir: java.io.File, olderThan: Long) {
+    dir.listFiles()?.forEach { f ->
+      if (isBackupFile(f.name) && f.lastModified() < olderThan) runCatching { f.delete() }
+    }
   }
 
   /** Encrypt [plaintext] under [passphrase] → a self-describing JSON envelope (no plaintext). */

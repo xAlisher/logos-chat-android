@@ -1256,7 +1256,7 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
         // Scoped by filename on purpose: this dir also holds shareIdentityImage's
         // peers-identity.png, whose one-shot URI grant may still be pending with a chooser
         // target — a blanket wipe would delete the attachment before it is read.
-        BackupCrypto.pruneStaleBackups(dir)
+        BackupCrypto.pruneStaleBackups(dir, System.currentTimeMillis() - BackupCrypto.STALE_BACKUP_AGE_MS)
         val ts =
             java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
                 .format(java.util.Date())
