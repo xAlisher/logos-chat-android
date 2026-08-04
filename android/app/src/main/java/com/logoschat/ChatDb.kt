@@ -3,6 +3,7 @@ package com.logoschat
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
+import android.util.Log
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import org.json.JSONArray
@@ -59,6 +60,25 @@ class ChatDb(
     // #168 (dual-send dedup): a mirrored group's message can arrive on BOTH
     // transports; the two copies land within this window (LoRa latency = minutes).
     const val DEDUP_WINDOW_MS = 10 * 60 * 1000L
+
+    /**
+     * #382: invoked after ANY statement that can change [counts] — the two numbers the
+     * foreground-service notification renders. Since #382 replaced the 30s poll with a
+     * change-driven refresh, this is the ONLY thing that keeps that notification honest, so
+     * the trigger lives at the shared mutation layer rather than at one call site: outbound
+     * sends (text/BLE/image/voice), deletes, wipes and merges all reach it, not just the
+     * inbound event path. Set once in [MainApplication]; null in unit tests.
+     */
+    @Volatile var onCountsChanged: (() -> Unit)? = null
+
+    /** #382: fire [onCountsChanged]; a listener throwing must never sink a DB write. */
+    fun countsChanged() {
+      try {
+        onCountsChanged?.invoke()
+      } catch (t: Throwable) {
+        Log.w("logos-chat-db", "counts-changed listener failed: ${t.message}")
+      }
+    }
 
     // #361/#365: kv keys NEVER included in an export/backup. The PIN/duress verifiers
     // are screen-lock secrets — shipping them in a plaintext (or even portable) backup
@@ -303,22 +323,26 @@ class ChatDb(
       groupName: String? = null,
       createdByMe: Boolean = false,
       transport: String = "logos",
-  ): Long =
-      writableDatabase.insert(
-          "conversations",
-          android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
-          ContentValues().apply {
-            if (peerAddress != null) put("peer_address", peerAddress) else putNull("peer_address")
-            if (libConvoId != null) put("lib_convo_id", libConvoId) else putNull("lib_convo_id")
-            if (nickname != null) put("nickname", nickname) else putNull("nickname")
-            put("is_group", if (isGroup) 1 else 0)
-            put("created_by_me", if (createdByMe) 1 else 0)
-            if (groupName != null) put("group_name", groupName) else putNull("group_name")
-            put("transport", transport)
-            put("created_at", createdAt)
-            put("last_message_at", createdAt)
-            put("unread", 0)
-          })
+  ): Long {
+    val pk =
+        writableDatabase.insert(
+            "conversations",
+            android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+            ContentValues().apply {
+              if (peerAddress != null) put("peer_address", peerAddress) else putNull("peer_address")
+              if (libConvoId != null) put("lib_convo_id", libConvoId) else putNull("lib_convo_id")
+              if (nickname != null) put("nickname", nickname) else putNull("nickname")
+              put("is_group", if (isGroup) 1 else 0)
+              put("created_by_me", if (createdByMe) 1 else 0)
+              if (groupName != null) put("group_name", groupName) else putNull("group_name")
+              put("transport", transport)
+              put("created_at", createdAt)
+              put("last_message_at", createdAt)
+              put("unread", 0)
+            })
+    countsChanged()
+    return pk
+  }
 
   /**
    * #167: get-or-create the local conversation mirroring a MeshCore channel.
@@ -734,6 +758,7 @@ class ChatDb(
     } finally {
       db.endTransaction()
     }
+    countsChanged()
   }
 
   /** #153: set the local "verified" flag for a contact/conversation. */
@@ -765,6 +790,7 @@ class ChatDb(
     } finally {
       db.endTransaction()
     }
+    countsChanged()
   }
 
   /**
@@ -773,6 +799,7 @@ class ChatDb(
    */
   fun deleteMessage(msgPk: Long) {
     writableDatabase.execSQL("DELETE FROM messages WHERE msg_pk=?", arrayOf(msgPk))
+    countsChanged()
   }
 
   fun deleteConversation(convoPk: Long) {
@@ -785,6 +812,7 @@ class ChatDb(
     } finally {
       db.endTransaction()
     }
+    countsChanged()
   }
 
   fun touchConversation(convoPk: Long, at: Long) {
@@ -813,19 +841,24 @@ class ChatDb(
       status: String,
       senderAccount: String? = null,
       sentVia: String = "logos", // #165: transport this message went over ('logos'|'mesh')
-  ): Long =
-      writableDatabase.insert(
-          "messages",
-          android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
-          ContentValues().apply {
-            put("convo_pk", convoPk)
-            put("direction", direction)
-            put("content", content)
-            put("sent_at", sentAt)
-            put("status", status)
-            if (senderAccount != null) put("sender_account", senderAccount) else putNull("sender_account")
-            put("sent_via", sentVia)
-          })
+  ): Long {
+    val pk =
+        writableDatabase.insert(
+            "messages",
+            android.database.sqlite.SQLiteDatabase.CONFLICT_ABORT,
+            ContentValues().apply {
+              put("convo_pk", convoPk)
+              put("direction", direction)
+              put("content", content)
+              put("sent_at", sentAt)
+              put("status", status)
+              if (senderAccount != null) put("sender_account", senderAccount)
+              else putNull("sender_account")
+              put("sent_via", sentVia)
+            })
+    countsChanged()
+    return pk
+  }
 
   fun setMessageStatus(msgPk: Long, status: String) {
     writableDatabase.execSQL(
