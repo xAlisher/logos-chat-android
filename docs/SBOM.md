@@ -29,7 +29,11 @@ sha256sum /tmp/peers-so/lib/arm64-v8a/*.so
 `libnative-imagetranscoder.so`, `libnative-filters.so`, `libgifimage.so`,
 `libimage_processing_util_jni.so` (Fresco/image); `libVisionCamera.so`, `librnscreens.so`,
 `libreact_codegen_*.so` (RN community modules); `libbarhopper_v3.so` (ML Kit barcode / QR).
-Versions are pinned by `package-lock.json` + the Gradle lockfile.
+JS/native-module versions are pinned by `package-lock.json`; Gradle dependencies are pinned by
+**explicit versions** in `android/**/build.gradle` (+ the Gradle wrapper). Note: Gradle
+**dependency-locking is not yet enabled** — there is no committed `gradle.lockfile`, so the
+resolved Gradle graph isn't lock-verified. Enabling it (`dependencyLocking { lockAllConfigurations() }`
++ `./gradlew dependencies --write-locks`, committed) is tracked under the remaining #366 work.
 
 ## Toolchain / provenance
 - Rust libs: `cargo` targeting `aarch64-linux-android`, Android **NDK r27**.
