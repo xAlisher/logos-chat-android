@@ -90,12 +90,29 @@ function ConversationRow({
   // left line + a "via BLE mesh" caption so it reads as a Bluetooth chat in the
   // mixed All view (its home section is Bluetooth mesh / DMs).
   const isBle = convo.transport === 'ble';
+  // #395: one composed TalkBack label from STATE — name + type + unread + key states.
+  // Deliberately omits the message preview and the raw address (privacy lens): the summary
+  // conveys who/what/how-many, and entering the chat reads the content.
+  const a11yLabel = [
+    convoDisplayName(convo),
+    convo.isGroup ? `group, ${convo.memberCount} members` : null,
+    convo.verified ? 'verified' : null,
+    locked ? 'storage off' : null,
+    isBle ? 'over Bluetooth mesh' : null,
+    convo.unread > 0 ? `${convo.unread} unread` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
   return (
     <Pressable
       style={styles.row}
       onPress={onPress}
       onLongPress={e => onLongPress(e.nativeEvent.pageY)}
       delayLongPress={300}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+      accessibilityHint="Opens the conversation"
       testID={`convo-${convo.convoPk}`}>
       {isBle && <View style={styles.bleBar} />}
       <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={32} locked={locked} />

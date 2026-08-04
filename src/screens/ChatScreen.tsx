@@ -2286,6 +2286,9 @@ export function ChatScreen() {
               ]}
               onPress={onSubmit}
               disabled={!canSendComposer}
+              accessibilityRole="button"
+              accessibilityLabel={busy ? 'Sending' : 'Send message'}
+              accessibilityState={{disabled: !canSendComposer, busy}}
               testID="composer-send">
               {busy ? (
                 <Text style={[type.title, {color: colors.onAccent}]}>…</Text>
@@ -2300,30 +2303,30 @@ export function ChatScreen() {
                 Storage node sees nothing for this group (docs/adr/0002). */}
             {!storageOff && (
               <>
-                <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} testID="composer-image">
+                <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Attach photo" accessibilityState={{disabled: attaching}} testID="composer-image">
                   <ImageIcon size={22} color={colors.textDim} />
                 </Pressable>
-                <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} testID="composer-camera">
+                <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Take photo" accessibilityState={{disabled: attaching}} testID="composer-camera">
                   <CameraIcon size={22} color={colors.textDim} />
                 </Pressable>
               </>
             )}
-            <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} testID="composer-location">
+            <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share location" accessibilityState={{disabled: attaching}} testID="composer-location">
               <LocationIcon size={22} color={colors.textDim} />
             </Pressable>
             {!storageOff && (
               <>
                 {/* #306: GIF (gifs only) via Logos Storage (encrypt -> upload -> store1: marker). */}
-                <Pressable style={styles.actionBtn} onPress={() => sendGif(convoPk)} disabled={attaching} hitSlop={6} testID="composer-gif">
+                <Pressable style={styles.actionBtn} onPress={() => sendGif(convoPk)} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Send a GIF" accessibilityState={{disabled: attaching}} testID="composer-gif">
                   <Text style={styles.gifBtn}>GIF</Text>
                 </Pressable>
                 {/* #306/#307: dedicated Video button — picks video/* only, stages a poster. */}
-                <Pressable style={styles.actionBtn} onPress={onPickVideo} disabled={attaching} hitSlop={6} testID="composer-video">
+                <Pressable style={styles.actionBtn} onPress={onPickVideo} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Attach video" accessibilityState={{disabled: attaching}} testID="composer-video">
                   <FilmIcon size={22} color={colors.textDim} />
                 </Pressable>
               </>
             )}
-            <Pressable style={styles.actionBtn} onPress={onStartRecord} disabled={attaching} hitSlop={6} testID="composer-mic">
+            <Pressable style={styles.actionBtn} onPress={onStartRecord} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Record voice message" accessibilityState={{disabled: attaching}} testID="composer-mic">
               <MicIcon size={22} color={colors.textDim} />
             </Pressable>
             {storageOff && (
