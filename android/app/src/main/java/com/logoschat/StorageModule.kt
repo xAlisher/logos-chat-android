@@ -47,10 +47,19 @@ class StorageModule(reactContext: ReactApplicationContext) :
 
   private fun configured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
 
-  /** #318: open a connection, routed through the local Tor SOCKS proxy when enabled. */
+  /**
+   * #318/#363: open a connection, routed through the local Tor SOCKS proxy when Private mode
+   * is on. A Tor-selected request NEVER silently falls back to a direct connection — if the
+   * proxy port is unusable we throw, and if the proxy is down the connect() itself fails.
+   * The only direct path is when Tor is explicitly off.
+   */
   private fun openConn(urlStr: String): HttpURLConnection {
     val url = URL(urlStr)
     return if (torEnabled) {
+      // #363: fail visibly rather than fall back to direct networking.
+      if (torSocksPort <= 0) {
+        throw IllegalStateException("Private mode is on but the Tor proxy port is unset")
+      }
       val proxy = java.net.Proxy(
           java.net.Proxy.Type.SOCKS,
           java.net.InetSocketAddress("127.0.0.1", torSocksPort),

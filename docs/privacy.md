@@ -27,12 +27,16 @@ big). We'd rather tell you exactly where the line is than imply more than we del
 The delivery/storage infrastructure can, in principle, observe things *around* your encrypted
 content. Here's the state of each:
 
-| Leak | Status |
-|------|--------|
-| **Your IP when sending/viewing media** | **Closed** with **Private mode (Tor)** (#318): route media through Tor so the storage node sees a Tor exit IP, not yours. Opt-in, in Transports. |
-| **Exact file size** (a fingerprint, visible even over Tor) | **Closed** with **blob size padding** (#320): files are padded to size buckets, so many files look identical in size. |
-| **Your IP on the messaging (delivery) path** | **Open** (#319): message delivery still connects directly. Routing delivery through Tor needs native/transport work — tracked. |
-| **Fetch timing correlation** (upload then download seconds later) | **Open**: doing this well needs decoy traffic / a mixnet (#322), not a quick in-app fix. |
+Each protection is scoped to a specific channel (media vs delivery) and a specific leak
+(IP vs size vs graph vs timing). Read the channel *and* the leak — they don't all move together.
+
+| Channel | Leak | Status |
+|---------|------|--------|
+| **Media** | **Your IP when sending/viewing media** | **Closed (opt-in)** with **Private mode (Tor)** (#318): media routes through Tor so the storage node sees a Tor exit IP, not yours. When Private mode is **off**, media is direct. |
+| **Media** | **Exact file size** (a fingerprint, visible even over Tor) | **Closed** with **blob size padding** (#320): files are padded to size buckets, so many files look identical in size. |
+| **Delivery** | **Your IP on the messaging (delivery) path** | **Closed (opt-in)** with **Private mode (Tor)** (#319): when Private mode is on, delivery egresses via a local Tor relay so the delivery node sees a Tor exit, not your IP. When Private mode is **off**, delivery is direct (faster). Tor-selected traffic **fails rather than silently falling back to a direct connection**. |
+| **Both** | **Conversation graph** (which content topics a session subscribes to = who talks to whom) | **Open**: Tor hides your IP but not the *shape* of subscriptions/traffic. Needs a mixnet (#335), not Tor. |
+| **Both** | **Fetch/publish timing correlation** (upload then download seconds later) | **Open**: doing this well needs decoy traffic / a mixnet (#335), not a quick in-app fix. |
 
 ### The "run your own node" caveat (important)
 
@@ -51,6 +55,16 @@ talk to.
   conversations: which content topics a session **subscribes** to (its conversation set) and
   publish→fetch **timing**. Hiding that needs a **mixnet**, not just Tor.
 - We do **not** defeat a determined adversary correlating traffic *timing*.
+
+## Transport security of the storage node (TLS, and why not cert pinning yet)
+
+Media upload/download uses **HTTPS** (system CA trust); release builds **disable cleartext
+traffic entirely** (asserted in CI), so a downgrade to plain HTTP can't happen. We deliberately
+do **not** certificate-pin the storage node today: the node is self-hosted and its cert will
+rotate, and a hard pin would **brick every client** the moment the cert changes. If pinning is
+added it must ship as a *set* of pins (current + next backup) with an overlap window and a
+remote-config way to roll, so rotation never locks users out. Until then, defence-in-depth for
+media is: TLS + the per-blob capability (#302) + Private mode (Tor) for IP.
 
 ## The direction
 
