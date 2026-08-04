@@ -352,4 +352,24 @@ class ChatDbTest {
     assertEquals(0, JSONArray(db.listMeshContactsJson()).length())
     assertNull(db.meshContactName("a".repeat(12)))
   }
+
+  /** #361/#365: an export must never carry the PIN/duress verifiers (offline-guessing risk),
+   *  while ordinary kv settings still round-trip. */
+  @Test
+  fun exportExcludesPinAndDuressVerifiers() {
+    db.kvSet("pinVerifier", "SECRET_PIN_VERIFIER_VALUE")
+    db.kvSet("duressVerifier", "SECRET_DURESS_VERIFIER_VALUE")
+    db.kvSet("displayName", "phone-export")
+
+    val json = db.exportJson()
+
+    // sensitive verifiers — neither the key nor the value may appear
+    assertFalse(json.contains("SECRET_PIN_VERIFIER_VALUE"))
+    assertFalse(json.contains("SECRET_DURESS_VERIFIER_VALUE"))
+    assertFalse(json.contains("pinVerifier"))
+    assertFalse(json.contains("duressVerifier"))
+    // ordinary settings still exported
+    assertTrue(json.contains("displayName"))
+    assertTrue(json.contains("phone-export"))
+  }
 }
