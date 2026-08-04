@@ -164,10 +164,15 @@ function MiniAction({
         testID={testID}
         hitSlop={6}
         disabled={disabled}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{disabled}}
         style={[styles.miniPress, disabled && styles.miniDisabled]}
         onPress={onPress}>
         <View style={styles.labelPill}>
-          <Text style={styles.labelText}>{label}</Text>
+          <Text style={styles.labelText} importantForAccessibility="no">
+            {label}
+          </Text>
         </View>
         <View style={styles.miniBtn}>{children}</View>
       </Pressable>
@@ -267,8 +272,13 @@ export function SpeedDialFab({
       <Pressable
         testID="new-fab"
         style={[styles.fab, {bottom: base, backgroundColor: color}]}
+        accessibilityRole="button"
+        accessibilityLabel={open ? 'Close new-chat menu' : 'New conversation'}
+        accessibilityState={{expanded: open}}
         onPress={toggle}>
-        <Animated.Text style={[styles.fabPlus, {transform: [{rotate}]}]}>
+        <Animated.Text
+          style={[styles.fabPlus, {transform: [{rotate}]}]}
+          importantForAccessibility="no">
           +
         </Animated.Text>
       </Pressable>

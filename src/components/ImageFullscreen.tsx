@@ -165,8 +165,8 @@ export function ImageFullscreen({
         style={[StyleSheet.absoluteFill, {transform: [{translateX}, {translateY}, {scale}]}]}
       />
       <View style={StyleSheet.absoluteFill} {...pan.panHandlers} />
-      <Pressable style={styles.close} onPress={onClose} hitSlop={12} testID="image-fs-close">
-        <Text style={styles.closeText}>✕</Text>
+      <Pressable style={styles.close} onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close photo" testID="image-fs-close">
+        <Text style={styles.closeText} importantForAccessibility="no">✕</Text>
       </Pressable>
     </View>
   );

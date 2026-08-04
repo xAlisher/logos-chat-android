@@ -124,6 +124,8 @@ export function AddressModal({
             <Pressable
               onPress={onClose}
               hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
               style={styles.closeBtn}
               testID="contact-close">
               <XIcon size={22} color={colors.textDim} />

@@ -96,6 +96,9 @@ export function TransportPill() {
         testID="transport-pill"
         hitSlop={10}
         onPress={() => setOpen(true)}
+        accessibilityRole="button"
+        accessibilityLabel="Transports"
+        accessibilityHint="Opens transport and privacy-mode settings"
         style={styles.pill}>
         <TransportGlyph tri={logosTri(nodeStatus)} kind="logos" />
         {showMesh && <TransportGlyph tri={mesh} kind="mesh" />}
