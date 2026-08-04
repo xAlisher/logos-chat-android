@@ -37,6 +37,7 @@ import {
   useChatStore,
   sortedConversations,
   convoDisplayName,
+  conversationA11yLabel,
   conversationPreview,
 } from '../stores/chatStore';
 import type {Conversation, ConvoPreview} from '../stores/chatStore';
@@ -90,12 +91,20 @@ function ConversationRow({
   // left line + a "via BLE mesh" caption so it reads as a Bluetooth chat in the
   // mixed All view (its home section is Bluetooth mesh / DMs).
   const isBle = convo.transport === 'ble';
+  // #395: one composed TalkBack label from STATE — name + type + unread + key states.
+  // Omits the message preview and never carries the FULL address (privacy lens); the
+  // leading name is the visible row title verbatim. See conversationA11yLabel.
+  const a11yLabel = conversationA11yLabel(convo, {locked, isBle});
   return (
     <Pressable
       style={styles.row}
       onPress={onPress}
       onLongPress={e => onLongPress(e.nativeEvent.pageY)}
       delayLongPress={300}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={a11yLabel}
+      accessibilityHint="Opens the conversation"
       testID={`convo-${convo.convoPk}`}>
       {isBle && <View style={styles.bleBar} />}
       <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={32} locked={locked} />

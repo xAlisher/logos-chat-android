@@ -341,6 +341,7 @@ interface ChatState {
 export {
   sortedConversations,
   convoDisplayName,
+  conversationA11yLabel,
   knownContacts,
   filterContacts,
   isAddressVerified,
