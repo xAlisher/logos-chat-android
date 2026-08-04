@@ -341,6 +341,8 @@ export function GroupInfoScreen() {
               <Pressable
                 onPress={() => setStorageInfoOpen(true)}
                 hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="About storage"
                 testID="group-storage-info">
                 <InfoIcon size={15} color={colors.textFaint} />
               </Pressable>
