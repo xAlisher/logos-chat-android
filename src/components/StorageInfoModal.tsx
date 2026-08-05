@@ -58,9 +58,10 @@ export function StorageInfoModal({
               node</Text> — they ride the encrypted messaging path directly.
             </Para>
             <Para>
-              <Text style={styles.em}>
-                No content, no metadata — nothing leaks through the Storage node.
-              </Text>
+              <Text style={styles.em}>Turn Storage off</Text> for a group and none
+              of the above applies: it's text, voice and location only, so nothing
+              about it rides the Storage node. Your messages still travel the
+              encrypted delivery network.
             </Para>
           </ScrollView>
 

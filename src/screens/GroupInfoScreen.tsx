@@ -337,7 +337,7 @@ export function GroupInfoScreen() {
         <View style={styles.storageRow} testID="group-storage-row">
           <View style={styles.storageText}>
             <View style={styles.storageLabelRow}>
-              <Text style={[type.title, {color: colors.text}]}>Storage</Text>
+              <Text style={[type.title, {color: colors.text}]}>Media via Storage node</Text>
               <Pressable
                 onPress={() => setStorageInfoOpen(true)}
                 hitSlop={10}
@@ -351,8 +351,8 @@ export function GroupInfoScreen() {
                 The stored flag is storageOff (true = OFF), so display/write the inverse. */}
             <Text style={[type.caption, {color: colors.textDim}]}>
               {storageOff
-                ? 'No content, no metadata leaks through the Storage node.'
-                : 'Heavy media sending added. Some content metadata could leak.'}
+                ? 'Text, voice and location only — nothing about this group rides the Logos Storage node.'
+                : 'Send photos, GIFs and videos. The Storage node relays them end-to-end encrypted — it can tell media moved here, never what\'s in it.'}
             </Text>
           </View>
           <Switch
@@ -375,7 +375,7 @@ export function GroupInfoScreen() {
                 <InfoIcon size={15} color={colors.textFaint} />
               </View>
               <Text style={[type.caption, {color: colors.textDim}]}>
-                No content, no metadata leaks through the Storage node.
+                Text, voice and location only — nothing about this group rides the Logos Storage node.
               </Text>
             </View>
           </Pressable>
