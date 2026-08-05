@@ -26,6 +26,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.Executors
 
 /**
  * #305: on-device video compression. Re-encodes a picked clip to H.264 at ~720p and a modest
@@ -49,6 +50,26 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     const val TIMEOUT_US = 10_000L
   }
 
+  // #385: bound media processing. Every transcode runs on ONE background thread — concurrent
+  // requests queue rather than each spawning its own MediaCodec encode session (unbounded before
+  // → OOM/codec exhaustion on weak phones under rapid picks). Daemon + below-normal priority so it
+  // never keeps the process alive on its own nor starves the UI.
+  private val transcodeExecutor = Executors.newSingleThreadExecutor { r ->
+    Thread(r, "logoschat-transcode").apply {
+      isDaemon = true
+      priority = Thread.NORM_PRIORITY - 1
+    }
+  }
+  private val gate = TranscodeGate()
+
+  /** Thrown from [doTranscode] when [gate] reports the id was cancelled mid-encode. */
+  private class TranscodeCancelled : Exception()
+
+  override fun invalidate() {
+    transcodeExecutor.shutdownNow()
+    super.invalidate()
+  }
+
   private fun emitProgress(id: String, progress: Double) {
     val map: WritableMap = Arguments.createMap().apply {
       putString("id", id)
@@ -68,7 +89,17 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
    */
   @ReactMethod
   fun transcode(inputPath: String, id: String, promise: Promise) {
-    Thread {
+    // #385: admit the id BEFORE queueing, on this thread — a cancel that lands while the job is
+    // still behind another transcode must be seen by the worker, and a cancel for an id that is
+    // not admitted (already finished / never started) must stay a no-op.
+    gate.begin(id)
+    transcodeExecutor.execute {
+      // Cancelled while still queued behind another transcode → skip before opening any codec.
+      if (gate.isCancelled(id)) {
+        gate.clear(id)
+        promise.resolve(cancelledResult(inputPath))
+        return@execute
+      }
       val outFile = File(ctx.cacheDir, "media-out/enc_${System.currentTimeMillis()}.mp4")
       outFile.parentFile?.mkdirs()
       try {
@@ -79,18 +110,41 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
           putInt("height", dims[1])
         }
         promise.resolve(out)
+      } catch (c: TranscodeCancelled) {
+        Log.i(TAG, "transcode cancelled: $id")
+        outFile.delete() // discard the partial output
+        promise.resolve(cancelledResult(inputPath))
       } catch (t: Throwable) {
         Log.w(TAG, "transcode failed, sending original", t)
         outFile.delete()
         // graceful fallback: upload the original untouched
-        val out = Arguments.createMap().apply {
-          putString("path", inputPath)
-          putBoolean("skipped", true)
-        }
-        promise.resolve(out)
+        promise.resolve(skippedResult(inputPath))
+      } finally {
+        // Retire the id: it is no longer live, so a late cancel for it is a no-op and a future
+        // transcode reusing the id is never pre-skipped.
+        gate.clear(id)
       }
-    }.start()
+    }
   }
+
+  /** #385: cancel a queued or in-flight transcode by [id]. No-op if there is no such transcode. */
+  @ReactMethod
+  fun cancelTranscode(id: String) {
+    gate.requestCancel(id)
+  }
+
+  private fun cancelledResult(inputPath: String): WritableMap =
+      Arguments.createMap().apply {
+        putString("path", inputPath)
+        putBoolean("skipped", true)
+        putBoolean("cancelled", true)
+      }
+
+  private fun skippedResult(inputPath: String): WritableMap =
+      Arguments.createMap().apply {
+        putString("path", inputPath)
+        putBoolean("skipped", true)
+      }
 
   /** @return [displayWidth, displayHeight] */
   private fun doTranscode(inputPath: String, outputPath: String, id: String): IntArray {
@@ -123,7 +177,15 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     val bitrate = (targetW.toLong() * targetH * 4).toInt().coerceIn(600_000, 4_000_000)
     Log.i(TAG, "GEOM coded=${codedW}x${codedH} rot=$rotation display=${displayW}x${displayH} target=${targetW}x${targetH}")
 
+    // #385: hold every native resource in nullable vars and release them in a single `finally`,
+    // so a mid-encode throw — a decode error OR a cancellation — never leaks a MediaCodec/muxer
+    // (the old code released only on the success path).
     val extractor = MediaExtractor()
+    var encoderRef: MediaCodec? = null
+    var decoderRef: MediaCodec? = null
+    var glSurfaceRef: EglSurface? = null
+    var muxerRef: MediaMuxer? = null
+    try {
     extractor.setDataSource(inputPath)
     val videoTrack = firstTrack(extractor, "video/")
     val audioTrack = firstTrack(extractor, "audio/")
@@ -137,22 +199,26 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
       setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE)
       setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_INTERVAL)
     }
-    val encoder = MediaCodec.createEncoderByType(OUTPUT_MIME)
+    val encoder = MediaCodec.createEncoderByType(OUTPUT_MIME).also { encoderRef = it }
     encoder.configure(encFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
     // #311: the decoder applies the source rotation itself when rendering to a Surface, so the
     // frames arriving in our SurfaceTexture are ALREADY display-oriented → draw straight (0),
     // don't rotate again. We only need to size the encoder to DISPLAY dims (above).
-    val glSurface = EglSurface(encoder.createInputSurface(), 0)
+    val glSurface = EglSurface(encoder.createInputSurface(), 0).also { glSurfaceRef = it }
     encoder.start()
 
     // Decoder → renders onto the GL SurfaceTexture.
-    val decoder = MediaCodec.createDecoderByType(inFormat.getString(MediaFormat.KEY_MIME)!!)
+    val decoder =
+        MediaCodec.createDecoderByType(inFormat.getString(MediaFormat.KEY_MIME)!!)
+            .also { decoderRef = it }
     decoder.configure(inFormat, glSurface.decoderSurface, null, 0)
     decoder.start()
     extractor.selectTrack(videoTrack)
 
     // #311: rotation is baked into the pixels below → output is upright, no hint.
-    val muxer = MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+    val muxer =
+        MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            .also { muxerRef = it }
 
     var muxerStarted = false
     var muxVideoIdx = -1
@@ -165,6 +231,9 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
     var lastPct = -1 // #308: only emit on a whole-percent change (throttle bridge spam)
 
     while (!encodeDone) {
+      // #385: honour a cancellation between frames — bail out cleanly (finally releases codecs;
+      // the caller deletes the partial file).
+      if (gate.isCancelled(id)) throw TranscodeCancelled()
       // 1) feed decoder from the extractor
       if (!inputDone) {
         val inIdx = decoder.dequeueInputBuffer(TIMEOUT_US)
@@ -231,21 +300,27 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
       }
     }
 
-    decoder.stop(); decoder.release()
-    encoder.stop(); encoder.release()
-    glSurface.release()
-
     // audio passthrough (copy compressed audio samples verbatim)
     if (audioTrack >= 0 && muxAudioIdx >= 0) {
       copyAudio(inputPath, audioTrack, muxer, muxAudioIdx)
     }
 
-    muxer.stop(); muxer.release()
-    extractor.release()
-
     emitProgress(id, 1.0)
     // Output is already display-oriented (rotation baked in) → dims are the marker AR.
     return intArrayOf(targetW, targetH)
+    } finally {
+      // #385: release native resources on EVERY exit — success, decode error, or cancellation —
+      // so a bounded, serialized pipeline never leaks a MediaCodec/muxer handle. Each guarded
+      // independently; muxer.stop() throws if it was never started (cancel before first frame).
+      try { decoderRef?.stop() } catch (_: Throwable) {}
+      try { decoderRef?.release() } catch (_: Throwable) {}
+      try { encoderRef?.stop() } catch (_: Throwable) {}
+      try { encoderRef?.release() } catch (_: Throwable) {}
+      try { glSurfaceRef?.release() } catch (_: Throwable) {}
+      try { muxerRef?.stop() } catch (_: Throwable) {}
+      try { muxerRef?.release() } catch (_: Throwable) {}
+      try { extractor.release() } catch (_: Throwable) {}
+    }
   }
 
   private fun copyAudio(path: String, track: Int, muxer: MediaMuxer, muxIdx: Int) {

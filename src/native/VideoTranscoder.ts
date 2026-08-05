@@ -8,7 +8,16 @@ interface VideoTranscoderNative {
   transcode(
     inputPath: string,
     id: string,
-  ): Promise<{path: string; width?: number; height?: number; skipped?: boolean}>;
+  ): Promise<{
+    path: string;
+    width?: number;
+    height?: number;
+    skipped?: boolean;
+    cancelled?: boolean;
+  }>;
+  // #385: cancel a queued or in-flight transcode by [id]. No-op if there is none. The pending
+  // transcode() promise then resolves {skipped:true, cancelled:true, path:<original>}.
+  cancelTranscode(id: string): void;
 }
 
 const VideoTranscoder = NativeModules.VideoTranscoder as VideoTranscoderNative;
