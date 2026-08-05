@@ -1248,11 +1248,32 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     ChatRepo.activeConvoPk = convoPk.toLong()
   }
 
-  // #292: fire-and-forget store catch-up (called on app foreground). Off-thread — the
-  // native call briefly blocks on the node thread's command ack.
+  // #292/#383: store catch-up (called on app foreground). #383: coalesced (single-flight +
+  // 15s cooldown) so repeated foreground transitions don't pile up redundant pulls, and a
+  // failed pull is retried with exponential backoff + jitter (only while foreground).
+  private val catchupHandler =
+      Handler(HandlerThread("logoschat-catchup").apply { start() }.looper)
+  private val catchupRunner =
+      CatchupRunner(
+          nowMs = { android.os.SystemClock.elapsedRealtime() },
+          rand = { Math.random() },
+          foreground = { ChatRepo.appForeground },
+          pull = { NodeRuntime.catchupNow() },
+          schedule = { delayMs, task -> catchupHandler.postDelayed({ task() }, delayMs) },
+          onOutcome = { ok, took, retryInMs, failures ->
+            if (ok) {
+              Log.i("logos-chat-catchup", "catch-up ok in ${took}ms")
+            } else {
+              Log.w(
+                  "logos-chat-catchup",
+                  "catch-up failed (${took}ms), attempt $failures — retry in ${retryInMs}ms")
+            }
+          },
+      )
+
   @ReactMethod
   fun catchupNow() {
-    Thread { NodeRuntime.catchupNow() }.start()
+    catchupRunner.start()
   }
 
   @ReactMethod
