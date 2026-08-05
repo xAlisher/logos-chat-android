@@ -43,6 +43,7 @@ class ChatService : Service() {
     running = true
     fgStartedElapsed = android.os.SystemClock.elapsedRealtime() // #381: track dataSync duration
     timedOut = false // a fresh (foreground) start clears any prior timeout
+    armPreCapWarning(this) // #381: (re)arm the pre-cap heads-up; clears any stale one
     // START_STICKY redelivery after process death: JS is gone — restart the
     // node natively from the stored config (fresh epoch by design).
     NodeRuntime.autoRestartIfWanted()
@@ -53,6 +54,7 @@ class ChatService : Service() {
   override fun onDestroy() {
     running = false
     notifHandler.removeCallbacks(refreshRunnable)
+    notifHandler.removeCallbacks(warnRunnable) // #381: don't fire a heads-up after we're gone
     notifState.reset()
     Log.i(TAG, "ChatService destroyed")
     super.onDestroy()
@@ -73,6 +75,8 @@ class ChatService : Service() {
     Log.w(TAG, "dataSync FGS timed out after ${activeMs}ms — stopping foreground + notifying user")
     timedOut = true
     running = false
+    notifHandler.removeCallbacks(warnRunnable) // the pre-cap heads-up is moot now
+    cancelWarnNotice(this) // superseded by the actual paused notice below
     postPausedNotice(this, activeMs)
     stopForeground(STOP_FOREGROUND_REMOVE)
     stopSelf() // explicit stop → no START_STICKY re-delivery (never loop a forbidden FGS start)
@@ -86,6 +90,11 @@ class ChatService : Service() {
     // actually surfaces (the ongoing node notification is IMPORTANCE_LOW and silent).
     private const val CHANNEL_ALERTS = "logoschat_alerts"
     private const val NOTIF_ALERT_ID = 8
+    // #381: a distinct id for the *pre-cap* heads-up (so it and the actual paused notice can
+    // coexist / be cancelled independently). Fired ~1h before the nominal ~6h/24h dataSync cap.
+    // Time-based best effort — the OS never exposes remaining quota (see fgsWarnNotice).
+    private const val NOTIF_WARN_ID = 9
+    private const val WARN_AFTER_MS = 5L * 60L * 60L * 1000L // ~1h of headroom before ~6h cap
 
     @Volatile private var running = false
 
@@ -151,6 +160,62 @@ class ChatService : Service() {
     private val notifHandler = Handler(notifThread.looper)
     private val notifState = NotifState()
     private val refreshRunnable = Runnable { appContext?.let { updateNotification(it) } }
+    // #381: fires WARN_AFTER_MS after a fresh FGS start — but only if the service is still up and
+    // hasn't already timed out (a fresh start / timeout removes this callback).
+    private val warnRunnable = Runnable {
+      if (running && !timedOut) appContext?.let { postWarnNotice(it) }
+    }
+
+    /** #381: (re)arm the pre-cap heads-up on each fresh FGS start, clearing any stale one. */
+    private fun armPreCapWarning(context: Context) {
+      cancelWarnNotice(context)
+      notifHandler.removeCallbacks(warnRunnable)
+      notifHandler.postDelayed(warnRunnable, WARN_AFTER_MS)
+    }
+
+    /** #381: drop the pre-cap heads-up (fresh start, or superseded by the real paused notice). */
+    private fun cancelWarnNotice(context: Context) {
+      try {
+        (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(NOTIF_WARN_ID)
+      } catch (t: Throwable) {
+        Log.w(TAG, "warn-notice clear failed: ${t.message}")
+      }
+    }
+
+    /** #381: post the proactive "syncing may pause soon" heads-up (see [fgsWarnNotice]). */
+    private fun postWarnNotice(context: Context) {
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          nm.createNotificationChannel(
+              NotificationChannel(
+                  CHANNEL_ALERTS, "Delivery alerts", NotificationManager.IMPORTANCE_DEFAULT)
+                  .apply { description = "Alerts when background message delivery pauses" })
+        }
+        val tap =
+            PendingIntent.getActivity(
+                context,
+                2,
+                Intent(context, MainActivity::class.java).apply {
+                  addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n =
+            NotificationCompat.Builder(context, CHANNEL_ALERTS)
+                .setContentTitle("Peers — background syncing may pause soon")
+                .setContentText(fgsWarnNotice())
+                .setStyle(NotificationCompat.BigTextStyle().bigText(fgsWarnNotice()))
+                .setSmallIcon(R.drawable.ic_stat_lambda)
+                .setAutoCancel(true)
+                .setContentIntent(tap)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+        nm.notify(NOTIF_WARN_ID, n)
+      } catch (t: Throwable) {
+        Log.w(TAG, "warn-notice failed: ${t.message}")
+      }
+    }
 
     fun start(context: Context) {
       val i = Intent(context, ChatService::class.java)

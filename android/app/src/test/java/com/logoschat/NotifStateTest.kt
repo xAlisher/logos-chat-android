@@ -59,4 +59,13 @@ class NotifStateTest {
     assertEquals(
         "Background delivery paused. Open Peers to catch up.", fgsPausedNotice(59 * 60 * 1000L))
   }
+
+  // #381: pre-cap heads-up — a possibility ("may"), and it tells the user the fix (open the app).
+  @Test
+  fun fgsWarnNotice_isHedgedAndActionable() {
+    val msg = fgsWarnNotice()
+    assertTrue("hedged, since remaining quota is unknown", msg.contains("may"))
+    assertTrue("names the fix", msg.contains("Open the app"))
+    assertTrue("about background syncing/notifications", msg.contains("background syncing"))
+  }
 }
