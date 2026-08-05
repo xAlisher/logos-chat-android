@@ -72,6 +72,19 @@ def enableProguardInReleaseBuilds = true
  */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
+/**
+ * #356: resolve a release-signing credential the way docs/SIGNING.md documents it — a Gradle
+ * project property (`~/.gradle/gradle.properties`, `-P`) OR a plain environment variable of the
+ * same name. `findProperty` alone does NOT see exported env vars (only `ORG_GRADLE_PROJECT_*`),
+ * so a release job that exports `RELEASE_STORE_FILE=…` would silently take the debug fallback.
+ * Blank values resolve to null so an empty prop/env can't half-configure the signing config.
+ */
+ext.releaseSigningCredential = { String name ->
+    def value = project.findProperty(name) ?: System.getenv(name)
+    def resolved = value?.toString()?.trim()
+    return resolved ? resolved : null
+}
+
 android {
     ndkVersion rootProject.ext.ndkVersion
     buildToolsVersion rootProject.ext.buildToolsVersion
@@ -117,6 +130,18 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        // #356: production release signing. Credentials come from RELEASE_* gradle properties
+        // or env vars (see docs/SIGNING.md) and are NEVER committed. Only populated when the
+        // keystore path is provided, so dev/CI builds without it still work (debug fallback).
+        release {
+            def storeFilePath = releaseSigningCredential('RELEASE_STORE_FILE')
+            if (storeFilePath) {
+                storeFile file(storeFilePath)
+                storePassword releaseSigningCredential('RELEASE_STORE_PASSWORD')
+                keyAlias releaseSigningCredential('RELEASE_KEY_ALIAS')
+                keyPassword releaseSigningCredential('RELEASE_KEY_PASSWORD')
+            }
+        }
     }
     testOptions {
         unitTests {
@@ -130,9 +155,25 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // #356: sign with the production key when its keystore is configured; otherwise fall
+            // back to the debug key for local/CI builds. A real distributable release passes
+            // -PassertReleaseSigned, which turns the fallback into a HARD FAILURE so a debug-signed
+            // APK can never be shipped as production. See docs/SIGNING.md.
+            // The guard reads the SAME resolved value the signing config uses (property or env,
+            // blank == unset), so the two can never disagree about whether the key is configured.
+            if (releaseSigningCredential('RELEASE_STORE_FILE')) {
+                signingConfig signingConfigs.release
+            } else {
+                if (project.hasProperty('assertReleaseSigned')) {
+                    throw new GradleException(
+                        "#356: RELEASE_STORE_FILE not set — refusing to ship a DEBUG-SIGNED release. " +
+                        "Configure the production keystore in gradle.properties (docs/SIGNING.md).")
+                }
+                logger.warn(
+                    "#356: RELEASE_STORE_FILE not set — release APK is DEBUG-SIGNED (dev/CI only, " +
+                    "NOT for distribution). See docs/SIGNING.md.")
+                signingConfig signingConfigs.debug
+            }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
