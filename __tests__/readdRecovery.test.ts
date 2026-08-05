@@ -163,3 +163,210 @@ describe('shouldAutoReadd (#350)', () => {
     expect(ok).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #350 — replay of requests that arrived while the JS runtime was dead.
+//
+// REGRESSION THIS PINS: the live DeviceEventEmitter listener was the ONLY
+// readd1: handler. Native persists the inbound marker and then SKIPS the JS
+// forward when there is no active React instance ("JS not alive — event already
+// persisted, JS forward skipped"), and a readd1: deliberately raises no
+// notification and bumps no unread. So a request sent while the creator was
+// backgrounded or cold-started was inert forever, even after they opened the
+// app — the advertised one-tap recovery silently failed. Persisted markers must
+// be REPLAYED after conversations hydrate, exactly once each.
+import {
+  planReaddReplay,
+  readdCursorAfter,
+  runReaddReplay,
+} from '../src/stores/readdRecovery';
+import type {ReaddRequest, ReaddRow} from '../src/stores/readdRecovery';
+import {encodeReadd, parseReadd} from '../src/messages/readd';
+
+const GROUP = 'lib-convo-deadbeef';
+const OTHER_GROUP = 'lib-convo-cafebabe';
+
+const readdRow = (over: Partial<ReaddRow> & {msgPk: number}): ReaddRow => ({
+  convoPk: 7,
+  content: encodeReadd(GROUP),
+  sender: STUCK,
+  peerAddress: STUCK,
+  ...over,
+});
+
+describe('planReaddReplay (#350)', () => {
+  it('surfaces a request that the live listener never saw', () => {
+    const {requests} = planReaddReplay([readdRow({msgPk: 42})], 0, parseReadd);
+    expect(requests).toEqual([
+      {msgPk: 42, convoPk: 7, libConvoId: GROUP, requester: STUCK.toLowerCase()},
+    ]);
+  });
+
+  it('skips rows at or below the cursor — already handled', () => {
+    const rows = [readdRow({msgPk: 10}), readdRow({msgPk: 11, sender: STRANGER})];
+    const {requests, maxMsgPk} = planReaddReplay(rows, 10, parseReadd);
+    expect(requests.map(r => r.msgPk)).toEqual([11]);
+    expect(maxMsgPk).toBe(11);
+  });
+
+  it('replays oldest-first so the cursor can advance monotonically', () => {
+    const rows = [
+      readdRow({msgPk: 5, content: encodeReadd(OTHER_GROUP)}),
+      readdRow({msgPk: 9, sender: STRANGER}),
+    ];
+    const {requests} = planReaddReplay(rows, 0, parseReadd);
+    expect(requests.map(r => r.msgPk)).toEqual([5, 9]);
+  });
+
+  it('collapses repeat taps from the same peer for the same group', () => {
+    const rows = [readdRow({msgPk: 3}), readdRow({msgPk: 4}), readdRow({msgPk: 8})];
+    const {requests} = planReaddReplay(rows, 0, parseReadd);
+    // one remove-then-add, not three — the newest request wins
+    expect(requests.map(r => r.msgPk)).toEqual([8]);
+  });
+
+  it('keeps requests from different peers, and for different groups, apart', () => {
+    const rows = [
+      readdRow({msgPk: 1, sender: STUCK}),
+      readdRow({msgPk: 2, sender: STRANGER}),
+      readdRow({msgPk: 3, sender: STUCK, content: encodeReadd(OTHER_GROUP)}),
+    ];
+    const {requests} = planReaddReplay(rows, 0, parseReadd);
+    expect(requests.map(r => r.msgPk)).toEqual([1, 2, 3]);
+  });
+
+  it('falls back to the conversation peer when the row has no sender', () => {
+    const rows = [readdRow({msgPk: 2, sender: null, peerAddress: STUCK})];
+    const {requests} = planReaddReplay(rows, 0, parseReadd);
+    expect(requests[0].requester).toBe(STUCK.toLowerCase());
+  });
+
+  it('drops rows it can never act on, but still lets the cursor pass them', () => {
+    const rows = [
+      readdRow({msgPk: 4, content: 'readd1:'}), // malformed payload
+      readdRow({msgPk: 5, sender: null, peerAddress: null}), // unattributable
+      readdRow({msgPk: 6, sender: '   ', peerAddress: ''}),
+    ];
+    const {requests, maxMsgPk} = planReaddReplay(rows, 0, parseReadd);
+    expect(requests).toEqual([]);
+    expect(maxMsgPk).toBe(6); // else junk would wedge the cursor forever
+  });
+});
+
+describe('readdCursorAfter (#350)', () => {
+  it('jumps to the newest row when everything settled', () => {
+    expect(readdCursorAfter(0, 12, 12, false)).toBe(12);
+  });
+
+  it('stops short of a failed request so the next pass retries it', () => {
+    expect(readdCursorAfter(0, 30, 10, true)).toBe(10);
+  });
+
+  it('does not move at all when the very first request failed', () => {
+    expect(readdCursorAfter(7, 30, null, true)).toBe(7);
+  });
+
+  it('never goes backwards', () => {
+    expect(readdCursorAfter(50, 12, null, false)).toBe(50);
+  });
+});
+
+describe('runReaddReplay (#350)', () => {
+  function harness(
+    rows: ReaddRow[],
+    opts: {cursor?: number; fail?: (req: ReaddRequest) => boolean} = {},
+  ) {
+    const applied: number[] = [];
+    let cursor = opts.cursor ?? 0;
+    const deps = {
+      readCursor: async () => cursor,
+      fetch: jest.fn(async (since: number) =>
+        rows.filter(r => r.msgPk > since),
+      ),
+      parse: parseReadd,
+      apply: jest.fn(async (req: ReaddRequest) => {
+        if (opts.fail?.(req)) throw new Error('node not started');
+        applied.push(req.msgPk);
+      }),
+      writeCursor: jest.fn(async (n: number) => {
+        cursor = n;
+      }),
+    };
+    return {deps, applied, cursorNow: () => cursor};
+  }
+
+  // THE REGRESSION TEST: the request arrived while the app was dead, so no live
+  // event ever fired. Booting must still act on it.
+  it('acts on a request that arrived while the JS runtime was dead', async () => {
+    const {deps, applied, cursorNow} = harness([readdRow({msgPk: 21})]);
+    const {settled} = await runReaddReplay(deps);
+    expect(applied).toEqual([21]);
+    expect(settled[0].requester).toBe(STUCK.toLowerCase());
+    expect(cursorNow()).toBe(21);
+  });
+
+  it('does not act twice — a second pass is a no-op', async () => {
+    const {deps, applied} = harness([readdRow({msgPk: 21})]);
+    await runReaddReplay(deps);
+    await runReaddReplay(deps);
+    expect(applied).toEqual([21]); // NOT [21, 21] — no repeat kick-and-re-add
+    expect(deps.writeCursor).toHaveBeenCalledTimes(1); // only written when it moves
+  });
+
+  it('acts on a request that arrives after an earlier one was handled', async () => {
+    const rows = [readdRow({msgPk: 21})];
+    const {deps, applied} = harness(rows);
+    await runReaddReplay(deps);
+    rows.push(readdRow({msgPk: 22, sender: STRANGER}));
+    await runReaddReplay(deps);
+    expect(applied).toEqual([21, 22]);
+  });
+
+  it('leaves a failed request pending and retries it next pass', async () => {
+    let down = true;
+    const {deps, applied, cursorNow} = harness([readdRow({msgPk: 30})], {
+      fail: () => down,
+    });
+    await runReaddReplay(deps);
+    expect(applied).toEqual([]);
+    expect(cursorNow()).toBe(0); // still owed — the cursor did not burn it
+    down = false;
+    await runReaddReplay(deps);
+    expect(applied).toEqual([30]);
+    expect(cursorNow()).toBe(30);
+  });
+
+  it('stops at the first failure — a later request is not skipped over', async () => {
+    const rows = [
+      readdRow({msgPk: 11, sender: STUCK}),
+      readdRow({msgPk: 12, sender: STRANGER}),
+      readdRow({msgPk: 13, sender: STUCK, content: encodeReadd(OTHER_GROUP)}),
+    ];
+    let broken = true;
+    const {deps, applied, cursorNow} = harness(rows, {
+      fail: req => broken && req.msgPk === 12,
+    });
+    await runReaddReplay(deps);
+    expect(applied).toEqual([11]);
+    expect(cursorNow()).toBe(11);
+    broken = false;
+    await runReaddReplay(deps);
+    expect(applied).toEqual([11, 12, 13]);
+    expect(cursorNow()).toBe(13);
+  });
+
+  it('a declined request (not our group, not the creator) still settles', async () => {
+    // `apply` resolves for a decline — the pass must not stall on it forever.
+    const {deps, cursorNow} = harness([readdRow({msgPk: 9})]);
+    await runReaddReplay(deps);
+    expect(cursorNow()).toBe(9);
+  });
+
+  it('asks native only for rows above the cursor', async () => {
+    const {deps} = harness([readdRow({msgPk: 4})], {cursor: 4});
+    await runReaddReplay(deps);
+    expect(deps.fetch).toHaveBeenCalledWith(4, 100);
+    expect(deps.apply).not.toHaveBeenCalled();
+    expect(deps.writeCursor).not.toHaveBeenCalled();
+  });
+});

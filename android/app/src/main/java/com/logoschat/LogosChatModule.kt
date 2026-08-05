@@ -1270,6 +1270,32 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #350: persisted inbound readd1: requests newer than [sinceMsgPk], oldest-first.
+   * JS replays these at boot/foreground — the live event forward is skipped whenever
+   * the React instance is dead, and a readd1: raises no notification, so without the
+   * replay a request that arrives while the creator is backgrounded is lost.
+   */
+  @ReactMethod
+  fun pendingReadds(sinceMsgPk: Double, limit: Double, promise: Promise) {
+    try {
+      val json =
+          ChatRepo.requireDb()
+              .pendingReaddsJson(sinceMsgPk.toLong(), limit.toInt().coerceIn(1, 200))
+      // Recovery is invisible by design (no bubble, no unread, no notification), so
+      // leave a breadcrumb when there IS something to replay. Count only — the rows
+      // carry peer addresses (PII).
+      val n = org.json.JSONArray(json).length()
+      if (n > 0)
+          Log.i(
+              "logos-chat-bridge",
+              "readd replay: $n pending request(s) since msg_pk=${sinceMsgPk.toLong()}")
+      promise.resolve(json)
+    } catch (t: Throwable) {
+      promise.reject("db", t)
+    }
+  }
+
   @ReactMethod
   fun markRead(convoPk: Double, promise: Promise) {
     try {

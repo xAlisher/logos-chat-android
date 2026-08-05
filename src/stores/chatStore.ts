@@ -17,7 +17,8 @@ import {encodePin} from '../messages/pins';
 import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
 import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
-import {resolveRoster, shouldAutoReadd} from './readdRecovery';
+import {resolveRoster, runReaddReplay, shouldAutoReadd} from './readdRecovery';
+import type {ReaddRequest} from './readdRecovery';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -184,6 +185,13 @@ interface ChatState {
    *  Broadcasts a `readd1:` marker over 1:1s to every group member; only the
    *  creator's app acts on it (creator-gated remove-then-add). */
   requestReadd: (convoPk: number) => Promise<void>;
+  /** #350: run the creator gate over PERSISTED readd1: requests we haven't handled
+   *  yet. This — not the live event listener — is the single path: a readd1: that
+   *  lands while the JS runtime is dead is persisted natively but never forwarded,
+   *  and it raises no notification, so it would otherwise be lost. Idempotent via a
+   *  persisted msg_pk cursor; safe to call at boot, on foreground, and on the live
+   *  event. */
+  replayReaddRequests: () => Promise<void>;
   /** Load a group's roster (app-side, best-effort). */
   loadMembers: (convoPk: number) => Promise<void>;
   /** #168 (Phase 2): map/unmap a Logos address ↔ a MeshCore identity, then reload the group roster. */
@@ -413,6 +421,71 @@ function persistSystemLines(convoPk: number, notes: SystemNote[]): void {
 const gcfgKey = (convoPk: number) => `gcfg:${convoPk}`;
 function persistGroupStorage(convoPk: number, off: boolean): void {
   LogosChat.setSetting(gcfgKey(convoPk), off ? 'off' : 'on').catch(() => {});
+}
+
+// #350: how far the readd1: replay has got. msg_pk is a monotonic rowid, so one
+// number is the whole idempotency record — it survives restarts in KV, which is
+// exactly the case the replay exists for.
+const READD_CURSOR_KEY = 'readdCursor';
+const READD_REPLAY_LIMIT = 100;
+/** One replay at a time — boot and foreground can both fire, and two passes
+ *  reading the same cursor would run the same remove-then-add twice. */
+let readdReplayInFlight: Promise<void> | null = null;
+
+async function readReaddCursor(): Promise<number> {
+  try {
+    const raw = await LogosChat.getSetting(READD_CURSOR_KEY);
+    const n = raw == null ? NaN : Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0; // no cursor yet — consider everything (the gate is the real filter)
+  }
+}
+
+/**
+ * #350: the creator gate + remove-then-add for one persisted request.
+ *
+ * Resolves when the request is SETTLED — acted on, or legitimately declined (not
+ * our group, not the creator, not on the roster, ourselves). THROWS only when the
+ * re-add itself failed, which keeps the request pending for the next pass.
+ */
+async function applyReaddRequest(req: ReaddRequest): Promise<void> {
+  const st = useChatStore.getState();
+  const group = Object.values(st.conversations).find(
+    c => c.isGroup && c.libConvoId === req.libConvoId,
+  );
+  if (group == null) return; // a request for a group we don't have — nothing to do
+  const groupPk = group.convoPk;
+  // creator-gated; only re-add someone actually on our roster (never a stranger).
+  // The roster is RESOLVED from native, not read from the in-memory cache: the
+  // request arrives on a 1:1, so a creator who hasn't opened the group this
+  // session has an empty cache and would otherwise silently ignore it.
+  const ok = await shouldAutoReadd(
+    {
+      createdByMe: group.createdByMe,
+      requester: req.requester,
+      me: useNodeStore.getState().myAddress,
+    },
+    {
+      cached: () => useChatStore.getState().members[groupPk],
+      load: async () => {
+        await useChatStore.getState().loadMembers(groupPk);
+        return useChatStore.getState().members[groupPk] ?? [];
+      },
+    },
+  );
+  if (!ok) return;
+  try {
+    await useChatStore.getState().removeMember(groupPk, req.requester);
+  } catch {
+    // already gone from our view — fall through to the re-add
+  }
+  try {
+    await useChatStore.getState().addMember(groupPk, req.requester);
+  } catch (err: any) {
+    useNodeStore.setState({error: `re-add failed: ${err?.message ?? err}`});
+    throw err instanceof Error ? err : new Error(String(err));
+  }
 }
 
 /**
@@ -679,6 +752,40 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (sent === 0) {
       throw new Error('no group member could be reached');
     }
+  },
+
+  // #350: the creator side of one-tap recovery. Replays every persisted readd1:
+  // above the cursor — see the header comment in readdRecovery.ts for why the live
+  // listener alone loses requests (JS-dead forward skip + no notification + no
+  // unread). Both the live event and boot/foreground funnel through here, so a
+  // request is acted on exactly once regardless of how it was noticed.
+  replayReaddRequests: async () => {
+    if (readdReplayInFlight != null) return readdReplayInFlight;
+    readdReplayInFlight = (async () => {
+      try {
+        // The gate needs `conversations` (libConvoId → group, createdByMe); at cold
+        // start the replay can beat the first hydration, so make sure of it.
+        if (Object.keys(get().conversations).length === 0) {
+          await get().refreshConversations();
+        }
+        await runReaddReplay({
+          readCursor: readReaddCursor,
+          fetch: async (since, limit) =>
+            JSON.parse(await LogosChat.pendingReadds(since, limit)),
+          parse: parseReadd,
+          apply: applyReaddRequest,
+          writeCursor: async n => {
+            await LogosChat.setSetting(READD_CURSOR_KEY, String(n));
+          },
+          limit: READD_REPLAY_LIMIT,
+        });
+      } catch {
+        // native not ready / corrupt payload — non-fatal, retried next pass.
+      } finally {
+        readdReplayInFlight = null;
+      }
+    })();
+    return readdReplayInFlight;
   },
 
   loadMembers: async (convoPk: number) => {
@@ -2079,6 +2186,13 @@ addLogosChatListener(e => {
     // re-added to a group. ONLY the group's creator acts — creator-gated
     // remove-then-add gives them a fresh Welcome and resyncs them. Everyone else
     // ignores it. Never a bubble (native + timeline suppression, like gcfg1:).
+    //
+    // We do NOT act on the event payload directly: native persists the marker
+    // BEFORE forwarding it here, and skips the forward entirely when the JS
+    // runtime is dead. So the event is only a NUDGE — the replay reads the
+    // persisted row and is the one path that acts, which also makes it idempotent
+    // with the boot/foreground pass that recovers the requests this listener
+    // never saw.
     if (
       e.kind === 'message' &&
       e.direction === 'in' &&
@@ -2086,54 +2200,7 @@ addLogosChatListener(e => {
       e.detail != null &&
       isReaddContent(e.detail)
     ) {
-      const libConvoId = parseReadd(e.detail);
-      if (libConvoId != null) {
-        const st = useChatStore.getState();
-        // the requester is the 1:1 sender
-        const requester = (
-          e.sender ??
-          st.conversations[e.convoPk]?.peerAddress ??
-          ''
-        ).toLowerCase();
-        const group = Object.values(st.conversations).find(
-          c => c.isGroup && c.libConvoId === libConvoId,
-        );
-        if (group != null) {
-          const groupPk = group.convoPk;
-          (async () => {
-            // creator-gated; only re-add someone actually on our roster (never a
-            // stranger). The roster is RESOLVED from native, not read from the
-            // in-memory cache: this request arrives on a 1:1, so a creator who
-            // hasn't opened the group this session has an empty cache and would
-            // otherwise silently ignore a legitimate request.
-            const ok = await shouldAutoReadd(
-              {
-                createdByMe: group.createdByMe,
-                requester,
-                me: useNodeStore.getState().myAddress,
-              },
-              {
-                cached: () => useChatStore.getState().members[groupPk],
-                load: async () => {
-                  await useChatStore.getState().loadMembers(groupPk);
-                  return useChatStore.getState().members[groupPk] ?? [];
-                },
-              },
-            );
-            if (!ok) return;
-            try {
-              await useChatStore.getState().removeMember(groupPk, requester);
-            } catch {
-              // already gone from our view — fall through to the re-add
-            }
-            try {
-              await useChatStore.getState().addMember(groupPk, requester);
-            } catch (err: any) {
-              useNodeStore.setState({error: `re-add failed: ${err?.message ?? err}`});
-            }
-          })();
-        }
-      }
+      s.replayReaddRequests();
     }
     s.refreshConversations();
     if (e.convoPk != null && e.convoPk === s.activeConvoPk) {
@@ -2142,10 +2209,27 @@ addLogosChatListener(e => {
     }
   } else if (e.eventType === 'node_status') {
     s.refreshConversations();
+    // #350: the node coming up is the moment a re-add can actually be performed —
+    // and at cold start it's also the first moment we could act on a readd1: that
+    // arrived while this device's JS runtime was dead (persisted natively, forward
+    // skipped, no notification). Replay is cursor-guarded, so a re-`running` after
+    // a node restart costs one empty query.
+    if (e.status === 'running') {
+      s.replayReaddRequests();
+    }
   }
 });
 
 useChatStore.getState().refreshConversations();
+
+// #350: replay pending readd1: requests the moment this store exists. This is THE
+// cold-start hook, and it deliberately does NOT hang off an event: on a real cold
+// start the node persisted an inbound marker (and emitted it) 0.5s after node-up,
+// BEFORE this module had subscribed — so neither the live listener nor the
+// node_status='running' pass ever saw it, and the request sat inert exactly as the
+// review describes. If the node isn't up yet the re-add just fails, the cursor
+// stays put, and the node_status pass retries it.
+useChatStore.getState().replayReaddRequests();
 
 // #308: native compress/upload progress → update the matching in-flight media send.
 // The transcoder emits many events per second; delivered in a synchronous batch they

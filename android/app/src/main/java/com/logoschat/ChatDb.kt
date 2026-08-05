@@ -948,6 +948,43 @@ class ChatDb(
     return arr.toString()
   }
 
+  /**
+   * #350: inbound `readd1:` desync-recovery requests newer than [sinceMsgPk],
+   * OLDEST-first (msg_pk is monotonic, so it doubles as the replay cursor).
+   *
+   * A readd1: is persisted here and only THEN forwarded to JS — and the forward is
+   * dropped outright when no React instance is alive. It also raises no
+   * notification and bumps no unread (it's a folded marker), so a request that
+   * lands while the creator is backgrounded or cold-started would stay inert
+   * forever if the live JS listener were the only handler. This is the query that
+   * lets JS replay them once it's up. `peer_address` rides along so a 1:1 row with
+   * no per-message sender can still be attributed to its requester.
+   */
+  fun pendingReaddsJson(sinceMsgPk: Long, limit: Int): String {
+    val arr = JSONArray()
+    readableDatabase
+        .query(
+            """SELECT m.msg_pk, m.convo_pk, m.content, m.sender_account, c.peer_address
+                 FROM messages m JOIN conversations c ON c.convo_pk=m.convo_pk
+                WHERE m.direction='in' AND m.content LIKE 'readd1:%' AND m.msg_pk>?
+                ORDER BY m.msg_pk ASC LIMIT $limit""",
+            arrayOf(sinceMsgPk.toString()))
+        .use { cur ->
+          while (cur.moveToNext()) {
+            arr.put(
+                JSONObject().apply {
+                  put("msgPk", cur.getLong(0))
+                  put("convoPk", cur.getLong(1))
+                  put("content", cur.getString(2))
+                  if (cur.isNull(3)) put("sender", JSONObject.NULL) else put("sender", cur.getString(3))
+                  if (cur.isNull(4)) put("peerAddress", JSONObject.NULL)
+                  else put("peerAddress", cur.getString(4))
+                })
+          }
+        }
+    return arr.toString()
+  }
+
   /** Messages newest-first; `beforeMsgPk` 0 = from head; page size [limit]. */
   fun listMessagesJson(convoPk: Long, beforeMsgPk: Long, limit: Int): String {
     val arr = JSONArray()

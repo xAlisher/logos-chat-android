@@ -219,6 +219,13 @@ interface LogosChatNative {
   ): Promise<number>;
   listConversations(): Promise<string>; // JSON ConversationRow[]
   listMessages(convoPk: number, beforeMsgPk: number, limit: number): Promise<string>;
+  /**
+   * #350: persisted inbound `readd1:` recovery requests with msgPk > sinceMsgPk,
+   * oldest-first. JSON `{msgPk, convoPk, content, sender, peerAddress}[]`. Needed
+   * because the live event forward is skipped when the JS runtime is dead, and a
+   * readd1: raises no notification — so requests must be replayed from history.
+   */
+  pendingReadds(sinceMsgPk: number, limit: number): Promise<string>;
   markRead(convoPk: number): Promise<null>;
   setActiveConversation(convoPk: number): void;
   /** #292: force an immediate store catch-up on all active topics (call on app foreground). */
