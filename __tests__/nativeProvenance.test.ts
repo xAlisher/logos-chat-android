@@ -19,7 +19,7 @@
 // covers the Kotlin->bridge layer but skips itself when the NDK is absent, and
 // never looked at bridge->core at all.
 import {createHash} from 'crypto';
-import {readdirSync, readFileSync} from 'fs';
+import {existsSync, readdirSync, readFileSync} from 'fs';
 import * as path from 'path';
 
 import {readDynamicSymbols} from './support/elf';
@@ -44,10 +44,43 @@ function parseManifest(text: string): Map<string, string> {
   return entries;
 }
 
+type Provenance = {origin: string; published: string};
+
+/**
+ * Parse the `# provenance: <file> <origin> published=<sha256>` header records.
+ *
+ * These live in the comment block so `sha256sum -c` still works on the file
+ * (coreutils skips `#` lines), but they are structured on purpose: prose
+ * provenance is what failed last round — the header named a native revision in
+ * English while that revision published a different binary, and nothing could
+ * tell.
+ */
+function parseProvenance(text: string): Map<string, Provenance> {
+  const records = new Map<string, Provenance>();
+  for (const raw of text.split('\n')) {
+    const match = /^#\s*provenance:\s*(\S+)\s+(\S+)\s+published=([0-9a-f]{64})\s*$/.exec(raw);
+    if (!match) {
+      // Guard against a typo'd record silently vanishing instead of failing:
+      // anything that *looks* like a record has to parse as one.
+      if (/^#\s*provenance:/.test(raw)) {
+        throw new Error(`SHA256SUMS: malformed provenance record: ${raw}`);
+      }
+      continue;
+    }
+    if (records.has(match[1])) {
+      throw new Error(`SHA256SUMS: duplicate provenance record for ${match[1]}`);
+    }
+    records.set(match[1], {origin: match[2], published: match[3]});
+  }
+  return records;
+}
+
 const shipped = readdirSync(LIB_DIR)
   .filter(f => f.endsWith('.so'))
   .sort();
-const recorded = parseManifest(readFileSync(MANIFEST, 'utf8'));
+const manifestText = readFileSync(MANIFEST, 'utf8');
+const recorded = parseManifest(manifestText);
+const provenance = parseProvenance(manifestText);
 
 describe('shipped native libraries', () => {
   it('records every shipped .so in SHA256SUMS, and nothing that is gone', () => {
@@ -63,6 +96,58 @@ describe('shipped native libraries', () => {
       // If this fails after a deliberate rebuild: update SHA256SUMS *and* its
       // provenance header in the same commit. That is the whole point.
       expect(`${name} ${actual}`).toBe(`${name} ${recorded.get(name)}`);
+    });
+  }
+});
+
+describe('every shipped library names a revision that publishes that exact binary', () => {
+  // REGRESSION THIS PINS (#437 review, round 2): the previous head recorded the
+  // native source revision in PROSE — "built from logos-libchat-mls-android
+  // @6b6305f" — while @6b6305f actually published liblogoschat.so 8f4fbdc6… and
+  // this app shipped 6dd23bc7…. The cited revision stood behind a DIFFERENT
+  // binary than the one under review, and every check in this file still
+  // passed, because they all compared the artifact to itself.
+  //
+  // The `published=` field closes that loop: it is the hash the cited revision
+  // publishes, so a mismatch between "what upstream stands behind" and "what we
+  // ship" is now a failing assertion instead of an English sentence nobody can
+  // check.
+  //
+  // What this canNOT do: the CI logic job has no network, so this proves the
+  // manifest's three local facts agree — it does not re-fetch the remote. That
+  // step is scripts/verify-native-provenance.sh, run by a human with network.
+
+  it('has exactly one provenance record per shipped .so', () => {
+    expect([...provenance.keys()].sort()).toEqual(shipped);
+  });
+
+  for (const name of shipped) {
+    it(`${name}: published= matches the bytes we actually ship`, () => {
+      const record = provenance.get(name);
+      expect(record).toBeDefined();
+      const actual = createHash('sha256')
+        .update(readFileSync(path.join(LIB_DIR, name)))
+        .digest('hex');
+      // All three must agree: what upstream publishes, what the manifest
+      // records, and what is on disk. If this fails after a deliberate rebuild,
+      // publish the new artifact upstream FIRST, then update both fields here.
+      expect({published: record!.published, recorded: recorded.get(name)}).toEqual({
+        published: actual,
+        recorded: actual,
+      });
+    });
+
+    it(`${name}: names a resolvable origin`, () => {
+      const origin = provenance.get(name)!.origin;
+      // Either an external publication pinned to a commit, or a path to source
+      // checked into this repo. "somewhere" is not provenance.
+      const external = /^[\w.-]+\/[\w.-]+@[0-9a-f]{7,40}$/.test(origin);
+      const inRepo = origin.startsWith('in-repo:');
+      expect({name, origin, external, inRepo}).toEqual({name, origin, external: !inRepo, inRepo});
+      if (inRepo) {
+        const src = origin.slice('in-repo:'.length);
+        expect(existsSync(path.join(__dirname, '..', src))).toBe(true);
+      }
     });
   }
 });

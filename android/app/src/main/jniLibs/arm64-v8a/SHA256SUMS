@@ -19,29 +19,69 @@
 #   liblogoschat_bridge.so  9c3ab5ab86357ee11e9751c10414151e0cfae804
 #   libc++_shared.so        6783a7f3a0d9c67c55a74cadc441ed55aaa493da
 #
-# PROVENANCE — see docs/SBOM.md for the full table and the caveats.
-#   liblogoschat.so        xAlisher/logos-libchat-mls-android @ 6b6305f
-#                          (PR #4, branch exp/349-groupv1-remove-member) =
-#                          upstream libchat @ d2124fd + patches/libchat-android-arm64.patch
-#                          + patches/349-groupv1-remove-member.patch
-#                          + patches/437-replace-on-desync-welcome.patch,
-#                          built by scripts/build-android-arm64.sh (NDK r27).
-#   liblogoschat_bridge.so built in-repo from android/app/src/main/cpp/logoschat_jni.c
-#                          by scripts/build-bridge.sh.
-#   liblogosdelivery.so    Logos delivery (vpavlin/logos-delivery, #402).
-#   librln.so              Waku/RLN.
-#   libc++_shared.so       Android NDK r27 runtime.
+# ---------------------------------------------------------------------------
+# PROVENANCE — one machine-checked record per shipped library.
 #
-# NOTE: the native repo's own prebuilt/arm64-v8a/SHA256SUMS at 6b6305f is STALE — it
-# still publishes the pre-#292/#349/#437 build (liblogoschat.so
-# 8f4fbdc60c0f13e245eb9c65cf1ad248699c843532ab59cbb6ad0e6dafe9bcb6), which does not
-# export logoschat_catchup_now or logoschat_remove_group_member and would not link
-# against the bridge we ship. Refreshing that publication is tracked on the native PR;
-# do NOT "reconcile" by copying that older binary here.
+# SECOND #437 REVIEW ROUND. Recording a hash next to the binary only proves the
+# manifest agrees with itself. It does NOT answer "was this binary produced by the
+# source revision we claim?" — and at the previous head it demonstrably was not
+# answerable: this app shipped liblogoschat.so 6dd23bc7…, while the native revision
+# cited here (@6b6305f) still PUBLISHED 8f4fbdc6…. The cited revision stood behind a
+# different binary than the one under review.
 #
-# Bit-for-bit reproducibility of liblogoschat.so is NOT yet proven (no deterministic
-# NDK/cargo container — tracked under #366). Provenance today = pinned inputs above
-# + these hashes + the symbol/marker assertions in the gate test.
+# Fixed at the source: xAlisher/logos-libchat-mls-android@04bc30d now publishes the
+# exact artifact this app bundles, and the `published=` field below is the hash that
+# revision publishes. `__tests__/nativeProvenance.test.ts` asserts published= equals
+# the recorded hash equals the bytes on disk, for every library — so this manifest
+# can no longer cite a revision that stands behind something else.
+#
+# LIMIT, stated plainly: the CI logic job is offline, so the gate proves the three
+# local facts agree, not that the remote still publishes that hash. Checking the
+# remote is a network step — `scripts/verify-native-provenance.sh` does exactly that
+# and is the command a reviewer should run.
+#
+# Format (parsed by the gate — keep it exact):
+#   # provenance: <file> <origin> published=<sha256>
+#
+# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@04bc30d published=6dd23bc7e93e94c35ba5fb913dc0b65217b67dc6df1911880e30b254389fef31
+# provenance: liblogosdelivery.so xAlisher/logos-libdelivery-android@1646770 published=944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f
+# provenance: librln.so xAlisher/logos-libdelivery-android@1646770 published=766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45
+# provenance: libc++_shared.so xAlisher/logos-libdelivery-android@1646770 published=e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6
+# provenance: liblogoschat_bridge.so in-repo:android/app/src/main/cpp/logoschat_jni.c published=9df7677c609759250dc368874224a8fbeb0df056104663859c284f29080835b5
+#
+# What each origin means:
+#   liblogoschat.so        = upstream libchat @ d2124fd + patches/libchat-android-arm64.patch
+#                            + patches/349-groupv1-remove-member.patch
+#                            + patches/437-replace-on-desync-welcome.patch,
+#                            built by scripts/build-android-arm64.sh (NDK r27), stripped.
+#                            (@04bc30d is the head of PR #4, exp/349-groupv1-remove-member.)
+#   liblogosdelivery.so    Logos delivery node (Waku/nwaku, #402) — @1646770 is the
+#   librln.so              build carrying the Persistency-teardown SIGSEGV fix.
+#   libc++_shared.so       Android NDK r27 runtime, vendored by that same repo.
+#   liblogoschat_bridge.so built IN THIS REPO from the checked-in C source by
+#                          scripts/build-bridge.sh — the only lib whose source is
+#                          reviewable in the same diff as its binary.
+#
+# ---------------------------------------------------------------------------
+# REPRODUCIBILITY — measured, not assumed. Do not upgrade this claim without
+# re-measuring.
+#
+# liblogoschat.so is NOT bit-for-bit reproducible today. A full `cargo clean` and
+# rerun of scripts/build-android-arm64.sh on the SAME host, same source, same build
+# path yielded 812230801e01c051925e844368951c58e786efbbd8f192c548b2ae0e7a97273f
+# instead of 6dd23bc7…: identical byte size, identical exported-symbol set, and the
+# only differing STRING is an AWS-LC build stamp — `built on: <UTC date>`, emitted by
+# the aws-lc-rs/aws-lc-sys cmake build — with ~136 KB of .rodata/.text/.rela.dyn
+# layout churn behind it.
+#
+# So "re-derive the hash from source" is not available at this revision, and
+# publishing the exact artifact (above) is the only sound provenance we have.
+# Removing that timestamp stamp and proving determinism is tracked under #366.
+#
+# Beware the trap this measurement caught: a rebuild with a WARM cargo cache
+# (`cargo clean -p` of only the changed crates) does reproduce 6dd23bc7… exactly,
+# because the stamped aws-lc objects are reused. That result looks like proof of
+# reproducibility and is not. Only a full clean rebuild answers the question.
 e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  libc++_shared.so
 9df7677c609759250dc368874224a8fbeb0df056104663859c284f29080835b5  liblogoschat_bridge.so
 6dd23bc7e93e94c35ba5fb913dc0b65217b67dc6df1911880e30b254389fef31  liblogoschat.so

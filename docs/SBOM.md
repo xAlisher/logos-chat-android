@@ -17,10 +17,10 @@ sha256sum /tmp/peers-so/lib/arm64-v8a/*.so
 ### Logos / Peers-built (the security-critical TCB)
 | Library | Purpose | Source / provenance |
 |---|---|---|
-| `liblogoschat.so` | MLS chat core (E2E messaging) | Built from `logos-libchat-mls-android` @ `6b6305f`, **patch-based** on pinned upstream `libchat` commit `d2124fd` + `patches/libchat-android-arm64.patch` + `patches/349-groupv1-remove-member.patch` + `patches/437-replace-on-desync-welcome.patch` (see `libchat-build/`) |
-| `liblogoschat_bridge.so` | JNI bridge | Built **in this repo** from `android/app/src/main/cpp/logoschat_jni.c` by `scripts/build-bridge.sh` (out-of-band; not a gradle task) |
-| `liblogosdelivery.so` | Delivery layer (Waku-based) + SDS reliable channels | Logos delivery (`vpavlin/logos-delivery`; see #402) |
-| `librln.so` | RLN rate-limiting nullifier (delivery spam control) | Waku/RLN stack |
+| `liblogoschat.so` | MLS chat core (E2E messaging) | Published by `xAlisher/logos-libchat-mls-android` @ `04bc30d`; **patch-based** on pinned upstream `libchat` commit `d2124fd` + `patches/libchat-android-arm64.patch` + `patches/349-groupv1-remove-member.patch` + `patches/437-replace-on-desync-welcome.patch` |
+| `liblogoschat_bridge.so` | JNI bridge | Built **in this repo** from `android/app/src/main/cpp/logoschat_jni.c` by `scripts/build-bridge.sh` (out-of-band; not a gradle task) — the only shipped lib whose source is reviewable in the same diff as its binary |
+| `liblogosdelivery.so` | Delivery layer (Waku-based) + SDS reliable channels | Published by `xAlisher/logos-libdelivery-android` @ `1646770` (Logos delivery / nwaku; see #402) |
+| `librln.so` | RLN rate-limiting nullifier (delivery spam control) | Published by `xAlisher/logos-libdelivery-android` @ `1646770` (Waku/RLN stack) |
 | `libtor.so`, `libtorexec.so` | Embedded Tor for Private mode (#318/#319) | Tor |
 | `libsqlcipher.so` | SQLCipher — at-rest DB encryption (#258/#358) | Zetetic SQLCipher (`net.zetetic`) |
 
@@ -65,21 +65,57 @@ things a hash alone can't:
 - **the native change is really in the binary** — a marker string from
   `patches/437-replace-on-desync-welcome.patch`.
 
-Known gap: the companion native repo's own `prebuilt/arm64-v8a/SHA256SUMS` at `6b6305f` is
-**stale** — it still publishes the pre-#292/#349/#437 build
-(`8f4fbdc6…`), which exports neither `logoschat_catchup_now` nor
-`logoschat_remove_group_member`. Refreshing that publication is tracked on the native PR;
-the app must not be "reconciled" down to it.
+### Closing the loop to upstream (#437 review, round 2)
+
+A hash recorded next to the binary only proves the manifest agrees with itself. It does not
+answer *"was this binary produced by the revision you cite?"* — and at the previous head it
+was not: this app shipped `liblogoschat.so` `6dd23bc7…` while the cited native revision
+`6b6305f` still **published** `8f4fbdc6…` (the pre-#292/#349/#437 build, exporting neither
+`logoschat_catchup_now` nor `logoschat_remove_group_member`). The cited revision stood behind
+a different binary than the one under review, and every existing check still passed, because
+they all compared the artifact to itself.
+
+Fixed at the source rather than papered over in prose:
+
+- `xAlisher/logos-libchat-mls-android@04bc30d` now **publishes the exact artifact** this app
+  bundles (`6dd23bc7…`), superseding the stale `8f4fbdc6…`.
+- `xAlisher/logos-libdelivery-android@1646770` — found in the same pass — is now published
+  too. The app had been shipping `liblogosdelivery.so` `944e1629…` while that repo's public
+  branch published `58c766b9…`, i.e. the **same defect, unreported**, for the delivery lib.
+- The manifest now carries one machine-parsed record per library:
+  `# provenance: <file> <repo>@<commit> published=<sha256>`.
+
+Two gates, split by what each can actually prove:
+
+| | proves | runs |
+|---|---|---|
+| `__tests__/nativeProvenance.test.ts` | `published=` == manifest == bytes on disk, for **every** shipped `.so` | every PR (offline CI) |
+| `scripts/verify-native-provenance.sh` | the cited revision **still publishes** that hash — fetched, not asserted | by hand, needs network |
+
+The split is deliberate and the limit is stated rather than hidden: the CI logic job has no
+network, so it gates the local half only.
 
 ## Toolchain / provenance
 - Rust libs: `cargo` targeting `aarch64-linux-android`, Android **NDK r27**.
 - Android: **JDK 17**, Gradle (see `android/gradle/wrapper`).
 - Source pins: upstream `libchat` @ `d2124fd` + the `logos-libchat-mls-android` @ `6b6305f`
   patch set (see the manifest above); JS deps @ `package-lock.json`.
-- **Reproducible builds:** the inputs are pinned (source commit + patch + toolchain), but
-  full **bit-for-bit** reproducibility is not yet proven (needs a deterministic NDK/cargo
-  container). Tracked as future work under #366. Until then, provenance = pinned inputs +
-  the published artifact SHA-256 (compute as above; attach to each GitHub release).
+- **Reproducible builds: measured, and currently NOT reproducible.** This was upgraded from
+  "not yet proven" to a measurement during the #437 review. A full `cargo clean` + rerun of
+  `scripts/build-android-arm64.sh` on the **same host, same source, same build path** yields
+  `81223080…`, not the shipped `6dd23bc7…`. The two binaries have identical byte size and an
+  identical exported-symbol set; the only differing *string* is an **AWS-LC build stamp**
+  (`built on: <UTC date>`, emitted by the `aws-lc-rs`/`aws-lc-sys` cmake build), with ~136 KB
+  of `.rodata`/`.text`/`.rela.dyn` layout churn behind it.
+
+  So re-deriving the hash from source is **not** available at this revision, and
+  publish-and-pin is the strongest provenance we have. Removing the timestamp stamp (and
+  then proving determinism in a container) is tracked under #366.
+
+  **Trap worth knowing:** a rebuild with a *warm* cargo cache (`cargo clean -p` of only the
+  changed crates) **does** reproduce `6dd23bc7…` exactly, because the stamped AWS-LC objects
+  are reused from cache. That looks like proof of reproducibility and is not. Only a full
+  clean rebuild answers the question — this is how the false result was caught.
 
 ## Dependency / CVE scanning
 - CI runs `npm audit` on every PR: **blocks on `critical`**, reports high/moderate for
