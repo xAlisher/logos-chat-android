@@ -123,6 +123,12 @@ export function RootNavigator() {
         } catch {
           // native not ready — the periodic pull still covers it
         }
+        // #350: a readd1: recovery request that landed while this app was
+        // backgrounded was persisted natively but never forwarded to JS, and it
+        // raises no notification — so foregrounding is when the creator's device
+        // has to notice it. Cursor-guarded, so this is a no-op when there's
+        // nothing pending.
+        useChatStore.getState().replayReaddRequests();
       }
     });
     return () => sub.remove();

@@ -901,10 +901,10 @@ class ChatDb(
                       -- #264/#266: reactions (react1:) + pins (pin1:) are folded-in
                       -- markers, not chat messages — never surface them as the preview.
                       (SELECT content FROM messages m WHERE m.convo_pk=c.convo_pk
-                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%' AND m.content NOT LIKE 'leave1:%' AND m.content NOT LIKE 'pfp1:%' AND m.content NOT LIKE 'gcfg1:%'
+                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%' AND m.content NOT LIKE 'leave1:%' AND m.content NOT LIKE 'pfp1:%' AND m.content NOT LIKE 'gcfg1:%' AND m.content NOT LIKE 'readd1:%'
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       (SELECT direction FROM messages m WHERE m.convo_pk=c.convo_pk
-                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%' AND m.content NOT LIKE 'leave1:%' AND m.content NOT LIKE 'pfp1:%' AND m.content NOT LIKE 'gcfg1:%'
+                         AND m.content NOT LIKE 'react1:%' AND m.content NOT LIKE 'pin1:%' AND m.content NOT LIKE 'leave1:%' AND m.content NOT LIKE 'pfp1:%' AND m.content NOT LIKE 'gcfg1:%' AND m.content NOT LIKE 'readd1:%'
                          ORDER BY m.msg_pk DESC LIMIT 1),
                       c.is_group, c.group_name,
                       (SELECT COUNT(*) FROM group_members g WHERE g.convo_pk=c.convo_pk),
@@ -942,6 +942,43 @@ class ChatDb(
                   // #212: last-seen = timestamp of the most recent INBOUND message
                   // from this peer (0/absent if we've never received one).
                   put("lastInboundAt", if (cur.isNull(17)) 0L else cur.getLong(17))
+                })
+          }
+        }
+    return arr.toString()
+  }
+
+  /**
+   * #350: inbound `readd1:` desync-recovery requests newer than [sinceMsgPk],
+   * OLDEST-first (msg_pk is monotonic, so it doubles as the replay cursor).
+   *
+   * A readd1: is persisted here and only THEN forwarded to JS — and the forward is
+   * dropped outright when no React instance is alive. It also raises no
+   * notification and bumps no unread (it's a folded marker), so a request that
+   * lands while the creator is backgrounded or cold-started would stay inert
+   * forever if the live JS listener were the only handler. This is the query that
+   * lets JS replay them once it's up. `peer_address` rides along so a 1:1 row with
+   * no per-message sender can still be attributed to its requester.
+   */
+  fun pendingReaddsJson(sinceMsgPk: Long, limit: Int): String {
+    val arr = JSONArray()
+    readableDatabase
+        .query(
+            """SELECT m.msg_pk, m.convo_pk, m.content, m.sender_account, c.peer_address
+                 FROM messages m JOIN conversations c ON c.convo_pk=m.convo_pk
+                WHERE m.direction='in' AND m.content LIKE 'readd1:%' AND m.msg_pk>?
+                ORDER BY m.msg_pk ASC LIMIT $limit""",
+            arrayOf(sinceMsgPk.toString()))
+        .use { cur ->
+          while (cur.moveToNext()) {
+            arr.put(
+                JSONObject().apply {
+                  put("msgPk", cur.getLong(0))
+                  put("convoPk", cur.getLong(1))
+                  put("content", cur.getString(2))
+                  if (cur.isNull(3)) put("sender", JSONObject.NULL) else put("sender", cur.getString(3))
+                  if (cur.isNull(4)) put("peerAddress", JSONObject.NULL)
+                  else put("peerAddress", cur.getString(4))
                 })
           }
         }
