@@ -320,14 +320,17 @@ object NodeRuntime {
    * once instead of on the next periodic (~20s) pull. Best-effort + non-fatal; a no-op
    * when the node isn't open or delivery is paused (the native side gates it).
    */
-  fun catchupNow() {
+  /** #383: returns true on a successful store pull, false otherwise, so the caller can back off. */
+  fun catchupNow(): Boolean {
     val c = ctx
-    if (c == 0L) return
-    try {
+    if (c == 0L) return false
+    return try {
       val rc = NodeBridge.chatCatchupNow(c)
       if (rc != 0) Log.w(TAG, "catchupNow failed: ${NodeBridge.chatLastError()}")
+      rc == 0
     } catch (t: Throwable) {
       Log.w(TAG, "catchupNow threw (non-fatal): ${t.message}")
+      false
     }
   }
 
