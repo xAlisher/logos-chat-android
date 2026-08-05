@@ -17,8 +17,14 @@ import {encodePin} from '../messages/pins';
 import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
 import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
-import {resolveRoster, runReaddReplay, shouldAutoReadd} from './readdRecovery';
-import type {ReaddRequest} from './readdRecovery';
+import {
+  parseReaddDebts,
+  resolveRoster,
+  runReaddReplay,
+  settleReaddRequest,
+  shouldAutoReadd,
+} from './readdRecovery';
+import type {ReaddDebts, ReaddRequest} from './readdRecovery';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -427,6 +433,9 @@ function persistGroupStorage(convoPk: number, off: boolean): void {
 // number is the whole idempotency record — it survives restarts in KV, which is
 // exactly the case the replay exists for.
 const READD_CURSOR_KEY = 'readdCursor';
+/** #350: requesters we have already removed and still owe an add. Durable, because
+ *  the whole point is surviving the app dying between the two node calls. */
+const READD_DEBTS_KEY = 'readdOwed';
 const READD_REPLAY_LIMIT = 100;
 /** One replay at a time — boot and foreground can both fire, and two passes
  *  reading the same cursor would run the same remove-then-add twice. */
@@ -442,12 +451,24 @@ async function readReaddCursor(): Promise<number> {
   }
 }
 
+async function readReaddDebts(): Promise<ReaddDebts> {
+  try {
+    return parseReaddDebts(await LogosChat.getSetting(READD_DEBTS_KEY));
+  } catch {
+    return {}; // no record — the gate runs, which is the safe direction
+  }
+}
+
 /**
  * #350: the creator gate + remove-then-add for one persisted request.
  *
  * Resolves when the request is SETTLED — acted on, or legitimately declined (not
  * our group, not the creator, not on the roster, ourselves). THROWS only when the
  * re-add itself failed, which keeps the request pending for the next pass.
+ *
+ * The gate runs ONCE per request: `removeMember` deletes the roster row, so a
+ * re-gate after a failed add would find no member and decline — leaving the stuck
+ * member evicted for good. `settleReaddRequest` records the debt durably instead.
  */
 async function applyReaddRequest(req: ReaddRequest): Promise<void> {
   const st = useChatStore.getState();
@@ -456,32 +477,35 @@ async function applyReaddRequest(req: ReaddRequest): Promise<void> {
   );
   if (group == null) return; // a request for a group we don't have — nothing to do
   const groupPk = group.convoPk;
-  // creator-gated; only re-add someone actually on our roster (never a stranger).
-  // The roster is RESOLVED from native, not read from the in-memory cache: the
-  // request arrives on a 1:1, so a creator who hasn't opened the group this
-  // session has an empty cache and would otherwise silently ignore it.
-  const ok = await shouldAutoReadd(
-    {
-      createdByMe: group.createdByMe,
-      requester: req.requester,
-      me: useNodeStore.getState().myAddress,
-    },
-    {
-      cached: () => useChatStore.getState().members[groupPk],
-      load: async () => {
-        await useChatStore.getState().loadMembers(groupPk);
-        return useChatStore.getState().members[groupPk] ?? [];
+  try {
+    await settleReaddRequest(req, {
+      readDebts: readReaddDebts,
+      writeDebts: async debts => {
+        await LogosChat.setSetting(READD_DEBTS_KEY, JSON.stringify(debts));
       },
-    },
-  );
-  if (!ok) return;
-  try {
-    await useChatStore.getState().removeMember(groupPk, req.requester);
-  } catch {
-    // already gone from our view — fall through to the re-add
-  }
-  try {
-    await useChatStore.getState().addMember(groupPk, req.requester);
+      // creator-gated; only re-add someone actually on our roster (never a
+      // stranger). The roster is RESOLVED from native, not read from the
+      // in-memory cache: the request arrives on a 1:1, so a creator who hasn't
+      // opened the group this session has an empty cache and would otherwise
+      // silently ignore it.
+      gate: () =>
+        shouldAutoReadd(
+          {
+            createdByMe: group.createdByMe,
+            requester: req.requester,
+            me: useNodeStore.getState().myAddress,
+          },
+          {
+            cached: () => useChatStore.getState().members[groupPk],
+            load: async () => {
+              await useChatStore.getState().loadMembers(groupPk);
+              return useChatStore.getState().members[groupPk] ?? [];
+            },
+          },
+        ),
+      remove: () => useChatStore.getState().removeMember(groupPk, req.requester),
+      add: () => useChatStore.getState().addMember(groupPk, req.requester),
+    });
   } catch (err: any) {
     useNodeStore.setState({error: `re-add failed: ${err?.message ?? err}`});
     throw err instanceof Error ? err : new Error(String(err));

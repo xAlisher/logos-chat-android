@@ -370,3 +370,188 @@ describe('runReaddReplay (#350)', () => {
     expect(deps.writeCursor).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #350 — settling ONE request across a crash / a failed add.
+//
+// REGRESSION THIS PINS: the recovery is gate → remove → add, and `removeMember`
+// DELETES the member's local roster row. So once the remove has landed, the
+// requester is no longer on the roster. When the add then failed — node down, or
+// the OS killing the app between the two calls — the request correctly stayed
+// pending, but the next pass re-ran the gate, found no roster row, and
+// "legitimately declined" it. The cursor burned the request and the stuck member
+// was left permanently EVICTED: worse than never having acted at all. The fact
+// that we already gated-and-removed someone must therefore survive the process.
+import {
+  owesReadd,
+  parseReaddDebts,
+  readdDebtKey,
+  settleReaddRequest,
+  withReaddDebt,
+  withoutReaddDebt,
+} from '../src/stores/readdRecovery';
+import type {ReaddDebts} from '../src/stores/readdRecovery';
+
+const REQ: ReaddRequest = {
+  msgPk: 21,
+  convoPk: 7,
+  libConvoId: GROUP,
+  requester: STUCK.toLowerCase(),
+};
+
+describe('readd debts (#350)', () => {
+  it('is keyed per group and requester', () => {
+    expect(readdDebtKey(REQ)).not.toBe(
+      readdDebtKey({...REQ, libConvoId: OTHER_GROUP}),
+    );
+    expect(readdDebtKey(REQ)).not.toBe(
+      readdDebtKey({...REQ, requester: STRANGER.toLowerCase()}),
+    );
+  });
+
+  it('only counts the debt taken out for THIS request', () => {
+    const debts = withReaddDebt({}, REQ);
+    expect(owesReadd(debts, REQ)).toBe(true);
+    // a LATER request from the same peer for the same group is gated afresh
+    expect(owesReadd(debts, {...REQ, msgPk: 22})).toBe(false);
+  });
+
+  it('clears cleanly', () => {
+    expect(withoutReaddDebt(withReaddDebt({}, REQ), REQ)).toEqual({});
+  });
+
+  it('survives a missing or corrupt KV value', () => {
+    expect(parseReaddDebts(null)).toEqual({});
+    expect(parseReaddDebts('')).toEqual({});
+    expect(parseReaddDebts('not json')).toEqual({});
+    expect(parseReaddDebts('[1,2]')).toEqual({});
+    expect(parseReaddDebts('{"a":"x","b":3}')).toEqual({b: 3});
+    expect(parseReaddDebts(JSON.stringify(withReaddDebt({}, REQ)))).toEqual(
+      withReaddDebt({}, REQ),
+    );
+  });
+});
+
+describe('settleReaddRequest (#350)', () => {
+  function harness(opts: {onRoster?: () => boolean; addFails?: () => boolean} = {}) {
+    // The node's view: the roster row is DELETED by a successful remove, exactly
+    // as ChatDb.removeGroupMember does.
+    let onRoster = true;
+    let kv: string | null = null;
+    const calls: string[] = [];
+    const deps = {
+      readDebts: async (): Promise<ReaddDebts> => parseReaddDebts(kv),
+      writeDebts: async (d: ReaddDebts) => {
+        kv = JSON.stringify(d);
+      },
+      gate: jest.fn(async () => (opts.onRoster ?? (() => onRoster))()),
+      remove: jest.fn(async () => {
+        calls.push('remove');
+        if (!onRoster) throw new Error('not a member');
+        onRoster = false;
+      }),
+      add: jest.fn(async () => {
+        calls.push('add');
+        if (opts.addFails?.()) throw new Error('node not started');
+        onRoster = true;
+      }),
+    };
+    return {deps, calls, kv: () => kv, isOnRoster: () => onRoster};
+  }
+
+  it('gates, then remove-then-adds, and owes nothing afterwards', async () => {
+    const {deps, calls, kv, isOnRoster} = harness();
+    await settleReaddRequest(REQ, deps);
+    expect(calls).toEqual(['remove', 'add']);
+    expect(isOnRoster()).toBe(true);
+    expect(parseReaddDebts(kv())).toEqual({}); // debt cleared
+  });
+
+  it('never touches the node when the gate declines — and owes nothing', async () => {
+    const {deps, calls, kv} = harness({onRoster: () => false});
+    await settleReaddRequest(REQ, deps);
+    expect(calls).toEqual([]);
+    expect(parseReaddDebts(kv())).toEqual({});
+  });
+
+  // THE REGRESSION TEST: the app died (or the node was down) between the remove
+  // and the add. The retry must NOT re-gate — the roster no longer lists them.
+  it('re-adds after a failed add, even though the roster no longer lists them', async () => {
+    let down = true;
+    const {deps, calls, kv, isOnRoster} = harness({addFails: () => down});
+    await expect(settleReaddRequest(REQ, deps)).rejects.toThrow('node not started');
+    expect(isOnRoster()).toBe(false); // evicted, and we still owe the add
+    expect(owesReadd(parseReaddDebts(kv()), REQ)).toBe(true);
+
+    down = false;
+    await settleReaddRequest(REQ, deps); // the next boot / foreground pass
+    expect(deps.gate).toHaveBeenCalledTimes(1); // gated ONCE, not re-gated
+    expect(calls).toEqual(['remove', 'add', 'remove', 'add']);
+    expect(isOnRoster()).toBe(true); // recovered, not left evicted
+    expect(parseReaddDebts(kv())).toEqual({});
+  });
+
+  it('records the debt BEFORE the remove, so a crash in between still owes', async () => {
+    let kv: string | null = null;
+    let removed = false;
+    await expect(
+      settleReaddRequest(REQ, {
+        readDebts: async () => parseReaddDebts(kv),
+        writeDebts: async d => {
+          kv = JSON.stringify(d);
+        },
+        gate: async () => true,
+        remove: async () => {
+          removed = true;
+          throw new Error('process died mid-remove');
+        },
+        add: async () => {
+          throw new Error('never got here');
+        },
+      }),
+    ).rejects.toThrow('never got here');
+    expect(removed).toBe(true);
+    expect(owesReadd(parseReaddDebts(kv), REQ)).toBe(true);
+  });
+
+  it('a stale debt for a different request does not skip the gate', async () => {
+    const {deps} = harness({onRoster: () => false});
+    // debt left over from an OLD request (different msg_pk) for this same peer
+    await deps.writeDebts(withReaddDebt({}, {...REQ, msgPk: 5}));
+    await settleReaddRequest(REQ, deps);
+    expect(deps.gate).toHaveBeenCalledTimes(1);
+    expect(deps.remove).not.toHaveBeenCalled();
+    expect(deps.add).not.toHaveBeenCalled();
+  });
+
+  it('keeps other peers\' debts when clearing its own', async () => {
+    const OTHER: ReaddRequest = {...REQ, msgPk: 9, requester: STRANGER.toLowerCase()};
+    const {deps, kv} = harness();
+    await deps.writeDebts(withReaddDebt({}, OTHER));
+    await settleReaddRequest(REQ, deps);
+    expect(owesReadd(parseReaddDebts(kv()), OTHER)).toBe(true);
+    expect(owesReadd(parseReaddDebts(kv()), REQ)).toBe(false);
+  });
+});
+
+describe('settleReaddRequest — bookkeeping never re-runs the node (#350)', () => {
+  it('settles when the add landed but clearing the debt failed', async () => {
+    // A KV write failure AFTER the add must not throw: the request would stay
+    // pending and the next pass would kick-and-re-add the member all over again.
+    let adds = 0;
+    await expect(
+      settleReaddRequest(REQ, {
+        readDebts: async () => ({}),
+        writeDebts: async d => {
+          if (Object.keys(d).length === 0) throw new Error('kv full');
+        },
+        gate: async () => true,
+        remove: async () => {},
+        add: async () => {
+          adds++;
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(adds).toBe(1);
+  });
+});

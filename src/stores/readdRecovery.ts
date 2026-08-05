@@ -153,6 +153,116 @@ export function readdCursorAfter(
   return Math.max(cursor, lastResolvedMsgPk ?? cursor);
 }
 
+// ---------------------------------------------------------------------------
+// Settling ONE request: remove-then-add, made restart-safe.
+//
+// WHY THIS EXISTS: the recovery is two node calls, and the roster gate sits in
+// front of them. `removeGroupMember` DELETEs the member's local roster row, so
+// once the remove has landed the requester is no longer ON the roster. If the add
+// then fails (node down, transient reject) — or the OS kills the app between the
+// two — the request correctly stays pending, but the NEXT pass re-runs the gate,
+// finds no roster row, and "legitimately declines" it. The cursor burns the
+// request and the stuck member is left permanently EVICTED, which is strictly
+// worse than never having acted.
+//
+// So the fact that we already gated-and-removed someone has to outlive the
+// process: before the remove we persist that we OWE this requester an add, and
+// only clear it once the add lands. A pass that finds an outstanding debt skips
+// the gate and goes straight back to remove-then-add. The debt is pinned to the
+// request's `msgPk`, so it can only ever satisfy the request it was taken out
+// for — a later readd1: from the same peer is gated afresh.
+
+/** Outstanding "removed, still owe the add" debts: request key → msg_pk. */
+export type ReaddDebts = Readonly<Record<string, number>>;
+
+/** One debt per (group, requester) — a repeat tap collapses onto the same key. */
+export function readdDebtKey(req: {
+  libConvoId: string;
+  requester: string;
+}): string {
+  return `${req.libConvoId}\t${req.requester}`;
+}
+
+/** Tolerant of a missing/corrupt KV value — a lost debt only costs one gate. */
+export function parseReaddDebts(raw: string | null | undefined): ReaddDebts {
+  if (raw == null || raw === '') return {};
+  try {
+    const v = JSON.parse(raw);
+    if (v == null || typeof v !== 'object' || Array.isArray(v)) return {};
+    const out: Record<string, number> = {};
+    for (const [k, n] of Object.entries(v)) {
+      if (typeof n === 'number' && Number.isFinite(n)) out[k] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Only the debt taken out FOR this request counts — never a stale one. */
+export function owesReadd(debts: ReaddDebts, req: ReaddRequest): boolean {
+  return debts[readdDebtKey(req)] === req.msgPk;
+}
+
+export function withReaddDebt(debts: ReaddDebts, req: ReaddRequest): ReaddDebts {
+  return {...debts, [readdDebtKey(req)]: req.msgPk};
+}
+
+export function withoutReaddDebt(
+  debts: ReaddDebts,
+  req: ReaddRequest,
+): ReaddDebts {
+  const {[readdDebtKey(req)]: _dropped, ...rest} = debts;
+  return rest;
+}
+
+export interface SettleDeps {
+  /** Debts persisted by earlier passes (durable — this survives a restart). */
+  readDebts: () => Promise<ReaddDebts>;
+  writeDebts: (debts: ReaddDebts) => Promise<void>;
+  /** The creator gate (creator? on the roster? not me?). Consulted ONCE. */
+  gate: () => Promise<boolean>;
+  /** Best-effort — a member already gone from our view is not an error. */
+  remove: () => Promise<void>;
+  /** The step that must succeed; rejecting keeps the request (and debt) pending. */
+  add: () => Promise<void>;
+}
+
+/**
+ * Settle one request: gate → remove → add, with the remove's effect recorded
+ * durably so a failed add is retried instead of being re-gated into a decline.
+ *
+ * Resolves when the request is settled (acted on, or declined by the gate) and
+ * REJECTS only when the add failed — which is what keeps the replay cursor short
+ * of it.
+ */
+export async function settleReaddRequest(
+  req: ReaddRequest,
+  deps: SettleDeps,
+): Promise<void> {
+  const debts = await deps.readDebts();
+  if (!owesReadd(debts, req)) {
+    if (!(await deps.gate())) return; // not our group / not the creator / stranger
+    // Record the debt BEFORE the remove: a crash between the two must leave us
+    // owing an add, never having silently evicted someone.
+    await deps.writeDebts(withReaddDebt(debts, req));
+  }
+  try {
+    await deps.remove();
+  } catch {
+    // already gone from our view (or removed by an earlier, half-done pass) —
+    // fall through to the add, which is the part that actually resyncs them.
+  }
+  await deps.add(); // rejects → request AND debt stay pending for the next pass
+  try {
+    await deps.writeDebts(withoutReaddDebt(await deps.readDebts(), req));
+  } catch {
+    // The add LANDED — a failed bookkeeping write must not re-run it. A debt left
+    // behind is inert anyway: it is pinned to this request's msg_pk, so it can
+    // never let a future readd1: skip the gate.
+  }
+}
+
 export interface ReplayDeps {
   /** Highest msg_pk already handled — 0 on a device that has never replayed. */
   readCursor: () => Promise<number>;
