@@ -61,5 +61,6 @@ module.exports = {
     '<rootDir>/__tests__/buildOutputSymlink.test.ts',
     '<rootDir>/__tests__/lintToolchain.test.ts',
     '<rootDir>/__tests__/storageOffMedia.test.ts',
+    '<rootDir>/__tests__/videoCancel.test.ts',
   ],
 };
