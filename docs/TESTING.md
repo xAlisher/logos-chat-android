@@ -38,6 +38,17 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.8.7-groups
+- **Remove a member from a group you created.** Create a new group, add a couple of
+  people, then Group Info → tap a member → **Remove from group** → confirm. The member
+  should drop off the roster and stop receiving the group's new messages, while everyone
+  else keeps chatting normally.
+- **Only the creator can remove.** In a group you did **not** create, a member's menu has
+  **no "Remove from group"** option — and even a tampered client can't force it: other
+  members reject a removal that didn't come from the creator.
+- **Older groups can't remove (by design).** Removal only works on groups created **in
+  v0.8.7 or later** — make a fresh group to try it; pre-v0.8.7 groups fail safe.
+
 ### v0.8.6-reliability
 - **Background delivery heads-up.** Leave Peers running in the background for a long
   stretch (screen off, other apps). On Android 15+ you should get a notice *"…background
@@ -118,7 +129,7 @@ Open an issue at **https://github.com/xAlisher/peers/issues** with:
 
 - **What you did** (steps), **what you expected**, **what happened**.
 - **Which transport** (Logos / MeshCore / Bluetooth) and whether you had internet.
-- **App version** — Menu → About (e.g. `v0.8.6-reliability`), and your device model + Android version.
+- **App version** — Menu → About (e.g. `v0.8.7-groups`), and your device model + Android version.
 - A screenshot if it's visual.
 
 If something crashed, a logcat helps a lot if you can grab one:
