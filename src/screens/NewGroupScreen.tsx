@@ -115,7 +115,7 @@ export function NewGroupScreen() {
         <View style={styles.storageRow}>
           <View style={styles.storageText}>
             <View style={styles.storageLabelRow}>
-              <Text style={styles.fieldLabel}>Storage</Text>
+              <Text style={styles.fieldLabel}>Media via Storage node</Text>
               <Pressable
                 onPress={() => setInfoOpen(true)}
                 hitSlop={10}
@@ -129,8 +129,8 @@ export function NewGroupScreen() {
                 Local state stays `storageOff` (true = OFF), so display/write the inverse. */}
             <Text style={[type.caption, {color: colors.textFaint}]}>
               {storageOff
-                ? 'No content, no metadata leaks through the Storage node.'
-                : 'Heavy media sending added. Some content metadata could leak.'}
+                ? 'No photos, GIFs or videos — everything else (text, voice, location, reactions, replies) works as normal, and nothing about this group rides the Logos Storage node.'
+                : 'Send photos, GIFs and videos. The Storage node relays them end-to-end encrypted — it can tell media moved here, never what\'s in it.'}
             </Text>
           </View>
           <Switch
