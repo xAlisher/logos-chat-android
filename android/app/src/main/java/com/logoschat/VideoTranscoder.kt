@@ -89,6 +89,10 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
    */
   @ReactMethod
   fun transcode(inputPath: String, id: String, promise: Promise) {
+    // #385: admit the id BEFORE queueing, on this thread — a cancel that lands while the job is
+    // still behind another transcode must be seen by the worker, and a cancel for an id that is
+    // not admitted (already finished / never started) must stay a no-op.
+    gate.begin(id)
     transcodeExecutor.execute {
       // Cancelled while still queued behind another transcode → skip before opening any codec.
       if (gate.isCancelled(id)) {
@@ -116,7 +120,9 @@ class VideoTranscoder(private val ctx: ReactApplicationContext) :
         // graceful fallback: upload the original untouched
         promise.resolve(skippedResult(inputPath))
       } finally {
-        gate.clear(id) // never let a stale flag poison a future transcode reusing this id
+        // Retire the id: it is no longer live, so a late cancel for it is a no-op and a future
+        // transcode reusing the id is never pre-skipped.
+        gate.clear(id)
       }
     }
   }

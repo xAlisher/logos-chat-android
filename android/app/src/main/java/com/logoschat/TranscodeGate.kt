@@ -13,26 +13,46 @@ import java.util.concurrent.ConcurrentHashMap
  *   - if it is **actively encoding**, the encode loop polls [isCancelled] between frames and
  *     aborts, cleaning up the partial output file.
  *
- * Pure and thread-safe (no Android) so it is fully unit-testable — see TranscodeGateTest. The
- * worker must [clear] the id in a `finally` when a transcode ends (success/failure/cancel), so a
- * stale flag never poisons a later transcode that happens to reuse the same id.
+ * The registry tracks *live* transcodes, not bare cancel flags: [begin] admits an id at enqueue
+ * time and [clear] retires it when the job terminates. A [requestCancel] for an id that is not
+ * live — one that already finished, or never started — is a genuine no-op. Holding the flag
+ * anyway (the first cut) meant a late cancel poisoned the registry forever and silently skipped a
+ * later transcode that reused the id, discarding a valid user send.
+ *
+ * Pure and thread-safe (no Android) so it is fully unit-testable — see TranscodeGateTest.
  */
 class TranscodeGate {
-  private val cancelled = ConcurrentHashMap.newKeySet<String>()
+  /** id → has a pending cancellation. Presence of the key means "queued or encoding". */
+  private val live = ConcurrentHashMap<String, Boolean>()
 
-  /** Request cancellation of the transcode with [id]. Idempotent. */
-  fun requestCancel(id: String) {
-    cancelled.add(id)
+  /**
+   * Admit [id] as a queued transcode. Call this on the *calling* thread before handing the job to
+   * the executor, so a cancel arriving while the job is still queued is honoured. Idempotent, and
+   * never clobbers a cancellation already recorded for a live id.
+   */
+  fun begin(id: String) {
+    live.putIfAbsent(id, false)
   }
 
-  /** True if [id] has a pending cancellation the worker has not yet consumed. */
-  fun isCancelled(id: String): Boolean = cancelled.contains(id)
+  /**
+   * Request cancellation of the transcode with [id]. Idempotent.
+   *
+   * @return true if a queued/running transcode was flagged; false if [id] is not live, in which
+   *   case nothing is retained.
+   */
+  fun requestCancel(id: String): Boolean = live.replace(id, true) != null
 
-  /** Drop [id]'s flag — called when the transcode terminates so the id can be safely reused. */
+  /** True if [id] is live and has a pending cancellation the worker has not yet consumed. */
+  fun isCancelled(id: String): Boolean = live[id] == true
+
+  /** Retire [id] — called when the transcode terminates so the id can be safely reused. */
   fun clear(id: String) {
-    cancelled.remove(id)
+    live.remove(id)
   }
 
-  /** Number of ids with an unconsumed cancellation (diagnostics/tests). */
-  fun pending(): Int = cancelled.size
+  /** Number of live ids carrying an unconsumed cancellation (diagnostics/tests). */
+  fun pending(): Int = live.count { it.value }
+
+  /** Number of live (queued or encoding) ids (diagnostics/tests). */
+  fun tracked(): Int = live.size
 }
