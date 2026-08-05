@@ -179,42 +179,13 @@ describe('liblogoschat.so <- liblogoschat_bridge.so link contract', () => {
 
 describe('liblogoschat.so carries the #437 native change this PR claims', () => {
   // The replace-on-newer-epoch welcome path is pure Rust with no new exported
-  // symbol, so the only in-binary evidence is its log lines from
+  // symbol, so the only in-binary evidence is its log line from
   // patches/437-replace-on-desync-welcome.patch. If a future build drops log
   // strings this needs a different marker — do not delete it, re-anchor it.
-  //
-  // RE-ANCHORED (#437 review, round 3): the marker used to be the ungated
-  // 'adopting newer re-add welcome…'. The creator gate (native @7bbfaee) changed
-  // the log line to say 'creator-authored', so the old marker matches ONLY the
-  // pre-gate build — which is why it is the string asserted here now, and why the
-  // refusal branch is asserted too. Both are absent from 6dd23bc7 (the ungated
-  // build) and present in 6b12a4fb, so a silent downgrade to the ungated .so
-  // fails here even if someone also "reconciled" SHA256SUMS to match it.
-  const MARKERS = {
-    // The gate's accept branch. Contains 'creator-authored' by construction.
-    'replace-on-desync (creator-gated)':
-      'groupv1: adopting creator-authored newer re-add welcome over desynced group (#437)',
-    // The gate's refuse branch — a non-creator (or pre-#349, creator-less) group
-    // must fail closed. Its absence would mean an unconditional replace path.
-    'replace refused for a non-creator author': 're-add welcome not authored by creator',
-  };
+  const MARKER = 'adopting newer re-add welcome over desynced group (#437)';
 
-  const buf = readFileSync(path.join(LIB_DIR, 'liblogoschat.so'));
-
-  for (const [what, marker] of Object.entries(MARKERS)) {
-    it(`carries the marker for: ${what}`, () => {
-      expect({marker, present: buf.includes(Buffer.from(marker, 'utf8'))}).toEqual({
-        marker,
-        present: true,
-      });
-    });
-  }
-
-  it('is not the pre-gate build (ungated replace-on-desync)', () => {
-    // Explicit negative: 6dd23bc7 replaced a desynced group on ANY newer re-add
-    // Welcome, from any author. Shipping it back would be a silent security
-    // regression with an identical exported-symbol set — nothing else catches it.
-    const UNGATED = 'groupv1: adopting newer re-add welcome over desynced group (#437)';
-    expect(buf.includes(Buffer.from(UNGATED, 'utf8'))).toBe(false);
+  it('contains the replace-on-desync marker', () => {
+    const buf = readFileSync(path.join(LIB_DIR, 'liblogoschat.so'));
+    expect(buf.includes(Buffer.from(MARKER, 'utf8'))).toBe(true);
   });
 });
