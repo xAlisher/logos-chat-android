@@ -280,8 +280,10 @@ describe('runReaddReplay (#350)', () => {
     let cursor = opts.cursor ?? 0;
     const deps = {
       readCursor: async () => cursor,
-      fetch: jest.fn(async (since: number) =>
-        rows.filter(r => r.msgPk > since),
+      // Native PAGES this query (`LIMIT ?`), so the fake must too — a fetch that
+      // ignores the limit cannot see the backlog bug at all.
+      fetch: jest.fn(async (since: number, limit: number) =>
+        rows.filter(r => r.msgPk > since).slice(0, limit),
       ),
       parse: parseReadd,
       apply: jest.fn(async (req: ReaddRequest) => {
@@ -368,6 +370,71 @@ describe('runReaddReplay (#350)', () => {
     expect(deps.fetch).toHaveBeenCalledWith(4, 100);
     expect(deps.apply).not.toHaveBeenCalled();
     expect(deps.writeCursor).not.toHaveBeenCalled();
+  });
+
+  // THE PAGING REGRESSION: the native query is capped at `limit` rows, and a
+  // readd1: raises no notification, bumps no unread and schedules no follow-up.
+  // So a single-page replay left request 101+ with NOTHING left to trigger it —
+  // it sat unprocessed until some unrelated later boot. The pass must DRAIN.
+  it('drains a backlog larger than one page in a single replay', async () => {
+    // 101 distinct requesters (repeats from one peer would collapse, hiding it).
+    const rows = Array.from({length: 101}, (_, i) =>
+      readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+    );
+    const {deps, applied, cursorNow} = harness(rows);
+    const {settled} = await runReaddReplay(deps);
+    expect(applied).toHaveLength(101);
+    expect(applied[100]).toBe(101); // the one the single-page pass stranded
+    expect(settled).toHaveLength(101);
+    expect(cursorNow()).toBe(101);
+    expect(deps.fetch).toHaveBeenCalledTimes(2); // full page, then the short one
+  });
+
+  it('an exactly-full page still pulls one more to confirm it is drained', async () => {
+    const rows = Array.from({length: 100}, (_, i) =>
+      readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+    );
+    const {deps, applied} = harness(rows);
+    await runReaddReplay(deps);
+    expect(applied).toHaveLength(100);
+    expect(deps.fetch).toHaveBeenCalledTimes(2);
+    expect(deps.fetch).toHaveBeenLastCalledWith(100, 100);
+  });
+
+  it('stops paging at a failure — the cursor never jumps past what we owe', async () => {
+    const rows = Array.from({length: 150}, (_, i) =>
+      readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+    );
+    let broken = true;
+    const {deps, applied, cursorNow} = harness(rows, {
+      fail: req => broken && req.msgPk === 105,
+    });
+    await runReaddReplay(deps);
+    expect(applied).toHaveLength(104); // 1..104, then it stopped dead
+    expect(cursorNow()).toBe(104);
+    expect(deps.fetch).toHaveBeenCalledTimes(2); // did NOT page past the failure
+    broken = false;
+    await runReaddReplay(deps);
+    expect(applied).toHaveLength(150);
+    expect(cursorNow()).toBe(150);
+  });
+
+  it('does not spin forever on a full page it cannot account for', async () => {
+    // The one shape that could loop: a full page whose rows never move the cursor.
+    const junk = Array.from({length: 100}, () =>
+      readdRow({msgPk: Number.NaN}),
+    );
+    const fetch = jest.fn(async () => junk);
+    const {settled, cursor} = await runReaddReplay({
+      readCursor: async () => 0,
+      fetch,
+      parse: parseReadd,
+      apply: jest.fn(),
+      writeCursor: jest.fn(),
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(settled).toEqual([]);
+    expect(cursor).toBe(0);
   });
 });
 

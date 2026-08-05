@@ -275,39 +275,61 @@ export interface ReplayDeps {
   apply: (req: ReaddRequest) => Promise<void>;
   writeCursor: (msgPk: number) => Promise<void>;
   limit?: number;
+  /** Safety stop for the paging loop — see `runReaddReplay`. */
+  maxPages?: number;
 }
 
 /**
- * One replay pass over the persisted requests. THE recovery path — the live
- * event listener only nudges this, because native drops the JS forward whenever
- * the runtime is dead and a readd1: raises no notification to fall back on.
+ * Replay the persisted requests. THE recovery path — the live event listener
+ * only nudges this, because native drops the JS forward whenever the runtime is
+ * dead and a readd1: raises no notification to fall back on.
  *
- * Resolves what it settled and where the cursor landed. The cursor is only
+ * The native query is PAGED (`limit` rows, cursor-ordered), so one page is not
+ * one replay: a cold-start backlog larger than a page would otherwise leave the
+ * tail with nothing left to trigger it — no notification, no unread, no further
+ * event — and it would sit unprocessed until some unrelated boot/foreground.
+ * So this drains: keep pulling pages until a SHORT one comes back.
+ *
+ * The loop stops early on the first failure (the cursor may not jump past a
+ * request we still owe) and on a cursor that didn't advance (a full page we
+ * could not account for at all — the only shape that could spin forever).
+ * `maxPages` is a last-resort backstop.
+ *
+ * Resolves everything it settled and where the cursor landed. The cursor is only
  * written when it moves, and never moves past a request that failed.
  */
 export async function runReaddReplay(
   deps: ReplayDeps,
 ): Promise<{settled: ReaddRequest[]; cursor: number}> {
-  const cursor = await deps.readCursor();
-  const rows = await deps.fetch(cursor, deps.limit ?? 100);
-  const {requests, maxMsgPk} = planReaddReplay(rows, cursor, deps.parse);
+  const limit = deps.limit ?? 100;
+  const maxPages = deps.maxPages ?? 50;
+  let cursor = await deps.readCursor();
   const settled: ReaddRequest[] = [];
-  let lastResolved: number | null = null;
-  let failed = false;
-  for (const req of requests) {
-    try {
-      await deps.apply(req);
-      settled.push(req);
-      lastResolved = req.msgPk;
-    } catch {
-      // The node was down / the re-add rejected — leave this one pending so the
-      // next boot or foreground retries it, and STOP: the cursor may not jump
-      // past a request we still owe.
-      failed = true;
-      break;
+  for (let page = 0; page < maxPages; page++) {
+    const rows = await deps.fetch(cursor, limit);
+    const {requests, maxMsgPk} = planReaddReplay(rows, cursor, deps.parse);
+    let lastResolved: number | null = null;
+    let failed = false;
+    for (const req of requests) {
+      try {
+        await deps.apply(req);
+        settled.push(req);
+        lastResolved = req.msgPk;
+      } catch {
+        // The node was down / the re-add rejected — leave this one pending so the
+        // next boot or foreground retries it, and STOP: the cursor may not jump
+        // past a request we still owe.
+        failed = true;
+        break;
+      }
     }
+    const next = readdCursorAfter(cursor, maxMsgPk, lastResolved, failed);
+    if (next !== cursor) await deps.writeCursor(next);
+    const advanced = next > cursor;
+    cursor = next;
+    // A short page means the backlog is drained; anything else means there may be
+    // more rows waiting that nothing else would ever come back for.
+    if (failed || !advanced || rows.length < limit) break;
   }
-  const next = readdCursorAfter(cursor, maxMsgPk, lastResolved, failed);
-  if (next !== cursor) await deps.writeCursor(next);
-  return {settled, cursor: next};
+  return {settled, cursor};
 }
