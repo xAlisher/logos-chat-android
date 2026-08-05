@@ -38,6 +38,19 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.8.8-recovery — group desync auto-recovery
+- **If you ever see "You've fallen out of sync — Ask to be re-added" in a group:** tap it.
+  Within a minute or so the banner should clear and your messages should send again — the
+  group works normally. That's the whole recovery loop; before this it was a permanent,
+  silent lockout with no way back.
+- **Group creators:** you don't have to do anything when a member asks to be re-added — the
+  app auto removes-and-re-adds them; you'll see them briefly leave and rejoin the member list.
+- **Everything else should be unchanged** — normal group messaging, adding/removing members,
+  and 1:1 chats. This release only *adds* recovery; it shouldn't change anything you rely on.
+- **F-Droid users:** just refresh and update as usual — nothing else to do. **If you sideloaded
+  an APK from GitHub Releases:** this is the first build signed with our production key, so
+  Android will ask you to uninstall the old one and reinstall (one-time; F-Droid is unaffected).
+
 ### v0.8.7-groups
 - **Remove a member from a group you created.** Create a new group, add a couple of
   people, then Group Info → tap a member → **Remove from group** → confirm. The member
@@ -129,7 +142,7 @@ Open an issue at **https://github.com/xAlisher/peers/issues** with:
 
 - **What you did** (steps), **what you expected**, **what happened**.
 - **Which transport** (Logos / MeshCore / Bluetooth) and whether you had internet.
-- **App version** — Menu → About (e.g. `v0.8.7-groups`), and your device model + Android version.
+- **App version** — Menu → About (e.g. `v0.8.8-recovery`), and your device model + Android version.
 - A screenshot if it's visual.
 
 If something crashed, a logcat helps a lot if you can grab one:
