@@ -114,6 +114,7 @@ import {
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
 import {isPfpContent, foldPfps} from '../messages/pfp';
 import {isGroupCfgContent, foldGroupCfgs} from '../messages/groupcfg';
+import {isFoldedMarker} from '../messages/markers';
 import {isLeaveContent} from '../messages/leave';
 import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
 import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
@@ -1589,7 +1590,7 @@ export function ChatScreen() {
   const msgByKey = useMemo(() => {
     const map = new Map<string, {author: string; snippet: string}>();
     for (const m of messages) {
-      if (isReactionContent(m.text) || isPinContent(m.text) || isLeaveContent(m.text) || isPfpContent(m.text) || isGroupCfgContent(m.text)) continue;
+      if (isFoldedMarker(m.text)) continue;
       const k = messageKey(authorOf(m), m.text);
       if (!map.has(k)) map.set(k, {author: authorOf(m), snippet: quotePreview(m.text)});
     }
@@ -1701,16 +1702,10 @@ export function ChatScreen() {
 
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [
-      // #264/#266: reaction + pin markers are folded above, not rendered as bubbles.
+      // Control markers (react1:/pin1:/leave1:/pfp1:/gcfg1:/readd1:) are folded
+      // into their own affordances above — never rendered as bubbles.
       ...messages
-        .filter(
-          m =>
-            !isReactionContent(m.text) &&
-            !isPinContent(m.text) &&
-            !isLeaveContent(m.text) &&
-            !isPfpContent(m.text) &&
-            !isGroupCfgContent(m.text), // #344: storage-config marker, never a bubble
-        )
+        .filter(m => !isFoldedMarker(m.text))
         .map(m => ({at: m.at, row: {kind: 'msg' as const, msg: m}})),
       ...(systemLines ?? []).map(sn => ({
         at: sn.at,
@@ -1912,15 +1907,20 @@ export function ChatScreen() {
                     ? () => onReinvite(item.sys.infoAddress!)
                     : info === 'desynced'
                     ? () => {
-                        requestReadd(convoPk).catch(e =>
-                          useNodeStore.setState({
-                            error: `re-add request failed: ${e?.message ?? e}`,
-                          }),
-                        );
-                        ToastAndroid.show(
-                          'Re-add requested — the group creator will resync you',
-                          ToastAndroid.SHORT,
-                        );
+                        // Only claim success once a request actually went out —
+                        // requestReadd throws if it reached nobody.
+                        requestReadd(convoPk)
+                          .then(() =>
+                            ToastAndroid.show(
+                              'Re-add requested — the group creator will resync you',
+                              ToastAndroid.SHORT,
+                            ),
+                          )
+                          .catch(e =>
+                            useNodeStore.setState({
+                              error: `re-add request failed: ${e?.message ?? e}`,
+                            }),
+                          );
                       }
                     : undefined
                 }>

@@ -17,6 +17,7 @@ import {encodePin} from '../messages/pins';
 import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
 import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
+import {resolveRoster, shouldAutoReadd} from './readdRecovery';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -644,10 +645,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const s = get();
     const group = s.conversations[convoPk];
     const libConvoId = group?.libConvoId;
-    if (libConvoId == null) return; // not bound → nothing to reference
+    if (libConvoId == null) {
+      throw new Error('this group is not bound yet');
+    }
     const me = useNodeStore.getState().myAddress?.toLowerCase();
-    const roster = s.members[convoPk] ?? [];
+    // RESOLVE the roster (never read the cache blindly): `members` is only
+    // populated by a screen, so a restart-then-tap would otherwise broadcast to
+    // nobody while the UI claimed success.
+    const roster = await resolveRoster<GroupMember>({
+      cached: () => s.members[convoPk],
+      load: async () => {
+        await get().loadMembers(convoPk);
+        return get().members[convoPk] ?? [];
+      },
+    });
     const marker = encodeReadd(libConvoId);
+    let sent = 0;
     for (const m of roster) {
       const addr = m.address.toLowerCase();
       if (m.isSelf || addr === me) continue;
@@ -655,10 +668,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // resolve-or-create the 1:1 (never navigates), then send silently
         const dmPk = await LogosChat.createConversation(m.address, null);
         await get().send(dmPk, marker);
+        sent++;
       } catch {
         // a member we can't open a 1:1 with — skip; another member (the creator)
         // will still receive it.
       }
+    }
+    // Reaching nobody is a FAILURE, not a quiet success — the caller surfaces it
+    // instead of toasting "the creator will resync you" into the void.
+    if (sent === 0) {
+      throw new Error('no group member could be reached');
     }
   },
 
@@ -2079,12 +2098,29 @@ addLogosChatListener(e => {
         const group = Object.values(st.conversations).find(
           c => c.isGroup && c.libConvoId === libConvoId,
         );
-        // creator-gated; only re-add someone actually on our roster (never a stranger)
-        const roster = group != null ? st.members[group.convoPk] ?? [] : [];
-        const wasMember = roster.some(m => m.address.toLowerCase() === requester);
-        if (group != null && group.createdByMe && requester !== '' && wasMember) {
+        if (group != null) {
           const groupPk = group.convoPk;
           (async () => {
+            // creator-gated; only re-add someone actually on our roster (never a
+            // stranger). The roster is RESOLVED from native, not read from the
+            // in-memory cache: this request arrives on a 1:1, so a creator who
+            // hasn't opened the group this session has an empty cache and would
+            // otherwise silently ignore a legitimate request.
+            const ok = await shouldAutoReadd(
+              {
+                createdByMe: group.createdByMe,
+                requester,
+                me: useNodeStore.getState().myAddress,
+              },
+              {
+                cached: () => useChatStore.getState().members[groupPk],
+                load: async () => {
+                  await useChatStore.getState().loadMembers(groupPk);
+                  return useChatStore.getState().members[groupPk] ?? [];
+                },
+              },
+            );
+            if (!ok) return;
             try {
               await useChatStore.getState().removeMember(groupPk, requester);
             } catch {
