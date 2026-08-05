@@ -436,6 +436,64 @@ describe('runReaddReplay (#350)', () => {
     expect(settled).toEqual([]);
     expect(cursor).toBe(0);
   });
+
+  // THE PAGE-BUDGET REGRESSION: draining used to stop dead after a fixed 50 full
+  // pages and return looking exactly like a completed drain. Nothing re-triggers
+  // a readd1: — no notification, no unread, no later event — so every request
+  // past page 50 sat stranded until an unrelated foreground. A backlog that is
+  // still making progress must be drained to the end, however long it is.
+  it('drains a backlog past the old fixed 50-page budget', async () => {
+    // 5100 rows = 51 full pages of 100 + a short one. Distinct requesters, so
+    // nothing collapses and every row is a request in its own right.
+    const rows = Array.from({length: 5100}, (_, i) =>
+      readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+    );
+    const {deps, applied, cursorNow} = harness(rows);
+    const {settled, drained} = await runReaddReplay(deps);
+    expect(applied).toHaveLength(5100);
+    expect(applied[5099]).toBe(5100); // the tail the 50-page budget stranded
+    expect(settled).toHaveLength(5100);
+    expect(cursorNow()).toBe(5100);
+    expect(drained).toBe(true);
+  });
+
+  // An explicit budget is still honoured — but it must SAY it cut the drain
+  // short, so a caller that sets one can re-enter instead of assuming "done".
+  it('reports an explicit page budget that cut the drain short', async () => {
+    const rows = Array.from({length: 250}, (_, i) =>
+      readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+    );
+    const {deps, applied, cursorNow} = harness(rows);
+    const first = await runReaddReplay({...deps, maxPages: 2});
+    expect(applied).toHaveLength(200);
+    expect(first.drained).toBe(false); // NOT a completed drain
+    expect(cursorNow()).toBe(200);
+    // Re-entering finishes the job and only then claims to be drained.
+    const second = await runReaddReplay({...deps, maxPages: 2});
+    expect(applied).toHaveLength(250);
+    expect(second.drained).toBe(true);
+  });
+
+  it('a completed drain, a failure and a dead page all report drained', async () => {
+    const {deps: ok} = harness([readdRow({msgPk: 1})]);
+    expect((await runReaddReplay(ok)).drained).toBe(true);
+
+    // A failure stops on purpose — the request stays pending for the next
+    // boot/foreground, and re-entering now would only hot-loop a down node.
+    const {deps: down} = harness([readdRow({msgPk: 1})], {fail: () => true});
+    expect((await runReaddReplay(down)).drained).toBe(true);
+
+    // A full page we cannot account for: nothing more this pass can do.
+    const junk = Array.from({length: 100}, () => readdRow({msgPk: Number.NaN}));
+    const dead = await runReaddReplay({
+      readCursor: async () => 0,
+      fetch: async () => junk,
+      parse: parseReadd,
+      apply: jest.fn(),
+      writeCursor: jest.fn(),
+    });
+    expect(dead.drained).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

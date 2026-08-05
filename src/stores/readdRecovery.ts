@@ -362,7 +362,8 @@ export interface ReplayDeps {
   apply: (req: ReaddRequest) => Promise<void>;
   writeCursor: (msgPk: number) => Promise<void>;
   limit?: number;
-  /** Safety stop for the paging loop — see `runReaddReplay`. */
+  /** Optional explicit page budget. Unset means "drain until progress stops" —
+   *  see `runReaddReplay` for why a fixed count is the wrong bound here. */
   maxPages?: number;
 }
 
@@ -380,18 +381,34 @@ export interface ReplayDeps {
  * The loop stops early on the first failure (the cursor may not jump past a
  * request we still owe) and on a cursor that didn't advance (a full page we
  * could not account for at all — the only shape that could spin forever).
- * `maxPages` is a last-resort backstop.
  *
- * Resolves everything it settled and where the cursor landed. The cursor is only
- * written when it moves, and never moves past a request that failed.
+ * IT IS BOUNDED BY PROGRESS, NOT BY A PAGE COUNT. A fixed budget is the wrong
+ * bound for a drain whose whole purpose is that nothing else will come back for
+ * the tail: exhausting it looked identical to a finished drain, so a backlog
+ * bigger than the budget was silently stranded until an unrelated foreground —
+ * exactly the bug the paging fix was meant to remove, moved further out. Every
+ * page must strictly advance the cursor to earn another (`advanced`), and the
+ * cursor is bounded above by the largest msg_pk native actually holds, so the
+ * loop terminates on any real backlog however long.
+ *
+ * `maxPages` remains available as an EXPLICIT budget for a caller that wants to
+ * bound one pass — and when it cuts the drain short, `drained` is false so that
+ * caller knows to re-enter rather than assume the backlog is empty.
+ *
+ * Resolves everything it settled, where the cursor landed, and whether the
+ * backlog was drained. The cursor is only written when it moves, and never
+ * moves past a request that failed.
  */
 export async function runReaddReplay(
   deps: ReplayDeps,
-): Promise<{settled: ReaddRequest[]; cursor: number}> {
+): Promise<{settled: ReaddRequest[]; cursor: number; drained: boolean}> {
   const limit = deps.limit ?? 100;
-  const maxPages = deps.maxPages ?? 50;
+  const maxPages = deps.maxPages ?? Number.POSITIVE_INFINITY;
   let cursor = await deps.readCursor();
   const settled: ReaddRequest[] = [];
+  // Only an exhausted explicit budget leaves the backlog unfinished: a failure
+  // and a dead page are deliberate stops that re-entering could not improve on.
+  let drained = true;
   for (let page = 0; page < maxPages; page++) {
     const rows = await deps.fetch(cursor, limit);
     const {requests, maxMsgPk} = planReaddReplay(rows, cursor, deps.parse);
@@ -417,6 +434,9 @@ export async function runReaddReplay(
     // A short page means the backlog is drained; anything else means there may be
     // more rows waiting that nothing else would ever come back for.
     if (failed || !advanced || rows.length < limit) break;
+    // Still a full page, still advancing — but this was the last page an explicit
+    // budget allows. Say so, so the caller re-enters instead of stranding the tail.
+    if (page + 1 >= maxPages) drained = false;
   }
-  return {settled, cursor};
+  return {settled, cursor, drained};
 }
