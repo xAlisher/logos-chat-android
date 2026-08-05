@@ -41,6 +41,8 @@ class ChatService : Service() {
       startForeground(NOTIF_ID, notif)
     }
     running = true
+    fgStartedElapsed = android.os.SystemClock.elapsedRealtime() // #381: track dataSync duration
+    timedOut = false // a fresh (foreground) start clears any prior timeout
     // START_STICKY redelivery after process death: JS is gone — restart the
     // node natively from the stored config (fresh epoch by design).
     NodeRuntime.autoRestartIfWanted()
@@ -56,12 +58,76 @@ class ChatService : Service() {
     super.onDestroy()
   }
 
+  // #381: Android 15+ (API 35) caps a dataSync FGS at ~6h/day. When the OS times it out it calls
+  // onTimeout — we MUST stop the foreground service promptly (data is already durable via the
+  // persist-before-forward pipeline) and tell the user how to resume, and NEVER retry a
+  // now-forbidden background FGS start. Both overloads (API 34 shortService / API 35 typed)
+  // funnel into the same handler. stopSelf() also defeats the START_STICKY restart loop.
+  override fun onTimeout(startId: Int) = handleFgsTimeout()
+
+  override fun onTimeout(startId: Int, fgsType: Int) = handleFgsTimeout()
+
+  private fun handleFgsTimeout() {
+    val activeMs =
+        if (fgStartedElapsed > 0L) android.os.SystemClock.elapsedRealtime() - fgStartedElapsed else 0L
+    Log.w(TAG, "dataSync FGS timed out after ${activeMs}ms — stopping foreground + notifying user")
+    timedOut = true
+    running = false
+    postPausedNotice(this, activeMs)
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    stopSelf() // explicit stop → no START_STICKY re-delivery (never loop a forbidden FGS start)
+  }
+
   companion object {
     private const val TAG = "logos-chat-service"
     private const val CHANNEL_NODE = "logoschat_node"
     const val NOTIF_ID = 7
+    // #381: a separate, default-importance channel + id for the "background paused" alert, so it
+    // actually surfaces (the ongoing node notification is IMPORTANCE_LOW and silent).
+    private const val CHANNEL_ALERTS = "logoschat_alerts"
+    private const val NOTIF_ALERT_ID = 8
 
     @Volatile private var running = false
+
+    // #381: when the dataSync FGS started (elapsedRealtime), and whether the OS timed it out.
+    @Volatile private var fgStartedElapsed = 0L
+    @Volatile private var timedOut = false
+
+    /** #381: whether the FGS was last stopped by an OS timeout (recovery = user opens the app). */
+    fun wasTimedOut(): Boolean = timedOut
+
+    /** #381: post the actionable "background paused" notice after an FGS timeout. */
+    private fun postPausedNotice(context: Context, activeMs: Long) {
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          nm.createNotificationChannel(
+              NotificationChannel(
+                  CHANNEL_ALERTS, "Delivery alerts", NotificationManager.IMPORTANCE_DEFAULT)
+                  .apply { description = "Alerts when background message delivery pauses" })
+        }
+        val tap =
+            PendingIntent.getActivity(
+                context,
+                1,
+                Intent(context, MainActivity::class.java).apply {
+                  addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val n =
+            NotificationCompat.Builder(context, CHANNEL_ALERTS)
+                .setContentTitle("Peers — background delivery paused")
+                .setContentText(fgsPausedNotice(activeMs))
+                .setSmallIcon(R.drawable.ic_stat_lambda)
+                .setAutoCancel(true)
+                .setContentIntent(tap)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+        nm.notify(NOTIF_ALERT_ID, n)
+      } catch (t: Throwable) {
+        Log.w(TAG, "paused-notice failed: ${t.message}")
+      }
+    }
 
     // #382: change-driven (not polled) notification refresh. A dedicated thread runs a
     // debounced repost that coalesces bursts; [notifState] suppresses unchanged content so a
