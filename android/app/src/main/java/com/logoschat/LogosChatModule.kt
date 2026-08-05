@@ -200,6 +200,36 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
 
   override fun onHostResume() {
     ChatRepo.appForeground = true
+    recoverFgsIfTimedOut()
+  }
+
+  /**
+   * #381: the "background delivery paused — open Peers to catch up" notice tells the user that
+   * reopening the app resumes background delivery; this is the code that makes it true. Runs on
+   * every resume (cold start AND a resume into a still-live React instance, which is the normal
+   * timeout case) and is a no-op unless the OS actually timed the FGS out.
+   */
+  private fun recoverFgsIfTimedOut() {
+    // Fast path: onHostResume runs on the UI thread and fires on every foreground, so the
+    // ordinary (no-timeout) resume must do zero work — in particular no main-thread SQLite.
+    // FgsRecovery re-checks both flags; this is only the cheap volatile short-circuit.
+    if (!ChatService.wasTimedOut() || ChatService.isRunning()) return
+    val wanted =
+        try {
+          ChatRepo.requireDb().kvGet(NodeRuntime.KV_AUTO_RESTART) == "1"
+        } catch (_: Throwable) {
+          false
+        }
+    val restarted =
+        FgsRecovery.onForeground(
+            timedOut = ChatService.wasTimedOut(),
+            autoRestartWanted = wanted,
+            serviceRunning = ChatService.isRunning(),
+            clearNotice = { ChatService.clearPausedNotice(reactApplicationContext) },
+            startService = { ChatService.start(reactApplicationContext) })
+    if (restarted) {
+      Log.i("logos-chat-bridge", "#381: FGS was timed out — restarted it on app foreground")
+    }
   }
 
   override fun onHostPause() {

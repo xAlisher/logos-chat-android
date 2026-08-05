@@ -93,8 +93,22 @@ class ChatService : Service() {
     @Volatile private var fgStartedElapsed = 0L
     @Volatile private var timedOut = false
 
-    /** #381: whether the FGS was last stopped by an OS timeout (recovery = user opens the app). */
+    /** #381: whether the FGS was last stopped by an OS timeout (recovery = user opens the app).
+     *  Consumed by [FgsRecovery] from LogosChatModule.onHostResume; cleared by a fresh start. */
     fun wasTimedOut(): Boolean = timedOut
+
+    /** Whether the foreground service is currently up (guards the #381 recovery restart). */
+    fun isRunning(): Boolean = running
+
+    /** #381: drop the "background paused" alert once the FGS is back. */
+    fun clearPausedNotice(context: Context) {
+      try {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel(NOTIF_ALERT_ID)
+      } catch (t: Throwable) {
+        Log.w(TAG, "paused-notice clear failed: ${t.message}")
+      }
+    }
 
     /** #381: post the actionable "background paused" notice after an FGS timeout. */
     private fun postPausedNotice(context: Context, activeMs: Long) {
