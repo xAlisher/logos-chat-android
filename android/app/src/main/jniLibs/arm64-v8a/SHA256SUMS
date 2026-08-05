@@ -29,11 +29,47 @@
 # cited here (@6b6305f) still PUBLISHED 8f4fbdc6…. The cited revision stood behind a
 # different binary than the one under review.
 #
-# Fixed at the source: xAlisher/logos-libchat-mls-android@04bc30d now publishes the
+# Fixed at the source: xAlisher/logos-libchat-mls-android@a81464c now publishes the
 # exact artifact this app bundles, and the `published=` field below is the hash that
 # revision publishes. `__tests__/nativeProvenance.test.ts` asserts published= equals
 # the recorded hash equals the bytes on disk, for every library — so this manifest
 # can no longer cite a revision that stands behind something else.
+#
+# THIRD #437 REVIEW ROUND — the same drift, in the other direction. The gate above
+# works: it is what caught this. Two late commits rebuilt liblogoschat.so for the
+# creator-gated replace-on-desync path (4d13f90 → 6b12a4fb) and shipped the new
+# binary WITHOUT touching this file, so the manifest still named 6dd23bc7 and the
+# whole PR shipped an unverified TCB. The lesson is not "add another check" — the
+# check fired — it is that a .so bump is a THREE-repo edit: publish the artifact
+# upstream, move `published=` + the recorded hash here, and re-anchor the in-binary
+# marker in the gate. 6b12a4fb carries the SAME 25 exported logoschat_* symbols as
+# 6dd23bc7, so nothing about the ABI would have told you; only the hash does.
+#
+# FOURTH #437 REVIEW ROUND — the same defect a third time, and the worst shape of
+# it. bd4b229 bumped liblogoschat.so to 84b751c2 (the signing-key-gated build) and
+# in the SAME commit reverted this file, docs/SBOM.md, the marker assertions and
+# __tests__/nativeSbomDoc.test.ts back to their round-2 text. So the manifest named
+# 6dd23bc7 — the UNGATED build — beside a binary two security rounds newer, and the
+# round-3 hardening that would have shouted about it had been deleted along the way.
+# Two lessons, both structural:
+#   1. A .so bump reverting its own manifest is indistinguishable from a downgrade
+#      attack. Only the gate firing tells them apart, so never "reconcile" the
+#      manifest toward the binary or the binary toward the manifest without
+#      re-deciding which build you mean to ship.
+#   2. A deleted test is a silent weakening — nothing fails when a gate is removed
+#      from jest.logic.config.js. __tests__/nativeGateRegistration.test.ts now pins
+#      that registration, because that is the one hole markers and hashes can't
+#      cover.
+# And the upstream half had been skipped outright: 01fced9 changed the gate's SOURCE
+# but published nothing, so for this whole review round the app bundled 84b751c2, an
+# artifact NO revision of the native repo stood behind. @a81464c publishes it now.
+#
+# What NO in-binary marker can tell you here, stated plainly: 6b12a4fb and 84b751c2
+# emit the SAME log lines and export the SAME 25 logoschat_* symbols. They differ
+# only in what the creator gate compares — credential CONTENT bytes (6b12a4fb) vs the
+# welcome author's authenticated `signature_key` (84b751c2, so a peer that copies the
+# creator's id into a credential can no longer pass). The markers below separate
+# gated from ungated; only this hash separates the two gated builds.
 #
 # LIMIT, stated plainly: the CI logic job is offline, so the gate proves the three
 # local facts agree, not that the remote still publishes that hash. Checking the
@@ -43,7 +79,7 @@
 # Format (parsed by the gate — keep it exact):
 #   # provenance: <file> <origin> published=<sha256>
 #
-# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@04bc30d published=6dd23bc7e93e94c35ba5fb913dc0b65217b67dc6df1911880e30b254389fef31
+# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@a81464c published=84b751c2a2c623b5e610c894e19a47374819d1c05babef4c82afc3977f4a216f
 # provenance: liblogosdelivery.so xAlisher/logos-libdelivery-android@1646770 published=944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f
 # provenance: librln.so xAlisher/logos-libdelivery-android@1646770 published=766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45
 # provenance: libc++_shared.so xAlisher/logos-libdelivery-android@1646770 published=e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6
@@ -54,7 +90,10 @@
 #                            + patches/349-groupv1-remove-member.patch
 #                            + patches/437-replace-on-desync-welcome.patch,
 #                            built by scripts/build-android-arm64.sh (NDK r27), stripped.
-#                            (@04bc30d is the head of PR #4, exp/349-groupv1-remove-member.)
+#                            (@a81464c is the head of PR #4, exp/349-groupv1-remove-member;
+#                            it publishes the signing-key-gated build — the gate landed
+#                            @7bbfaee, its `replace_authorized` unit tests @10518fe, and
+#                            @01fced9 rebound it from credential bytes to signature_key.)
 #   liblogosdelivery.so    Logos delivery node (Waku/nwaku, #402) — @1646770 is the
 #   librln.so              build carrying the Persistency-teardown SIGSEGV fix.
 #   libc++_shared.so       Android NDK r27 runtime, vendored by that same repo.
@@ -66,7 +105,9 @@
 # REPRODUCIBILITY — measured, not assumed. Do not upgrade this claim without
 # re-measuring.
 #
-# liblogoschat.so is NOT bit-for-bit reproducible today. A full `cargo clean` and
+# liblogoschat.so is NOT bit-for-bit reproducible today. Measured on the 6dd23bc7…
+# build — the non-determinism is toolchain-side, so it carries to 6b12a4fb… and
+# 84b751c2…, and it has NOT been re-measured on either. A full `cargo clean` and
 # rerun of scripts/build-android-arm64.sh on the SAME host, same source, same build
 # path yielded 812230801e01c051925e844368951c58e786efbbd8f192c548b2ae0e7a97273f
 # instead of 6dd23bc7…: identical byte size, identical exported-symbol set, and the
@@ -84,6 +125,6 @@
 # reproducibility and is not. Only a full clean rebuild answers the question.
 e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  libc++_shared.so
 9df7677c609759250dc368874224a8fbeb0df056104663859c284f29080835b5  liblogoschat_bridge.so
-6dd23bc7e93e94c35ba5fb913dc0b65217b67dc6df1911880e30b254389fef31  liblogoschat.so
+84b751c2a2c623b5e610c894e19a47374819d1c05babef4c82afc3977f4a216f  liblogoschat.so
 944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f  liblogosdelivery.so
 766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45  librln.so
