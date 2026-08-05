@@ -576,6 +576,7 @@ describe('runReaddReplay (#350)', () => {
 import {
   owesReadd,
   parseReaddDebts,
+  prunedReaddDebts,
   readdDebtKey,
   readdDebtPhase,
   settleReaddRequest,
@@ -637,6 +638,51 @@ describe('readd debts (#350)', () => {
     expect(owesReadd(legacy, REQ)).toBe(true);
     expect(readdDebtPhase(legacy, REQ)).toBe('removing');
   });
+
+  // The completion tombstone has to survive a trip through KV intact — if it
+  // came back as anything else the resume would re-run the node calls.
+  it('round-trips the completion tombstone', () => {
+    const done = withReaddDebt({}, REQ, 'done');
+    expect(readdDebtPhase(parseReaddDebts(JSON.stringify(done)), REQ)).toBe('done');
+  });
+
+  it('reads an unrecognised phase as the pre-remove phase', () => {
+    const junk = JSON.stringify({[readdDebtKey(REQ)]: {msgPk: 21, phase: 'wat'}});
+    expect(readdDebtPhase(parseReaddDebts(junk), REQ)).toBe('removing');
+  });
+});
+
+// The tombstone is retired by whoever owns the cursor, and only once that write
+// has landed — see `prunedReaddDebts`. Getting this wrong in either direction is
+// the bug: too early re-opens the crash window, too late leaks KV.
+describe('prunedReaddDebts (#350)', () => {
+  it('retires a tombstone the cursor has taken over', () => {
+    expect(prunedReaddDebts(withReaddDebt({}, REQ, 'done'), 21)).toEqual({});
+    expect(prunedReaddDebts(withReaddDebt({}, REQ, 'done'), 99)).toEqual({});
+  });
+
+  it('keeps a tombstone the cursor has NOT yet reached', () => {
+    const debts = withReaddDebt({}, REQ, 'done');
+    expect(readdDebtPhase(prunedReaddDebts(debts, 20), REQ)).toBe('done');
+    expect(readdDebtPhase(prunedReaddDebts(debts, 0), REQ)).toBe('done');
+  });
+
+  // An unfinished debt below the cursor should be impossible, but dropping one
+  // costs a member their seat while keeping it costs a skipped gate.
+  it('never drops an unfinished debt, whatever the cursor says', () => {
+    for (const phase of ['removing', 'adding'] as const) {
+      const debts = withReaddDebt({}, REQ, phase);
+      expect(readdDebtPhase(prunedReaddDebts(debts, 999), REQ)).toBe(phase);
+    }
+  });
+
+  it('retires only the entries the cursor covers', () => {
+    const OLD: ReaddRequest = {...REQ, msgPk: 5, requester: STRANGER.toLowerCase()};
+    const debts = withReaddDebt(withReaddDebt({}, OLD, 'done'), REQ, 'done');
+    const kept = prunedReaddDebts(debts, 5);
+    expect(readdDebtPhase(kept, OLD)).toBeNull(); // burned
+    expect(readdDebtPhase(kept, REQ)).toBe('done'); // still protected
+  });
 });
 
 describe('settleReaddRequest (#350)', () => {
@@ -679,12 +725,15 @@ describe('settleReaddRequest (#350)', () => {
     return {deps, calls, kv: () => kv, isListed: () => listed};
   }
 
-  it('gates, then remove-then-adds, and owes nothing afterwards', async () => {
+  // Completion is RECORDED, not forgotten: the replay cursor that supersedes
+  // this record is written by the caller after we return, so deleting the debt
+  // here would leave a window with neither record (Codex P2 on PR #436).
+  it('gates, then remove-then-adds, and records completion', async () => {
     const {deps, calls, kv, isListed} = harness();
     await settleReaddRequest(REQ, deps);
     expect(calls).toEqual(['remove', 'add']);
     expect(isListed()).toBe(true);
-    expect(parseReaddDebts(kv())).toEqual({}); // debt cleared
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('done');
   });
 
   it('never touches the node when the gate declines — and owes nothing', async () => {
@@ -711,7 +760,9 @@ describe('settleReaddRequest (#350)', () => {
     expect(calls).toEqual(['remove', 'add']); // NOT remove,add,remove,add
     expect(deps.remove).toHaveBeenCalledTimes(1);
     expect(isListed()).toBe(true);
-    expect(parseReaddDebts(kv())).toEqual({}); // and the debt is finally settled
+    // ...and the request is now marked complete — still durable, because the
+    // cursor that retires this record has yet to be written.
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('done');
   });
 
   // The other half of that crash window: the app died between the remove and the
@@ -729,7 +780,7 @@ describe('settleReaddRequest (#350)', () => {
     expect(deps.gate).toHaveBeenCalledTimes(1); // gated ONCE, not re-gated
     expect(calls).toEqual(['remove', 'add', 'add']);
     expect(isListed()).toBe(true); // recovered, not left evicted
-    expect(parseReaddDebts(kv())).toEqual({});
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('done');
   });
 
   it('records the debt BEFORE the remove, so a crash in between still owes', async () => {
@@ -771,7 +822,37 @@ describe('settleReaddRequest (#350)', () => {
     expect(calls).toEqual(['remove', 'remove', 'add']); // retried in full
     expect(deps.gate).toHaveBeenCalledTimes(1);
     expect(isListed()).toBe(true);
-    expect(parseReaddDebts(kv())).toEqual({});
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('done');
+  });
+
+  // THE REGRESSION TEST (Codex P2 on PR #436), unit half. The add landed AND the
+  // completion write landed — then the process died before the replay cursor was
+  // written, so the same persisted row comes back. The debt used to be DELETED
+  // here, leaving nothing to distinguish "already recovered" from "never
+  // touched": the gate re-ran, saw the just-re-added requester on the roster, and
+  // remove-then-added a member who was already resynced.
+  it('a completed request is settled by its record, never re-run', async () => {
+    const {deps, calls, kv, isListed} = harness();
+    await settleReaddRequest(REQ, deps); // pass 1 completes...
+    expect(calls).toEqual(['remove', 'add']);
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('done');
+
+    // ...the cursor write never lands, so the next boot replays the same row.
+    await expect(settleReaddRequest(REQ, deps)).resolves.toBeUndefined();
+    expect(calls).toEqual(['remove', 'add']); // NOT remove,add,remove,add
+    expect(deps.remove).toHaveBeenCalledTimes(1);
+    expect(deps.gate).toHaveBeenCalledTimes(1); // not even re-gated
+    expect(isListed()).toBe(true); // the member kept their seat
+  });
+
+  // The tombstone is pinned to a msg_pk, so it must not swallow a genuine new
+  // request from the same peer once the first recovery is complete.
+  it('a LATER request from the same peer is gated afresh past a tombstone', async () => {
+    const {deps, calls} = harness();
+    await settleReaddRequest(REQ, deps); // leaves a 'done' record
+    await settleReaddRequest({...REQ, msgPk: 40}, deps);
+    expect(calls).toEqual(['remove', 'add', 'remove', 'add']);
+    expect(deps.gate).toHaveBeenCalledTimes(2);
   });
 
   it('a stale debt for a different request does not skip the gate', async () => {
@@ -784,13 +865,14 @@ describe('settleReaddRequest (#350)', () => {
     expect(deps.add).not.toHaveBeenCalled();
   });
 
-  it("keeps other peers' debts when clearing its own", async () => {
+  it("leaves other peers' debts untouched when recording its own", async () => {
     const OTHER: ReaddRequest = {...REQ, msgPk: 9, requester: STRANGER.toLowerCase()};
     const {deps, kv} = harness();
     await deps.writeDebts(withReaddDebt({}, OTHER, 'adding'));
     await settleReaddRequest(REQ, deps);
-    expect(owesReadd(parseReaddDebts(kv()), OTHER)).toBe(true);
-    expect(owesReadd(parseReaddDebts(kv()), REQ)).toBe(false);
+    // the other peer's outstanding add is still owed — untouched and unfinished
+    expect(readdDebtPhase(parseReaddDebts(kv()), OTHER)).toBe('adding');
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('done');
   });
 });
 
@@ -874,10 +956,173 @@ describe('readd replay across a death right after the add (#350)', () => {
     expect(calls).toEqual(['remove', 'add']); // the member was NOT ejected again
     expect(listed).toBe(true);
     expect(cursor).toBe(21);
-    expect(parseReaddDebts(kv)).toEqual({});
+    expect(readdDebtPhase(parseReaddDebts(kv), REQ)).toBe('done');
 
     // pass 3: fully settled — nothing left to do.
     await runReaddReplay(replayDeps());
     expect(calls).toEqual(['remove', 'add']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #350 — THE REGRESSION TEST (Codex P2 on PR #436), end-to-end half.
+//
+// The narrower and nastier crash window: the add succeeded AND the completion
+// write succeeded, and the process died before `runReaddReplay` committed the
+// cursor. Both of the old records were then absent — the debt deleted, the
+// cursor stale — so the next boot re-read the identical persisted row, ran the
+// ordinary gate, found the just-re-added requester on the roster, and performed a
+// SECOND destructive remove-then-add. The roster witness cannot catch this: a
+// recovered member is indistinguishable from one who was never touched.
+//
+// This harness mirrors the store wiring exactly, INCLUDING the ordering that
+// makes it safe — `chatStore.replayReaddRequests` prunes tombstones inside
+// `writeCursor`, only after the cursor itself has landed.
+describe('readd replay across a death after the completion write (#350)', () => {
+  function fleet(rows: ReaddRow[]) {
+    let listed = true;
+    let kv: string | null = null;
+    let cursor = 0;
+    const calls: string[] = [];
+
+    const settleDeps = () => ({
+      readDebts: async (): Promise<ReaddDebts> => parseReaddDebts(kv),
+      writeDebts: async (d: ReaddDebts) => {
+        kv = JSON.stringify(d);
+      },
+      gate: async () => listed,
+      onRoster: async () => listed,
+      remove: async () => {
+        calls.push('remove');
+        if (!listed) throw new Error('not a member');
+        listed = false;
+      },
+      add: async () => {
+        calls.push('add');
+        listed = true;
+      },
+    });
+
+    // `cursorDies` models the process dying between the completed settle and the
+    // durable cursor — the exact window the tombstone exists to cover.
+    const replayDeps = (cursorDies = false) => ({
+      readCursor: async () => cursor,
+      fetch: async (since: number, limit: number) =>
+        rows.filter(r => r.msgPk > since).slice(0, limit),
+      parse: parseReadd,
+      apply: (req: ReaddRequest) => settleReaddRequest(req, settleDeps()),
+      writeCursor: async (n: number) => {
+        if (cursorDies) throw new Error('PROCESS DEATH');
+        cursor = n;
+        // the store prunes ONLY here, after the cursor is durable
+        kv = JSON.stringify(prunedReaddDebts(parseReaddDebts(kv), n));
+      },
+    });
+
+    return {
+      replayDeps,
+      calls,
+      isListed: () => listed,
+      cursorNow: () => cursor,
+      debts: () => parseReaddDebts(kv),
+    };
+  }
+
+  it('does not remove-then-add a resynced member a second time', async () => {
+    const f = fleet([readdRow({msgPk: 21})]);
+
+    // pass 1: gate → remove → add → completion recorded → death before the cursor
+    await expect(runReaddReplay(f.replayDeps(true))).rejects.toThrow('PROCESS DEATH');
+    expect(f.calls).toEqual(['remove', 'add']);
+    expect(f.isListed()).toBe(true); // the member is back on the roster
+    expect(f.cursorNow()).toBe(0); // ...but the row still looks unhandled
+    expect(readdDebtPhase(f.debts(), REQ)).toBe('done'); // this is what saves them
+
+    // pass 2: the next boot replays the identical row
+    await runReaddReplay(f.replayDeps());
+    expect(f.calls).toEqual(['remove', 'add']); // NOT remove,add,remove,add
+    expect(f.isListed()).toBe(true);
+    expect(f.cursorNow()).toBe(21); // and now the cursor supersedes the record
+    expect(f.debts()).toEqual({}); // ...so the tombstone is retired
+
+    // pass 3: nothing left at all
+    await runReaddReplay(f.replayDeps());
+    expect(f.calls).toEqual(['remove', 'add']);
+  });
+
+  // The window can repeat: a cursor write that keeps failing must not turn into a
+  // repeated eviction on every boot.
+  it('survives the cursor write failing over and over', async () => {
+    const f = fleet([readdRow({msgPk: 21})]);
+    for (let boot = 0; boot < 4; boot++) {
+      await expect(runReaddReplay(f.replayDeps(true))).rejects.toThrow('PROCESS DEATH');
+    }
+    expect(f.calls).toEqual(['remove', 'add']); // once, across four boots
+    expect(f.isListed()).toBe(true);
+  });
+
+  it('retires every tombstone the cursor covers in one drain', async () => {
+    const f = fleet([readdRow({msgPk: 21}), readdRow({msgPk: 30, sender: STRANGER})]);
+    await runReaddReplay(f.replayDeps());
+    expect(f.cursorNow()).toBe(30);
+    expect(f.debts()).toEqual({}); // both settled, both retired
+  });
+
+  // THE PRUNE BOUNDARY. The cursor stops short of a request whose add failed, so
+  // that request's debt must survive the prune that retires the settled one —
+  // otherwise the retry re-gates a member who is currently EVICTED, finds no
+  // roster row, declines, and strands them off the group for good.
+  it('never prunes the debt of a request the cursor stopped short of', async () => {
+    const STUCK_REQ = REQ; // msgPk 21
+    const FAILED: ReaddRequest = {...REQ, msgPk: 30, requester: STRANGER.toLowerCase()};
+    let kv: string | null = null;
+    let cursor = 0;
+    const roster = new Set([STUCK.toLowerCase(), STRANGER.toLowerCase()]);
+    let addDown = true;
+
+    const settleDeps = (req: ReaddRequest) => ({
+      readDebts: async (): Promise<ReaddDebts> => parseReaddDebts(kv),
+      writeDebts: async (d: ReaddDebts) => {
+        kv = JSON.stringify(d);
+      },
+      gate: async () => roster.has(req.requester),
+      onRoster: async () => roster.has(req.requester),
+      remove: async () => {
+        roster.delete(req.requester);
+      },
+      add: async () => {
+        // only the STRANGER's re-add is failing
+        if (addDown && req.requester === FAILED.requester) throw new Error('node down');
+        roster.add(req.requester);
+      },
+    });
+
+    const rows = [readdRow({msgPk: 21}), readdRow({msgPk: 30, sender: STRANGER})];
+    const replayDeps = () => ({
+      readCursor: async () => cursor,
+      fetch: async (since: number, limit: number) =>
+        rows.filter(r => r.msgPk > since).slice(0, limit),
+      parse: parseReadd,
+      apply: (req: ReaddRequest) => settleReaddRequest(req, settleDeps(req)),
+      writeCursor: async (n: number) => {
+        cursor = n;
+        kv = JSON.stringify(prunedReaddDebts(parseReaddDebts(kv), n));
+      },
+    });
+
+    // pass 1: 21 recovers, 30's add fails — the cursor stops at 21.
+    await runReaddReplay(replayDeps());
+    expect(cursor).toBe(21);
+    expect(roster.has(STRANGER.toLowerCase())).toBe(false); // evicted mid-recovery
+    expect(readdDebtPhase(parseReaddDebts(kv), STUCK_REQ)).toBeNull(); // retired
+    // the survivor: without this the retry would re-gate an evicted member
+    expect(readdDebtPhase(parseReaddDebts(kv), FAILED)).toBe('adding');
+
+    // pass 2: the node is back — the owed add completes without re-gating.
+    addDown = false;
+    await runReaddReplay(replayDeps());
+    expect(roster.has(STRANGER.toLowerCase())).toBe(true); // recovered, not stranded
+    expect(cursor).toBe(30);
+    expect(parseReaddDebts(kv)).toEqual({});
   });
 });

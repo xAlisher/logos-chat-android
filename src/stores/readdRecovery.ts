@@ -182,6 +182,7 @@ export function readdCursorAfter(
 //
 //   phase 'removing' — the add has NEVER been attempted for this request.
 //   phase 'adding'   — the remove HAS landed; only the add may still be owed.
+//   phase 'done'     — the add LANDED; only the cursor commit is outstanding.
 //
 // The local roster is the witness that disambiguates a resume, because native
 // writes it synchronously with each call: `removeGroupMember` DELETEs the row
@@ -189,8 +190,26 @@ export function readdCursorAfter(
 // the Add. So under 'removing', still-listed means the remove never landed;
 // under 'adding', listed again means the add landed and only the bookkeeping is
 // left. Either way we never re-remove someone we have already put back.
+//
+// 'done' EXISTS BECAUSE DELETING THE DEBT ON SUCCESS OPENED A SECOND WINDOW.
+// Clearing the debt and advancing the replay cursor are two separate writes, and
+// the debt was cleared FIRST (here) while the cursor is written by the replay
+// loop only after `apply` returns. A death in between left the roster resynced,
+// the debt gone and the cursor stale — so the next boot re-read the very same
+// persisted row, found no debt, ran the ordinary gate, saw the (just re-added)
+// requester sitting on the roster, and performed a SECOND destructive
+// remove-then-add on a member who had already recovered. The roster witness
+// cannot see this: a recovered member and a never-touched member look identical.
+//
+// So completion is RECORDED rather than forgotten, and the record outlives the
+// add until the cursor that supersedes it is durably committed. A 'done' debt is
+// a tombstone: it says "this exact msg_pk is already recovered — settle the row,
+// touch nothing". Pruning it is the cursor owner's job (`prunedReaddDebts`),
+// done only AFTER the cursor write returns, so the two records are never both
+// absent. Keeping a tombstone one pass too long costs nothing; dropping it one
+// pass too early ejects a member.
 
-export type ReaddPhase = 'removing' | 'adding';
+export type ReaddPhase = 'removing' | 'adding' | 'done';
 
 /** One outstanding debt: which request took it out, and how far it got. */
 export interface ReaddDebt {
@@ -231,7 +250,12 @@ export function parseReaddDebts(raw: string | null | undefined): ReaddDebts {
       if (d == null || typeof d !== 'object' || Array.isArray(d)) continue;
       const {msgPk, phase} = d as {msgPk?: unknown; phase?: unknown};
       if (typeof msgPk !== 'number' || !Number.isFinite(msgPk)) continue;
-      out[k] = {msgPk, phase: phase === 'adding' ? 'adding' : 'removing'};
+      // Whitelisted, and anything unrecognised reads as 'removing' — the phase
+      // that re-checks the roster before touching the node, i.e. the safe way to
+      // be wrong.
+      const p: ReaddPhase =
+        phase === 'adding' || phase === 'done' ? phase : 'removing';
+      out[k] = {msgPk, phase: p};
     }
     return out;
   } catch {
@@ -268,6 +292,31 @@ export function withoutReaddDebt(
   return rest;
 }
 
+/**
+ * Retire the tombstones the replay cursor has taken over.
+ *
+ * Call this ONLY once `writeCursor(throughMsgPk)` has returned: a row at or below
+ * a durable cursor is never fetched again, so its 'done' record has nothing left
+ * to protect. Doing it in the other order — or in place of the tombstone — is the
+ * exact bug this machinery exists for.
+ *
+ * Only 'done' is dropped. An unfinished debt at or below the cursor should be
+ * impossible (the cursor stops short of any request that failed), but if one ever
+ * appears, keeping it costs at most a skipped gate whereas dropping it costs a
+ * member their seat — so this errs toward keeping.
+ */
+export function prunedReaddDebts(
+  debts: ReaddDebts,
+  throughMsgPk: number,
+): ReaddDebts {
+  const out: Record<string, ReaddDebt> = {};
+  for (const [k, d] of Object.entries(debts)) {
+    if (d.phase === 'done' && d.msgPk <= throughMsgPk) continue;
+    out[k] = d;
+  }
+  return out;
+}
+
 export interface SettleDeps {
   /** Debts persisted by earlier passes (durable — this survives a restart). */
   readDebts: () => Promise<ReaddDebts>;
@@ -284,17 +333,23 @@ export interface SettleDeps {
   add: () => Promise<void>;
 }
 
-/** The add LANDED — a failed bookkeeping write must not re-run it. A debt left
- *  behind is inert anyway: it is pinned to this request's msg_pk, so it can never
- *  let a future readd1: skip the gate. */
-async function clearReaddDebt(
-  req: ReaddRequest,
-  deps: SettleDeps,
-): Promise<void> {
+/**
+ * The add LANDED — record it as a tombstone rather than forgetting it, because
+ * the replay cursor that supersedes this record has not been written yet.
+ *
+ * A failed bookkeeping write must not re-run the add, so this never throws. And
+ * failing here is safe in the same direction: the debt stays at 'adding', which
+ * a resume settles via the roster witness without touching the node. Either way
+ * SOMETHING durable still says we have already recovered this request.
+ *
+ * A leftover tombstone is inert: it is pinned to this request's msg_pk, so it
+ * can never let a future readd1: skip the gate.
+ */
+async function markReaddDone(req: ReaddRequest, deps: SettleDeps): Promise<void> {
   try {
-    await deps.writeDebts(withoutReaddDebt(await deps.readDebts(), req));
+    await deps.writeDebts(withReaddDebt(await deps.readDebts(), req, 'done'));
   } catch {
-    // inert leftover — see above
+    // stays 'adding' — see above
   }
 }
 
@@ -320,6 +375,12 @@ export async function settleReaddRequest(
   // the remove needs no separate confirmation.
   const stillListed = phase == null;
 
+  // Already recovered — we only got here because the cursor commit was lost. The
+  // roster cannot tell us this (a resynced member looks exactly like an untouched
+  // one), so the tombstone is the only thing standing between this row and a
+  // second remove-then-add. Settle it and touch nothing.
+  if (phase === 'done') return;
+
   if (phase == null) {
     if (!(await deps.gate())) return; // not our group / not the creator / stranger
     // Record the debt BEFORE the remove: a crash between the two must leave us
@@ -329,8 +390,8 @@ export async function settleReaddRequest(
   } else if (phase === 'adding' && (await deps.onRoster())) {
     // The remove landed and the requester is back on the roster: the add landed
     // too, and we died before the bookkeeping. Redoing it would kick a member who
-    // is already recovered. The only work left is clearing the debt.
-    await clearReaddDebt(req, deps);
+    // is already recovered. The only work left is recording the completion.
+    await markReaddDone(req, deps);
     return;
   }
 
@@ -347,7 +408,10 @@ export async function settleReaddRequest(
   }
 
   await deps.add(); // rejects → request AND debt stay pending for the next pass
-  await clearReaddDebt(req, deps);
+  // NOT a delete: the cursor that supersedes this record is written by the caller
+  // AFTER we return, and a death in between would otherwise replay the row with
+  // nothing left to say it was already recovered.
+  await markReaddDone(req, deps);
 }
 
 export interface ReplayDeps {

@@ -20,6 +20,7 @@ import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
 import {
   isOnRoster,
   parseReaddDebts,
+  prunedReaddDebts,
   resolveRoster,
   runReaddReplay,
   settleReaddRequest,
@@ -465,6 +466,22 @@ async function readReaddDebts(): Promise<ReaddDebts> {
 }
 
 /**
+ * Drop the completion tombstones the cursor has superseded. Best-effort: a
+ * leftover tombstone is inert (pinned to a msg_pk the cursor has already burned),
+ * so failing here is strictly better than risking a premature delete.
+ */
+async function pruneReaddDebts(throughMsgPk: number): Promise<void> {
+  try {
+    const debts = await readReaddDebts();
+    const kept = prunedReaddDebts(debts, throughMsgPk);
+    if (Object.keys(kept).length === Object.keys(debts).length) return;
+    await LogosChat.setSetting(READD_DEBTS_KEY, JSON.stringify(kept));
+  } catch {
+    // inert leftover — see above
+  }
+}
+
+/**
  * #350: the creator gate + remove-then-add for one persisted request.
  *
  * Resolves when the request is SETTLED — acted on, or legitimately declined (not
@@ -817,6 +834,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           apply: applyReaddRequest,
           writeCursor: async n => {
             await LogosChat.setSetting(READD_CURSOR_KEY, String(n));
+            // ONLY now. The cursor is durable, so every row at or below it is
+            // gone from `pendingReadds` and its completion tombstone has nothing
+            // left to protect. Retiring them earlier (or instead of writing one)
+            // is what let a death in this window replay a settled row and
+            // remove-then-add a member who had already been resynced.
+            await pruneReaddDebts(n);
           },
           limit: READD_REPLAY_LIMIT,
         });
