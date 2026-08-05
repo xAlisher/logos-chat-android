@@ -29,6 +29,7 @@ module.exports = {
     '<rootDir>/__tests__/bleFlood.test.ts',
     '<rootDir>/__tests__/bleFrag.test.ts',
     '<rootDir>/__tests__/pinSecurity.test.ts',
+    '<rootDir>/__tests__/groupRemoval.test.ts',
     '<rootDir>/__tests__/composerBudget.test.ts',
     '<rootDir>/__tests__/linkify.test.ts',
     '<rootDir>/__tests__/reactions.test.ts',

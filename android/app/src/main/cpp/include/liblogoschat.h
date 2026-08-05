@@ -74,6 +74,13 @@ char *logoschat_create_group(void *handle, const char *name, const char *desc);
 int logoschat_add_group_member(void *handle, const char *convo_id,
                                const char *peer_address);
 
+// #349: remove peer_address (hex) from group convo_id — creator-gated at the app
+// layer. Produces an MLS Remove commit that advances the epoch and ejects the
+// target (GroupV1, plain MLS — applied locally at once, unlike leave's de-mls
+// round). 0 on success, -1 on failure (see logoschat_last_error).
+int logoschat_remove_group_member(void *handle, const char *convo_id,
+                                  const char *peer_address);
+
 // Leave group convo_id: remove THIS client from the group's roster.
 // 0 on success, -1 on failure (see logoschat_last_error).
 //

@@ -178,6 +178,14 @@ interface LogosChatNative {
   createGroup(name: string, description: string | null): Promise<number>;
   /** Add a peer (by hex address) to a group. */
   addGroupMember(convoPk: number, peerAddress: string): Promise<null>;
+  /** #349: remove another member (by hex address) from a group. Produces an MLS
+   *  Remove commit that advances the epoch and locks the target out.
+   *  Creator-only is checked on this device (Kotlin `removeGroupMember` +
+   *  src/security/groupRemoval.ts) AND enforced by every receiver in the native
+   *  MLS layer, which drops a Remove commit from anyone but the group's recorded
+   *  creator. Unavailable on groups created before that native change (they
+   *  record no creator — fail-closed). See src/security/groupRemoval.ts. */
+  removeGroupMember(convoPk: number, peerAddress: string): Promise<null>;
   /** Group roster (app-side) as JSON GroupMember[]. */
   listGroupMembers(convoPk: number): Promise<string>;
   setNickname(convoPk: number, nickname: string): Promise<null>;

@@ -898,6 +898,45 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #349: remove another member (by hex address) from a group. The native call produces an
+   * MLS Remove commit that advances the epoch and locks the target out; we then drop them
+   * from the app-side roster.
+   *
+   * Creator-only is decided here by [decideRemove] — LOCAL policy on this device, which a
+   * modified client bypasses. What makes it hold is the receive-side gate in the native MLS
+   * layer, where every member drops a Remove commit that did not come from the group's
+   * recorded creator. Read the SECURITY note on [GroupRemovalPolicy.kt].
+   */
+  @ReactMethod
+  fun removeGroupMember(convoPk: Double, peerAddress: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("remove_group_member", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      val decision = decideRemove(d.createdByMe(pk), d.libConvoIdOf(pk), NodeRuntime.address, peerAddress)
+      val allowed =
+          when (decision) {
+            is RemoveDecision.Deny -> {
+              promise.reject("remove_group_member", decision.reason)
+              return@execute
+            }
+            is RemoveDecision.Allow -> decision
+          }
+      val rc = NodeBridge.chatRemoveGroupMember(c, allowed.libConvoId, allowed.target)
+      if (rc != 0) {
+        promise.reject("remove_group_member", NodeBridge.chatLastError())
+        return@execute
+      }
+      d.removeGroupMember(pk, allowed.target)
+      promise.resolve(null)
+    }
+  }
+
   /** Group roster (app-side, best-effort) as JSON: [{address,isSelf},…]. */
   @ReactMethod
   fun listGroupMembers(convoPk: Double, promise: Promise) {

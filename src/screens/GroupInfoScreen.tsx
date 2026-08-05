@@ -2,7 +2,7 @@
 // "Add member" reuses the polished Scan screen in addMember mode (camera + paste),
 // which calls addMember and pops back here.
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Text, TextInput, View, Pressable, FlatList, Switch, ToastAndroid, StyleSheet, Vibration} from 'react-native';
+import {Text, TextInput, View, Pressable, FlatList, Switch, ToastAndroid, StyleSheet, Vibration, Alert} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {useFocusEffect, useNavigation, useRoute} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
@@ -11,7 +11,7 @@ import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
-import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon, MeshIcon} from '../components/OverflowMenu';
+import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon, MeshIcon, TrashIcon} from '../components/OverflowMenu';
 import {LabelModal} from '../components/LabelModal';
 import {MeshMapModal} from '../components/MeshMapModal';
 import {InfoIcon} from '../components/InfoIcon';
@@ -20,6 +20,7 @@ import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatS
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {shortAddress} from '../native/LogosChat';
+import {canRemoveMember} from '../security/groupRemoval';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -35,6 +36,7 @@ export function GroupInfoScreen() {
   const membersRaw = useChatStore(s => s.members[convoPk]);
   const members = useMemo(() => membersRaw ?? [], [membersRaw]);
   const loadMembers = useChatStore(s => s.loadMembers);
+  const removeMember = useChatStore(s => s.removeMember);
   const setNickname = useChatStore(s => s.setNickname);
   const setVerified = useChatStore(s => s.setVerified);
   const mapMeshIdentity = useChatStore(s => s.mapMeshIdentity);
@@ -46,7 +48,11 @@ export function GroupInfoScreen() {
   const hydrateGroupStorage = useChatStore(s => s.hydrateGroupStorage);
   // The member a row-menu / label editor is acting on.
   const [storageInfoOpen, setStorageInfoOpen] = useState(false); // #344 (i) explainer
-  const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
+  const [menuMember, setMenuMember] = useState<{
+    address: string;
+    label: string | null;
+    isSelf: boolean;
+  } | null>(null);
   const [menuMemberY, setMenuMemberY] = useState(0); // #157: tap Y to anchor the menu
   const [labelMember, setLabelMember] = useState<{
     address: string;
@@ -144,12 +150,20 @@ export function GroupInfoScreen() {
         disabled={item.isSelf}
         onPress={e => {
           setMenuMemberY(e.nativeEvent.pageY);
-          setMenuMember({address: item.address, label: labelFor(item.address)});
+          setMenuMember({
+            address: item.address,
+            label: labelFor(item.address),
+            isSelf: item.isSelf,
+          });
         }}
         onLongPress={e => {
           Vibration.vibrate(18); // #131: hold a roster member for its menu
           setMenuMemberY(e.nativeEvent.pageY); // #157
-          setMenuMember({address: item.address, label: labelFor(item.address)});
+          setMenuMember({
+            address: item.address,
+            label: labelFor(item.address),
+            isSelf: item.isSelf,
+          });
         }}
         delayLongPress={300}
         testID={`member-${item.address}`}>
@@ -236,6 +250,44 @@ export function GroupInfoScreen() {
                 meshPubkey: meshMapOf(menuMember.address)?.pubkey ?? null,
               }),
           },
+          // #349: creator-only — eject a member. Destructive → confirm first.
+          // The predicate decides the AFFORDANCE only; the boundary is enforced by
+          // every receiver in the native MLS layer (see src/security/groupRemoval.ts).
+          // A group created before that change refuses removal — the native error is
+          // surfaced verbatim rather than pretending it worked.
+          ...(canRemoveMember({
+            createdByMe: convo?.createdByMe ?? false,
+            isSelf: menuMember.isSelf,
+          })
+            ? [
+                {
+                  key: 'remove',
+                  label: 'Remove from group',
+                  destructive: true,
+                  icon: <TrashIcon color={colors.unread} />,
+                  onPress: () => {
+                    const {address, label} = menuMember;
+                    Alert.alert(
+                      'Remove from group?',
+                      `${label ?? shortAddress(address)} will lose access to new messages. This can't be undone from their side — they'd need to be re-added.`,
+                      [
+                        {text: 'Cancel', style: 'cancel'},
+                        {
+                          text: 'Remove',
+                          style: 'destructive',
+                          onPress: () =>
+                            removeMember(convoPk, address).catch(e =>
+                              useNodeStore.setState({
+                                error: `remove failed: ${e?.message ?? e}`,
+                              }),
+                            ),
+                        },
+                      ],
+                    );
+                  },
+                },
+              ]
+            : []),
         ];
 
   // Resolve-or-create the 1:1 with `address` and open it.

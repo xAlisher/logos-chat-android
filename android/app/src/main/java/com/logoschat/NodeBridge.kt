@@ -108,6 +108,7 @@ object NodeBridge {
 
   /** Add peerAddress to group convoId (M2'). 0 on success, -1 on failure. */
   external fun chatAddGroupMember(handle: Long, convoId: String, peerAddress: String): Int
+  external fun chatRemoveGroupMember(handle: Long, convoId: String, peerAddress: String): Int
 
   /**
    * Self-removal from a group (#108). rc==0 means the removal CONSENSUS ROUND
