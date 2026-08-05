@@ -1221,32 +1221,29 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   // #292/#383: store catch-up (called on app foreground). #383: coalesced (single-flight +
   // 15s cooldown) so repeated foreground transitions don't pile up redundant pulls, and a
   // failed pull is retried with exponential backoff + jitter (only while foreground).
-  private val catchup = CatchupCoordinator()
   private val catchupHandler =
       Handler(HandlerThread("logoschat-catchup").apply { start() }.looper)
+  private val catchupRunner =
+      CatchupRunner(
+          nowMs = { android.os.SystemClock.elapsedRealtime() },
+          rand = { Math.random() },
+          foreground = { ChatRepo.appForeground },
+          pull = { NodeRuntime.catchupNow() },
+          schedule = { delayMs, task -> catchupHandler.postDelayed({ task() }, delayMs) },
+          onOutcome = { ok, took, retryInMs, failures ->
+            if (ok) {
+              Log.i("logos-chat-catchup", "catch-up ok in ${took}ms")
+            } else {
+              Log.w(
+                  "logos-chat-catchup",
+                  "catch-up failed (${took}ms), attempt $failures — retry in ${retryInMs}ms")
+            }
+          },
+      )
 
   @ReactMethod
   fun catchupNow() {
-    runCatchup()
-  }
-
-  private fun runCatchup() {
-    if (!catchup.tryStart(android.os.SystemClock.elapsedRealtime())) return // in-flight or recent
-    catchupHandler.post {
-      val t0 = android.os.SystemClock.elapsedRealtime()
-      val ok = NodeRuntime.catchupNow()
-      val took = android.os.SystemClock.elapsedRealtime() - t0
-      if (ok) {
-        catchup.onSuccess(android.os.SystemClock.elapsedRealtime())
-        Log.i("logos-chat-catchup", "catch-up ok in ${took}ms")
-      } else {
-        val delay = catchup.onFailure(Math.random())
-        Log.w("logos-chat-catchup", "catch-up failed (${took}ms), attempt ${catchup.failures()} — retry in ${delay}ms")
-        // #383: back off + retry, but only while the app is foreground (background delivery is
-        // the node/FGS's job); the capped backoff self-limits the retry rate.
-        if (ChatRepo.appForeground) catchupHandler.postDelayed({ runCatchup() }, delay)
-      }
-    }
+    catchupRunner.start()
   }
 
   @ReactMethod
