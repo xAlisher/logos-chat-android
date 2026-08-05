@@ -312,6 +312,29 @@ Java_com_logoschat_NodeBridge_chatAddGroupMember(JNIEnv *env, jobject thiz, jlon
   return rc;
 }
 
+// #349: removal of ANOTHER member. rc==0 means the MLS Remove commit was
+// produced + published and applied locally (GroupV1 plain MLS — unlike leave's
+// async de-mls round).
+//
+// SECURITY: this verb performs no authorization of its own, and neither does
+// the app-side check on the CALLING device (GroupRemovalPolicy.kt) — an
+// instrumented client bypasses both. Authorization is enforced by every
+// RECEIVER inside liblogoschat.so: a Commit carrying Remove proposals is
+// dropped unless the committer is the creator recorded in the MLS group
+// context (libchat group_v1.rs `removes_authorized`). Callers must not read
+// rc==0 here as "the group accepted it".
+JNIEXPORT jint JNICALL
+Java_com_logoschat_NodeBridge_chatRemoveGroupMember(JNIEnv *env, jobject thiz, jlong handle,
+                                                    jstring convoId, jstring peerAddress) {
+  (void)thiz;
+  const char *c = (*env)->GetStringUTFChars(env, convoId, 0);
+  const char *p = (*env)->GetStringUTFChars(env, peerAddress, 0);
+  int rc = logoschat_remove_group_member((void *)handle, c, p);
+  (*env)->ReleaseStringUTFChars(env, convoId, c);
+  (*env)->ReleaseStringUTFChars(env, peerAddress, p);
+  return rc;
+}
+
 // Self-removal from a group (#108). rc==0 means the removal CONSENSUS ROUND was
 // opened and published — NOT that we are already out; the ejecting commit lands
 // asynchronously. Can legitimately fail while the group is mid-round.
