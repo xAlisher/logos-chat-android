@@ -2,7 +2,7 @@
 // "Add member" reuses the polished Scan screen in addMember mode (camera + paste),
 // which calls addMember and pops back here.
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Text, TextInput, View, Pressable, FlatList, Switch, ToastAndroid, StyleSheet, Vibration} from 'react-native';
+import {Text, TextInput, View, Pressable, FlatList, Switch, ToastAndroid, StyleSheet, Vibration, Alert} from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import {useFocusEffect, useNavigation, useRoute} from '@react-navigation/native';
 import type {RouteProp} from '@react-navigation/native';
@@ -11,7 +11,7 @@ import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {HexAvatar} from '../components/HexAvatar';
 import {VerifiedBadge} from '../components/VerifiedBadge';
-import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon, MeshIcon} from '../components/OverflowMenu';
+import {OverflowMenu, TagIcon, CopyIcon, MessageCircleIcon, MeshIcon, TrashIcon} from '../components/OverflowMenu';
 import {LabelModal} from '../components/LabelModal';
 import {MeshMapModal} from '../components/MeshMapModal';
 import {InfoIcon} from '../components/InfoIcon';
@@ -35,6 +35,7 @@ export function GroupInfoScreen() {
   const membersRaw = useChatStore(s => s.members[convoPk]);
   const members = useMemo(() => membersRaw ?? [], [membersRaw]);
   const loadMembers = useChatStore(s => s.loadMembers);
+  const removeMember = useChatStore(s => s.removeMember);
   const setNickname = useChatStore(s => s.setNickname);
   const setVerified = useChatStore(s => s.setVerified);
   const mapMeshIdentity = useChatStore(s => s.mapMeshIdentity);
@@ -236,6 +237,37 @@ export function GroupInfoScreen() {
                 meshPubkey: meshMapOf(menuMember.address)?.pubkey ?? null,
               }),
           },
+          // #349: creator-only — eject a member. Destructive → confirm first.
+          ...(convo?.createdByMe
+            ? [
+                {
+                  key: 'remove',
+                  label: 'Remove from group',
+                  destructive: true,
+                  icon: <TrashIcon color={colors.unread} />,
+                  onPress: () => {
+                    const {address, label} = menuMember;
+                    Alert.alert(
+                      'Remove from group?',
+                      `${label ?? shortAddress(address)} will lose access to new messages. This can't be undone from their side — they'd need to be re-added.`,
+                      [
+                        {text: 'Cancel', style: 'cancel'},
+                        {
+                          text: 'Remove',
+                          style: 'destructive',
+                          onPress: () =>
+                            removeMember(convoPk, address).catch(e =>
+                              useNodeStore.setState({
+                                error: `remove failed: ${e?.message ?? e}`,
+                              }),
+                            ),
+                        },
+                      ],
+                    );
+                  },
+                },
+              ]
+            : []),
         ];
 
   // Resolve-or-create the 1:1 with `address` and open it.

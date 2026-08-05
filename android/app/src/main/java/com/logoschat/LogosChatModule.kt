@@ -898,6 +898,42 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #349: remove another member (by hex address) from a group. Creator-gated
+   * (mirrors [recreateGroup]) — only the group creator may eject a member. The
+   * native call produces an MLS Remove commit that advances the epoch and locks
+   * the target out; we then drop them from the app-side roster.
+   */
+  @ReactMethod
+  fun removeGroupMember(convoPk: Double, peerAddress: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.reject("remove_group_member", "node not started")
+        return@execute
+      }
+      val pk = convoPk.toLong()
+      val d = ChatRepo.requireDb()
+      if (!d.createdByMe(pk)) {
+        promise.reject("remove_group_member", "only the group creator can remove members")
+        return@execute
+      }
+      val libConvoId = d.libConvoIdOf(pk)
+      if (libConvoId == null) {
+        promise.reject("remove_group_member", "group not bound")
+        return@execute
+      }
+      val addr = peerAddress.trim().lowercase()
+      val rc = NodeBridge.chatRemoveGroupMember(c, libConvoId, addr)
+      if (rc != 0) {
+        promise.reject("remove_group_member", NodeBridge.chatLastError())
+        return@execute
+      }
+      d.removeGroupMember(pk, addr)
+      promise.resolve(null)
+    }
+  }
+
   /** Group roster (app-side, best-effort) as JSON: [{address,isSelf},…]. */
   @ReactMethod
   fun listGroupMembers(convoPk: Double, promise: Promise) {

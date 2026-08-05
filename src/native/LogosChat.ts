@@ -178,6 +178,9 @@ interface LogosChatNative {
   createGroup(name: string, description: string | null): Promise<number>;
   /** Add a peer (by hex address) to a group. */
   addGroupMember(convoPk: number, peerAddress: string): Promise<null>;
+  /** #349: remove another member (by hex address) from a group. Creator-gated
+   *  native-side; produces an MLS Remove commit that locks the target out. */
+  removeGroupMember(convoPk: number, peerAddress: string): Promise<null>;
   /** Group roster (app-side) as JSON GroupMember[]. */
   listGroupMembers(convoPk: number): Promise<string>;
   setNickname(convoPk: number, nickname: string): Promise<null>;

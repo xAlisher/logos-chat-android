@@ -176,6 +176,8 @@ interface ChatState {
   createGroup: (name: string, description?: string) => Promise<number>;
   /** Add a peer (by hex address) to a group. */
   addMember: (convoPk: number, address: string) => Promise<void>;
+  /** #349: creator-only — eject a member (MLS Remove commit locks them out). */
+  removeMember: (convoPk: number, address: string) => Promise<void>;
   /** Load a group's roster (app-side, best-effort). */
   loadMembers: (convoPk: number) => Promise<void>;
   /** #168 (Phase 2): map/unmap a Logos address ↔ a MeshCore identity, then reload the group roster. */
@@ -612,6 +614,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       get().setMemberStatus(convoPk, address, 'not-joined');
     }, JOIN_TIMEOUT_MS);
     (pendingInvites[convoPk] ??= []).push({address: lower, timer});
+    await get().loadMembers(convoPk);
+    await get().refreshConversations();
+  },
+
+  // #349: creator-only removal. The native side (creator-gated again there)
+  // produces an MLS Remove commit that advances the epoch and locks the target
+  // out; we then refresh the roster. On failure the error surfaces to the caller.
+  removeMember: async (convoPk: number, address: string) => {
+    await LogosChat.removeGroupMember(convoPk, address.toLowerCase());
     await get().loadMembers(convoPk);
     await get().refreshConversations();
   },
