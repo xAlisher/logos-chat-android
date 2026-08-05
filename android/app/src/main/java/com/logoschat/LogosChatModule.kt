@@ -130,7 +130,8 @@ class EventCallbackManager {
           outcome.text.startsWith("pin1:") ||
           outcome.text.startsWith("leave1:") ||
           outcome.text.startsWith("pfp1:") ||
-          outcome.text.startsWith("gcfg1:"))
+          outcome.text.startsWith("gcfg1:") ||
+          outcome.text.startsWith("readd1:"))
           return
       val resumed = isResumed()
       if (resumed && ChatRepo.activeConvoPk == outcome.convoPk) return

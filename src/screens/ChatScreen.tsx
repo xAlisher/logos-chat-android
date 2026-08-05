@@ -649,6 +649,7 @@ export function ChatScreen() {
   const loadMoreMessages = useChatStore(s => s.loadMoreMessages);
   const loadingMore = useChatStore(s => s.loadingMore[convoPk]) ?? false;
   const addMember = useChatStore(s => s.addMember);
+  const requestReadd = useChatStore(s => s.requestReadd);
   const send = useChatStore(s => s.send);
   const sendReaction = useChatStore(s => s.sendReaction); // #264
   const pinMessage = useChatStore(s => s.pinMessage); // #266
@@ -1896,27 +1897,29 @@ export function ChatScreen() {
                     : undefined
                 }
                 // #195: a stuck invite offers a one-tap re-invite for its address.
-                // #348: a desync notice offers "Ask to be re-added" — pings a
-                // still-reachable member over the 1:1 (full auto-recovery is #350).
+                // #350: a desync notice offers one-tap "Ask to be re-added" — it
+                // broadcasts a readd1: request to the group's members; the creator's
+                // app auto does remove-then-add and a fresh Welcome resyncs us.
                 actionLabel={
                   info === 'join-failed'
                     ? 'Re-invite'
-                    : info === 'desynced' && item.sys.infoAddress != null
+                    : info === 'desynced'
                     ? 'Ask to be re-added'
                     : undefined
                 }
                 onAction={
                   info === 'join-failed' && item.sys.infoAddress != null
                     ? () => onReinvite(item.sys.infoAddress!)
-                    : info === 'desynced' && item.sys.infoAddress != null
+                    : info === 'desynced'
                     ? () => {
-                        const gname =
-                          convo != null
-                            ? convoDisplayName(convo)
-                            : route.params.convoName;
-                        openDirectWith(
-                          item.sys.infoAddress!,
-                          `I've fallen out of sync in "${gname}" — could you remove and re-add me?`,
+                        requestReadd(convoPk).catch(e =>
+                          useNodeStore.setState({
+                            error: `re-add request failed: ${e?.message ?? e}`,
+                          }),
+                        );
+                        ToastAndroid.show(
+                          'Re-add requested — the group creator will resync you',
+                          ToastAndroid.SHORT,
                         );
                       }
                     : undefined

@@ -16,6 +16,7 @@ import {isMediaContent, mediaLabel} from '../messages/media';
 import {encodePin} from '../messages/pins';
 import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
+import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -178,6 +179,10 @@ interface ChatState {
   addMember: (convoPk: number, address: string) => Promise<void>;
   /** #349: creator-only — eject a member (MLS Remove commit locks them out). */
   removeMember: (convoPk: number, address: string) => Promise<void>;
+  /** #350: I'm stuck (epoch-desynced) in group `convoPk` — ask to be re-added.
+   *  Broadcasts a `readd1:` marker over 1:1s to every group member; only the
+   *  creator's app acts on it (creator-gated remove-then-add). */
+  requestReadd: (convoPk: number) => Promise<void>;
   /** Load a group's roster (app-side, best-effort). */
   loadMembers: (convoPk: number) => Promise<void>;
   /** #168 (Phase 2): map/unmap a Logos address ↔ a MeshCore identity, then reload the group roster. */
@@ -628,6 +633,33 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await LogosChat.removeGroupMember(convoPk, address.toLowerCase());
     await get().loadMembers(convoPk);
     await get().refreshConversations();
+  },
+
+  // #350: broadcast a re-add request to the group's members over 1:1s. Only the
+  // creator can act (creator-gated remove-then-add on receipt); everyone else
+  // ignores the marker. We target every member because the app doesn't know who
+  // the creator is (precise single-target addressing is the #433 follow-up). The
+  // 1:1s are unaffected by the group's MLS desync, so this still gets through.
+  requestReadd: async (convoPk: number) => {
+    const s = get();
+    const group = s.conversations[convoPk];
+    const libConvoId = group?.libConvoId;
+    if (libConvoId == null) return; // not bound → nothing to reference
+    const me = useNodeStore.getState().myAddress?.toLowerCase();
+    const roster = s.members[convoPk] ?? [];
+    const marker = encodeReadd(libConvoId);
+    for (const m of roster) {
+      const addr = m.address.toLowerCase();
+      if (m.isSelf || addr === me) continue;
+      try {
+        // resolve-or-create the 1:1 (never navigates), then send silently
+        const dmPk = await LogosChat.createConversation(m.address, null);
+        await get().send(dmPk, marker);
+      } catch {
+        // a member we can't open a 1:1 with — skip; another member (the creator)
+        // will still receive it.
+      }
+    }
   },
 
   loadMembers: async (convoPk: number) => {
@@ -2021,6 +2053,49 @@ addLogosChatListener(e => {
                 ? 'Storage turned off — text & voice only'
                 : 'Storage turned on — media enabled',
             );
+        }
+      }
+    }
+    // #350: an inbound readd1: marker (over a 1:1) is a stuck member asking to be
+    // re-added to a group. ONLY the group's creator acts — creator-gated
+    // remove-then-add gives them a fresh Welcome and resyncs them. Everyone else
+    // ignores it. Never a bubble (native + timeline suppression, like gcfg1:).
+    if (
+      e.kind === 'message' &&
+      e.direction === 'in' &&
+      e.convoPk != null &&
+      e.detail != null &&
+      isReaddContent(e.detail)
+    ) {
+      const libConvoId = parseReadd(e.detail);
+      if (libConvoId != null) {
+        const st = useChatStore.getState();
+        // the requester is the 1:1 sender
+        const requester = (
+          e.sender ??
+          st.conversations[e.convoPk]?.peerAddress ??
+          ''
+        ).toLowerCase();
+        const group = Object.values(st.conversations).find(
+          c => c.isGroup && c.libConvoId === libConvoId,
+        );
+        // creator-gated; only re-add someone actually on our roster (never a stranger)
+        const roster = group != null ? st.members[group.convoPk] ?? [] : [];
+        const wasMember = roster.some(m => m.address.toLowerCase() === requester);
+        if (group != null && group.createdByMe && requester !== '' && wasMember) {
+          const groupPk = group.convoPk;
+          (async () => {
+            try {
+              await useChatStore.getState().removeMember(groupPk, requester);
+            } catch {
+              // already gone from our view — fall through to the re-add
+            }
+            try {
+              await useChatStore.getState().addMember(groupPk, requester);
+            } catch (err: any) {
+              useNodeStore.setState({error: `re-add failed: ${err?.message ?? err}`});
+            }
+          })();
         }
       }
     }

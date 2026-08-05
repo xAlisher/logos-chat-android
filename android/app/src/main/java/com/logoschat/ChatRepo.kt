@@ -497,7 +497,7 @@ object ChatRepo {
     // messages — they persist + sync + reload JS like any message, but must not bump
     // unread (notifyIfNeeded likewise skips them). Everything else flows normally.
     val isMarker =
-        content.startsWith("react1:") || content.startsWith("pin1:") || content.startsWith("leave1:")
+        content.startsWith("react1:") || content.startsWith("pin1:") || content.startsWith("leave1:") || content.startsWith("readd1:")
     if (activeConvoPk != convoPk && !isMarker) d.bumpUnread(convoPk)
     Log.i(TAG, "persisted inbound msg_pk=$msgPk convo=$convoPk (${content.length} chars) BEFORE forward")
     return Outcome("message", convoPk, "in", content, senderAccount)
