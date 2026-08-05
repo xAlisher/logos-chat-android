@@ -1,5 +1,6 @@
 package com.logoschat
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,5 +43,29 @@ class NotifStateTest {
     assertFalse(s.shouldPost(snap("running", 1, 1)))
     s.reset()
     assertTrue(s.shouldPost(snap("running", 1, 1))) // baseline forgotten → posts again
+  }
+
+  // #381: FGS-timeout notice — includes the hours ran when >= 1h, generic otherwise.
+  @Test
+  fun fgsPausedNotice_reportsHoursWhenKnown() {
+    assertEquals(
+        "Background delivery paused after 6h. Open Peers to catch up.",
+        fgsPausedNotice(6 * 60 * 60 * 1000L))
+    assertEquals(
+        "Background delivery paused after 1h. Open Peers to catch up.",
+        fgsPausedNotice(90 * 60 * 1000L)) // 1.5h → floors to 1h
+    assertEquals(
+        "Background delivery paused. Open Peers to catch up.", fgsPausedNotice(0L))
+    assertEquals(
+        "Background delivery paused. Open Peers to catch up.", fgsPausedNotice(59 * 60 * 1000L))
+  }
+
+  // #381: pre-cap heads-up — a possibility ("may"), and it tells the user the fix (open the app).
+  @Test
+  fun fgsWarnNotice_isHedgedAndActionable() {
+    val msg = fgsWarnNotice()
+    assertTrue("hedged, since remaining quota is unknown", msg.contains("may"))
+    assertTrue("names the fix", msg.contains("Open the app"))
+    assertTrue("about background syncing/notifications", msg.contains("background syncing"))
   }
 }

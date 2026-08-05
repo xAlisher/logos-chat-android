@@ -29,3 +29,25 @@ class NotifState {
     last = null
   }
 }
+
+/**
+ * #381 — user-facing text when Android 15+ times out the dataSync foreground service (a ~6h/day
+ * cap). Pure so it's unit-testable. [activeMs] is how long the FGS ran before the timeout.
+ */
+fun fgsPausedNotice(activeMs: Long): String {
+  val hours = activeMs / 3_600_000L
+  return if (hours >= 1) {
+    "Background delivery paused after ${hours}h. Open Peers to catch up."
+  } else {
+    "Background delivery paused. Open Peers to catch up."
+  }
+}
+
+/**
+ * #381 — proactive heads-up posted shortly BEFORE the dataSync cap is likely to trip, so the user
+ * can reopen the app before delivery actually pauses. Deliberately worded as a possibility: Android
+ * never exposes the remaining quota and the ~6h cap is cumulative over a rolling 24h, so this is a
+ * time-based best effort — the accurate signal is [fgsPausedNotice] when the OS really times out.
+ */
+fun fgsWarnNotice(): String =
+    "Peers may pause background syncing and notifications soon. Open the app to keep receiving messages."
