@@ -16,6 +16,7 @@ import {LabelModal} from '../components/LabelModal';
 import {MeshMapModal} from '../components/MeshMapModal';
 import {InfoIcon} from '../components/InfoIcon';
 import {StorageInfoModal} from '../components/StorageInfoModal';
+import {STORAGE_OFF_CAPTION, storageCaption} from '../messages/storageCopy';
 import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatStore';
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
@@ -350,9 +351,7 @@ export function GroupInfoScreen() {
             {/* #344: the Switch shows storage ENABLED (media on) — ON is the default.
                 The stored flag is storageOff (true = OFF), so display/write the inverse. */}
             <Text style={[type.caption, {color: colors.textDim}]}>
-              {storageOff
-                ? 'No photos, GIFs or videos — everything else (text, voice, location, reactions, replies) works as normal, and nothing about this group rides the Logos Storage node.'
-                : 'Send photos, GIFs and videos. The Storage node relays them end-to-end encrypted — it can tell media moved here, never what\'s in it.'}
+              {storageCaption(storageOff)}
             </Text>
           </View>
           <Switch
@@ -375,7 +374,7 @@ export function GroupInfoScreen() {
                 <InfoIcon size={15} color={colors.textFaint} />
               </View>
               <Text style={[type.caption, {color: colors.textDim}]}>
-                No photos, GIFs or videos — everything else (text, voice, location, reactions, replies) works as normal, and nothing about this group rides the Logos Storage node.
+                {STORAGE_OFF_CAPTION}
               </Text>
             </View>
           </Pressable>

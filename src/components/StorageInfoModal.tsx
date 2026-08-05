@@ -5,6 +5,7 @@
 import React from 'react';
 import {Modal, Pressable, ScrollView, Text, View, StyleSheet} from 'react-native';
 import {colors, type, spacing, radii} from '../theme';
+import {STORAGE_OFF_MODAL_TAIL} from '../messages/storageCopy';
 import {XIcon} from './XIcon';
 
 function Para({children}: {children: React.ReactNode}) {
@@ -58,10 +59,8 @@ export function StorageInfoModal({
               node</Text> — they ride the encrypted messaging path directly.
             </Para>
             <Para>
-              <Text style={styles.em}>Turn Storage off</Text> for a group and no
-              photos, GIFs or videos are sent — so nothing about it rides the
-              Storage node. Everything else (text, voice, location, reactions,
-              replies) works as normal, over the encrypted delivery network.
+              <Text style={styles.em}>Turn Storage off</Text>
+              {STORAGE_OFF_MODAL_TAIL}
             </Para>
           </ScrollView>
 
