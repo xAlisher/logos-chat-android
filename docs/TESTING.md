@@ -32,6 +32,25 @@ identity on the device.
     for hostile situations. And **three wrong PIN attempts also wipe.** Don't test the
     duress/wipe features on a device whose identity you want to keep.
 
+## What to test in this release
+
+Newest release first. These are the things that **changed** in each release — worth
+poking hardest right after you update. (For the evergreen checklist, see the next
+section.)
+
+### v0.8.6-reliability
+- **Background delivery heads-up.** Leave Peers running in the background for a long
+  stretch (screen off, other apps). On Android 15+ you should get a notice *"…background
+  syncing may pause soon. Open the app…"* about an hour before the OS's daily background
+  limit; if delivery does pause, reopening Peers should catch you up. Report if it goes
+  silent with no notice, or nags too early.
+- **Weak-network resilience.** On flaky wifi/cell, messages should still catch up when you
+  reopen, without noticeably draining the battery.
+- **Sending several videos in a row.** Pick/attach a few videos quickly — should stay stable
+  (no crash, no out-of-memory), one compressing at a time.
+- **Honest storage wording.** Create a group → the toggle now reads **"Media via Storage
+  node"**; flip it and read the description. Report anything that feels misleading.
+
 ## What to test (most valuable first)
 
 ### 1. Basic messaging over the internet (Logos)
