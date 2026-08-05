@@ -453,6 +453,7 @@ import {
   owesReadd,
   parseReaddDebts,
   readdDebtKey,
+  readdDebtPhase,
   settleReaddRequest,
   withReaddDebt,
   withoutReaddDebt,
@@ -466,6 +467,7 @@ const REQ: ReaddRequest = {
   requester: STUCK.toLowerCase(),
 };
 
+
 describe('readd debts (#350)', () => {
   it('is keyed per group and requester', () => {
     expect(readdDebtKey(REQ)).not.toBe(
@@ -477,14 +479,20 @@ describe('readd debts (#350)', () => {
   });
 
   it('only counts the debt taken out for THIS request', () => {
-    const debts = withReaddDebt({}, REQ);
+    const debts = withReaddDebt({}, REQ, 'removing');
     expect(owesReadd(debts, REQ)).toBe(true);
+    expect(readdDebtPhase(debts, REQ)).toBe('removing');
     // a LATER request from the same peer for the same group is gated afresh
     expect(owesReadd(debts, {...REQ, msgPk: 22})).toBe(false);
+    expect(readdDebtPhase(debts, {...REQ, msgPk: 22})).toBeNull();
+  });
+
+  it('carries the phase the remove/add sequence reached', () => {
+    expect(readdDebtPhase(withReaddDebt({}, REQ, 'adding'), REQ)).toBe('adding');
   });
 
   it('clears cleanly', () => {
-    expect(withoutReaddDebt(withReaddDebt({}, REQ), REQ)).toEqual({});
+    expect(withoutReaddDebt(withReaddDebt({}, REQ, 'adding'), REQ)).toEqual({});
   });
 
   it('survives a missing or corrupt KV value', () => {
@@ -492,18 +500,36 @@ describe('readd debts (#350)', () => {
     expect(parseReaddDebts('')).toEqual({});
     expect(parseReaddDebts('not json')).toEqual({});
     expect(parseReaddDebts('[1,2]')).toEqual({});
-    expect(parseReaddDebts('{"a":"x","b":3}')).toEqual({b: 3});
-    expect(parseReaddDebts(JSON.stringify(withReaddDebt({}, REQ)))).toEqual(
-      withReaddDebt({}, REQ),
-    );
+    expect(parseReaddDebts('{"a":"x","b":{"msgPk":"n"},"c":null}')).toEqual({});
+    const debts = withReaddDebt({}, REQ, 'adding');
+    expect(parseReaddDebts(JSON.stringify(debts))).toEqual(debts);
+  });
+
+  // A debt written by the pre-phase build only certified that the remove had been
+  // BEGUN. Reading it as 'removing' sends the resume through the roster check,
+  // which is the safe direction.
+  it('reads a legacy bare-number debt as the pre-remove phase', () => {
+    const legacy = parseReaddDebts(JSON.stringify({[readdDebtKey(REQ)]: 21}));
+    expect(owesReadd(legacy, REQ)).toBe(true);
+    expect(readdDebtPhase(legacy, REQ)).toBe('removing');
   });
 });
 
 describe('settleReaddRequest (#350)', () => {
-  function harness(opts: {onRoster?: () => boolean; addFails?: () => boolean} = {}) {
-    // The node's view: the roster row is DELETED by a successful remove, exactly
-    // as ChatDb.removeGroupMember does.
-    let onRoster = true;
+  function harness(
+    opts: {
+      gate?: () => boolean;
+      addFails?: () => boolean;
+      removeFails?: () => boolean;
+      /** Kill the "process" the instant the native add has landed — i.e. before
+       *  the debt is cleared and before the replay cursor is written. */
+      dieAfterAdd?: boolean;
+    } = {},
+  ) {
+    // The node's view: `removeGroupMember` DELETEs the roster row and
+    // `addGroupMember` re-records it, both synchronously with the native call —
+    // so this one flag is the same witness the real `onRoster` dep reads.
+    let listed = true;
     let kv: string | null = null;
     const calls: string[] = [];
     const deps = {
@@ -511,50 +537,74 @@ describe('settleReaddRequest (#350)', () => {
       writeDebts: async (d: ReaddDebts) => {
         kv = JSON.stringify(d);
       },
-      gate: jest.fn(async () => (opts.onRoster ?? (() => onRoster))()),
+      gate: jest.fn(async () => (opts.gate ?? (() => listed))()),
+      onRoster: jest.fn(async () => listed),
       remove: jest.fn(async () => {
         calls.push('remove');
-        if (!onRoster) throw new Error('not a member');
-        onRoster = false;
+        if (opts.removeFails?.()) throw new Error('node not started');
+        if (!listed) throw new Error('not a member');
+        listed = false;
       }),
       add: jest.fn(async () => {
         calls.push('add');
         if (opts.addFails?.()) throw new Error('node not started');
-        onRoster = true;
+        listed = true;
+        if (opts.dieAfterAdd) throw new Error('PROCESS DEATH');
       }),
     };
-    return {deps, calls, kv: () => kv, isOnRoster: () => onRoster};
+    return {deps, calls, kv: () => kv, isListed: () => listed};
   }
 
   it('gates, then remove-then-adds, and owes nothing afterwards', async () => {
-    const {deps, calls, kv, isOnRoster} = harness();
+    const {deps, calls, kv, isListed} = harness();
     await settleReaddRequest(REQ, deps);
     expect(calls).toEqual(['remove', 'add']);
-    expect(isOnRoster()).toBe(true);
+    expect(isListed()).toBe(true);
     expect(parseReaddDebts(kv())).toEqual({}); // debt cleared
   });
 
   it('never touches the node when the gate declines — and owes nothing', async () => {
-    const {deps, calls, kv} = harness({onRoster: () => false});
+    const {deps, calls, kv} = harness({gate: () => false});
     await settleReaddRequest(REQ, deps);
     expect(calls).toEqual([]);
     expect(parseReaddDebts(kv())).toEqual({});
   });
 
-  // THE REGRESSION TEST: the app died (or the node was down) between the remove
-  // and the add. The retry must NOT re-gate — the roster no longer lists them.
-  it('re-adds after a failed add, even though the roster no longer lists them', async () => {
+  // THE REGRESSION TEST (Codex P2 on PR #436): the add SUCCEEDED and the process
+  // died before either completion write — the debt clear and the replay cursor.
+  // The next boot therefore sees the same debt and the same row and re-settles
+  // the request. It must NOT remove-then-add again: that ejects a member who has
+  // just been resynced, and only a second Welcome would bring them back.
+  it('does not re-eject a member whose add landed before a crash', async () => {
+    const {deps, calls, kv, isListed} = harness({dieAfterAdd: true});
+    await expect(settleReaddRequest(REQ, deps)).rejects.toThrow('PROCESS DEATH');
+    expect(calls).toEqual(['remove', 'add']);
+    expect(isListed()).toBe(true); // the member IS back — the add landed
+    expect(owesReadd(parseReaddDebts(kv()), REQ)).toBe(true); // ...but we crashed
+
+    // the next boot / foreground pass, replaying the very same row
+    await expect(settleReaddRequest(REQ, deps)).resolves.toBeUndefined();
+    expect(calls).toEqual(['remove', 'add']); // NOT remove,add,remove,add
+    expect(deps.remove).toHaveBeenCalledTimes(1);
+    expect(isListed()).toBe(true);
+    expect(parseReaddDebts(kv())).toEqual({}); // and the debt is finally settled
+  });
+
+  // The other half of that crash window: the app died between the remove and the
+  // add. The retry must NOT re-gate (the roster no longer lists them) and must
+  // NOT repeat the remove — only the owed add is left.
+  it('re-adds after a failed add without repeating the remove', async () => {
     let down = true;
-    const {deps, calls, kv, isOnRoster} = harness({addFails: () => down});
+    const {deps, calls, kv, isListed} = harness({addFails: () => down});
     await expect(settleReaddRequest(REQ, deps)).rejects.toThrow('node not started');
-    expect(isOnRoster()).toBe(false); // evicted, and we still owe the add
-    expect(owesReadd(parseReaddDebts(kv()), REQ)).toBe(true);
+    expect(isListed()).toBe(false); // evicted, and we still owe the add
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('adding');
 
     down = false;
     await settleReaddRequest(REQ, deps); // the next boot / foreground pass
     expect(deps.gate).toHaveBeenCalledTimes(1); // gated ONCE, not re-gated
-    expect(calls).toEqual(['remove', 'add', 'remove', 'add']);
-    expect(isOnRoster()).toBe(true); // recovered, not left evicted
+    expect(calls).toEqual(['remove', 'add', 'add']);
+    expect(isListed()).toBe(true); // recovered, not left evicted
     expect(parseReaddDebts(kv())).toEqual({});
   });
 
@@ -568,6 +618,7 @@ describe('settleReaddRequest (#350)', () => {
           kv = JSON.stringify(d);
         },
         gate: async () => true,
+        onRoster: async () => true,
         remove: async () => {
           removed = true;
           throw new Error('process died mid-remove');
@@ -576,25 +627,43 @@ describe('settleReaddRequest (#350)', () => {
           throw new Error('never got here');
         },
       }),
-    ).rejects.toThrow('never got here');
+    ).rejects.toThrow('process died mid-remove');
     expect(removed).toBe(true);
     expect(owesReadd(parseReaddDebts(kv), REQ)).toBe(true);
   });
 
+  // A remove that genuinely failed leaves the member still on the roster, so the
+  // phase must NOT advance — otherwise the resume would read "listed again" as
+  // "the add landed" and settle a request it never acted on.
+  it('keeps the pre-remove phase when the remove itself failed', async () => {
+    let down = true;
+    const {deps, calls, kv, isListed} = harness({removeFails: () => down});
+    await expect(settleReaddRequest(REQ, deps)).rejects.toThrow('node not started');
+    expect(readdDebtPhase(parseReaddDebts(kv()), REQ)).toBe('removing');
+    expect(isListed()).toBe(true); // never actually removed
+
+    down = false;
+    await settleReaddRequest(REQ, deps);
+    expect(calls).toEqual(['remove', 'remove', 'add']); // retried in full
+    expect(deps.gate).toHaveBeenCalledTimes(1);
+    expect(isListed()).toBe(true);
+    expect(parseReaddDebts(kv())).toEqual({});
+  });
+
   it('a stale debt for a different request does not skip the gate', async () => {
-    const {deps} = harness({onRoster: () => false});
+    const {deps} = harness({gate: () => false});
     // debt left over from an OLD request (different msg_pk) for this same peer
-    await deps.writeDebts(withReaddDebt({}, {...REQ, msgPk: 5}));
+    await deps.writeDebts(withReaddDebt({}, {...REQ, msgPk: 5}, 'adding'));
     await settleReaddRequest(REQ, deps);
     expect(deps.gate).toHaveBeenCalledTimes(1);
     expect(deps.remove).not.toHaveBeenCalled();
     expect(deps.add).not.toHaveBeenCalled();
   });
 
-  it('keeps other peers\' debts when clearing its own', async () => {
+  it("keeps other peers' debts when clearing its own", async () => {
     const OTHER: ReaddRequest = {...REQ, msgPk: 9, requester: STRANGER.toLowerCase()};
     const {deps, kv} = harness();
-    await deps.writeDebts(withReaddDebt({}, OTHER));
+    await deps.writeDebts(withReaddDebt({}, OTHER, 'adding'));
     await settleReaddRequest(REQ, deps);
     expect(owesReadd(parseReaddDebts(kv()), OTHER)).toBe(true);
     expect(owesReadd(parseReaddDebts(kv()), REQ)).toBe(false);
@@ -613,6 +682,7 @@ describe('settleReaddRequest — bookkeeping never re-runs the node (#350)', () 
           if (Object.keys(d).length === 0) throw new Error('kv full');
         },
         gate: async () => true,
+        onRoster: async () => true,
         remove: async () => {},
         add: async () => {
           adds++;
@@ -620,5 +690,70 @@ describe('settleReaddRequest — bookkeeping never re-runs the node (#350)', () 
       }),
     ).resolves.toBeUndefined();
     expect(adds).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #350 — the crash window END TO END, through the replay loop that owns the
+// cursor. `settleReaddRequest` clearing the debt and `runReaddReplay` writing
+// the cursor are BOTH after the add, so a death in that window replays the whole
+// request from a persisted row. This pins that the replay is non-destructive.
+describe('readd replay across a death right after the add (#350)', () => {
+  it('replays the row without ever removing the resynced member twice', async () => {
+    let listed = true;
+    let kv: string | null = null;
+    let cursor = 0;
+    const calls: string[] = [];
+    let alive = true;
+
+    const settleDeps = () => ({
+      readDebts: async (): Promise<ReaddDebts> => parseReaddDebts(kv),
+      writeDebts: async (d: ReaddDebts) => {
+        kv = JSON.stringify(d);
+      },
+      gate: async () => listed,
+      onRoster: async () => listed,
+      remove: async () => {
+        calls.push('remove');
+        if (!listed) throw new Error('not a member');
+        listed = false;
+      },
+      add: async () => {
+        calls.push('add');
+        listed = true;
+        if (!alive) throw new Error('PROCESS DEATH');
+      },
+    });
+
+    const rows = [readdRow({msgPk: 21})];
+    const replayDeps = () => ({
+      readCursor: async () => cursor,
+      fetch: async (since: number, limit: number) =>
+        rows.filter(r => r.msgPk > since).slice(0, limit),
+      parse: parseReadd,
+      apply: (req: ReaddRequest) => settleReaddRequest(req, settleDeps()),
+      writeCursor: async (n: number) => {
+        cursor = n;
+      },
+    });
+
+    // pass 1: the add lands, then the process dies — no debt clear, no cursor.
+    alive = false;
+    await runReaddReplay(replayDeps());
+    expect(calls).toEqual(['remove', 'add']);
+    expect(cursor).toBe(0); // the row is still pending as far as the app knows
+    expect(listed).toBe(true);
+
+    // pass 2: the next boot replays the very same row.
+    alive = true;
+    await runReaddReplay(replayDeps());
+    expect(calls).toEqual(['remove', 'add']); // the member was NOT ejected again
+    expect(listed).toBe(true);
+    expect(cursor).toBe(21);
+    expect(parseReaddDebts(kv)).toEqual({});
+
+    // pass 3: fully settled — nothing left to do.
+    await runReaddReplay(replayDeps());
+    expect(calls).toEqual(['remove', 'add']);
   });
 });

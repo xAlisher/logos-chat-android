@@ -18,6 +18,7 @@ import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
 import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
 import {
+  isOnRoster,
   parseReaddDebts,
   resolveRoster,
   runReaddReplay,
@@ -503,6 +504,18 @@ async function applyReaddRequest(req: ReaddRequest): Promise<void> {
             },
           },
         ),
+      // Which half of a half-done pass landed. Native keeps the local roster in
+      // step with each call — `removeGroupMember` drops the row only after the
+      // MLS Remove, `addGroupMember` re-records it only after the Add — so a
+      // RESOLVED roster (never the cache) is the durable witness that stops a
+      // resume from ejecting someone we have already put back.
+      onRoster: async () => {
+        await useChatStore.getState().loadMembers(groupPk);
+        return isOnRoster(
+          useChatStore.getState().members[groupPk] ?? [],
+          req.requester,
+        );
+      },
       remove: () => useChatStore.getState().removeMember(groupPk, req.requester),
       add: () => useChatStore.getState().addMember(groupPk, req.requester),
     });

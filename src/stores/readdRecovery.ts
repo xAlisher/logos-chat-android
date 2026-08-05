@@ -168,12 +168,38 @@ export function readdCursorAfter(
 // So the fact that we already gated-and-removed someone has to outlive the
 // process: before the remove we persist that we OWE this requester an add, and
 // only clear it once the add lands. A pass that finds an outstanding debt skips
-// the gate and goes straight back to remove-then-add. The debt is pinned to the
-// request's `msgPk`, so it can only ever satisfy the request it was taken out
-// for — a later readd1: from the same peer is gated afresh.
+// the gate. The debt is pinned to the request's `msgPk`, so it can only ever
+// satisfy the request it was taken out for — a later readd1: from the same peer
+// is gated afresh.
+//
+// THE DEBT ALSO CARRIES A PHASE, because "we owe an add" alone is not enough to
+// resume safely. Clearing the debt and advancing the cursor are BOTH writes that
+// happen after the add returns, so a process death in that window leaves the
+// request looking untouched — and a resume that blindly re-ran remove-then-add
+// would eject a member who had just been resynced, needing a second Welcome to
+// get them back. The remove is the destructive half, so it must never be
+// repeated once it has landed:
+//
+//   phase 'removing' — the add has NEVER been attempted for this request.
+//   phase 'adding'   — the remove HAS landed; only the add may still be owed.
+//
+// The local roster is the witness that disambiguates a resume, because native
+// writes it synchronously with each call: `removeGroupMember` DELETEs the row
+// only after the MLS Remove commit, `addGroupMember` re-records it only after
+// the Add. So under 'removing', still-listed means the remove never landed;
+// under 'adding', listed again means the add landed and only the bookkeeping is
+// left. Either way we never re-remove someone we have already put back.
 
-/** Outstanding "removed, still owe the add" debts: request key → msg_pk. */
-export type ReaddDebts = Readonly<Record<string, number>>;
+export type ReaddPhase = 'removing' | 'adding';
+
+/** One outstanding debt: which request took it out, and how far it got. */
+export interface ReaddDebt {
+  msgPk: number;
+  phase: ReaddPhase;
+}
+
+/** Outstanding "mid-recovery" debts: request key → debt. */
+export type ReaddDebts = Readonly<Record<string, ReaddDebt>>;
 
 /** One debt per (group, requester) — a repeat tap collapses onto the same key. */
 export function readdDebtKey(req: {
@@ -183,15 +209,29 @@ export function readdDebtKey(req: {
   return `${req.libConvoId}\t${req.requester}`;
 }
 
-/** Tolerant of a missing/corrupt KV value — a lost debt only costs one gate. */
+/**
+ * Tolerant of a missing/corrupt KV value — a lost debt only costs one gate.
+ *
+ * A bare number is the pre-phase encoding: it was written before the remove and
+ * cleared after the add, so the only thing it certifies is that the remove was
+ * *begun* — i.e. 'removing'. Reading it that way makes the roster re-check the
+ * thing that decides, which is exactly the safe direction.
+ */
 export function parseReaddDebts(raw: string | null | undefined): ReaddDebts {
   if (raw == null || raw === '') return {};
   try {
     const v = JSON.parse(raw);
     if (v == null || typeof v !== 'object' || Array.isArray(v)) return {};
-    const out: Record<string, number> = {};
-    for (const [k, n] of Object.entries(v)) {
-      if (typeof n === 'number' && Number.isFinite(n)) out[k] = n;
+    const out: Record<string, ReaddDebt> = {};
+    for (const [k, d] of Object.entries(v)) {
+      if (typeof d === 'number' && Number.isFinite(d)) {
+        out[k] = {msgPk: d, phase: 'removing'};
+        continue;
+      }
+      if (d == null || typeof d !== 'object' || Array.isArray(d)) continue;
+      const {msgPk, phase} = d as {msgPk?: unknown; phase?: unknown};
+      if (typeof msgPk !== 'number' || !Number.isFinite(msgPk)) continue;
+      out[k] = {msgPk, phase: phase === 'adding' ? 'adding' : 'removing'};
     }
     return out;
   } catch {
@@ -201,11 +241,23 @@ export function parseReaddDebts(raw: string | null | undefined): ReaddDebts {
 
 /** Only the debt taken out FOR this request counts — never a stale one. */
 export function owesReadd(debts: ReaddDebts, req: ReaddRequest): boolean {
-  return debts[readdDebtKey(req)] === req.msgPk;
+  return debts[readdDebtKey(req)]?.msgPk === req.msgPk;
 }
 
-export function withReaddDebt(debts: ReaddDebts, req: ReaddRequest): ReaddDebts {
-  return {...debts, [readdDebtKey(req)]: req.msgPk};
+/** How far this request's own debt got, or null if it holds none. */
+export function readdDebtPhase(
+  debts: ReaddDebts,
+  req: ReaddRequest,
+): ReaddPhase | null {
+  return owesReadd(debts, req) ? debts[readdDebtKey(req)].phase : null;
+}
+
+export function withReaddDebt(
+  debts: ReaddDebts,
+  req: ReaddRequest,
+  phase: ReaddPhase,
+): ReaddDebts {
+  return {...debts, [readdDebtKey(req)]: {msgPk: req.msgPk, phase}};
 }
 
 export function withoutReaddDebt(
@@ -222,45 +274,80 @@ export interface SettleDeps {
   writeDebts: (debts: ReaddDebts) => Promise<void>;
   /** The creator gate (creator? on the roster? not me?). Consulted ONCE. */
   gate: () => Promise<boolean>;
-  /** Best-effort — a member already gone from our view is not an error. */
+  /** Is the requester on our LOCAL roster right now? Native keeps it in step with
+   *  each call, so it is the witness for which half of a half-done pass landed.
+   *  Rejecting keeps the request pending rather than guessing. */
+  onRoster: () => Promise<boolean>;
+  /** The destructive half — only ever run while the requester is still listed. */
   remove: () => Promise<void>;
   /** The step that must succeed; rejecting keeps the request (and debt) pending. */
   add: () => Promise<void>;
 }
 
+/** The add LANDED — a failed bookkeeping write must not re-run it. A debt left
+ *  behind is inert anyway: it is pinned to this request's msg_pk, so it can never
+ *  let a future readd1: skip the gate. */
+async function clearReaddDebt(
+  req: ReaddRequest,
+  deps: SettleDeps,
+): Promise<void> {
+  try {
+    await deps.writeDebts(withoutReaddDebt(await deps.readDebts(), req));
+  } catch {
+    // inert leftover — see above
+  }
+}
+
 /**
- * Settle one request: gate → remove → add, with the remove's effect recorded
- * durably so a failed add is retried instead of being re-gated into a decline.
+ * Settle one request: gate → remove → add, with each half recorded durably so a
+ * process death anywhere in the sequence resumes instead of repeating it.
+ *
+ * The remove is the destructive half — repeating it ejects a member who may
+ * already have been resynced, and only a second Welcome would bring them back.
+ * So it runs at most once per request: the phase says whether the add has been
+ * attempted, and the local roster says whether the last attempted call landed.
  *
  * Resolves when the request is settled (acted on, or declined by the gate) and
- * REJECTS only when the add failed — which is what keeps the replay cursor short
- * of it.
+ * REJECTS when a step failed — which is what keeps the replay cursor short of it.
  */
 export async function settleReaddRequest(
   req: ReaddRequest,
   deps: SettleDeps,
 ): Promise<void> {
   const debts = await deps.readDebts();
-  if (!owesReadd(debts, req)) {
+  let phase = readdDebtPhase(debts, req);
+  // A fresh request: the gate has just proved the requester IS on the roster, so
+  // the remove needs no separate confirmation.
+  const stillListed = phase == null;
+
+  if (phase == null) {
     if (!(await deps.gate())) return; // not our group / not the creator / stranger
     // Record the debt BEFORE the remove: a crash between the two must leave us
     // owing an add, never having silently evicted someone.
-    await deps.writeDebts(withReaddDebt(debts, req));
+    await deps.writeDebts(withReaddDebt(debts, req, 'removing'));
+    phase = 'removing';
+  } else if (phase === 'adding' && (await deps.onRoster())) {
+    // The remove landed and the requester is back on the roster: the add landed
+    // too, and we died before the bookkeeping. Redoing it would kick a member who
+    // is already recovered. The only work left is clearing the debt.
+    await clearReaddDebt(req, deps);
+    return;
   }
-  try {
-    await deps.remove();
-  } catch {
-    // already gone from our view (or removed by an earlier, half-done pass) —
-    // fall through to the add, which is the part that actually resyncs them.
+
+  if (phase === 'removing') {
+    // The add has never been attempted for this request, so being listed is an
+    // unambiguous "the remove has not landed yet" — and NOT being listed means an
+    // earlier pass already removed them, so we must not do it again.
+    if (stillListed || (await deps.onRoster())) {
+      await deps.remove(); // rejects → still 'removing', retried from the top
+    }
+    // Only now is the remove known to have landed. Recording it before the add
+    // is what stops a resume from ever repeating it.
+    await deps.writeDebts(withReaddDebt(await deps.readDebts(), req, 'adding'));
   }
+
   await deps.add(); // rejects → request AND debt stay pending for the next pass
-  try {
-    await deps.writeDebts(withoutReaddDebt(await deps.readDebts(), req));
-  } catch {
-    // The add LANDED — a failed bookkeeping write must not re-run it. A debt left
-    // behind is inert anyway: it is pinned to this request's msg_pk, so it can
-    // never let a future readd1: skip the gate.
-  }
+  await clearReaddDebt(req, deps);
 }
 
 export interface ReplayDeps {
