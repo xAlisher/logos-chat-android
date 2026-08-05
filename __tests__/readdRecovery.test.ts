@@ -474,6 +474,72 @@ describe('runReaddReplay (#350)', () => {
     expect(second.drained).toBe(true);
   });
 
+  // THE PAGE-BOUNDARY REGRESSION: `planReaddReplay` collapses repeat taps, but it
+  // only ever sees ONE page. A peer whose taps straddled a page boundary was
+  // settled once for the page-1 row and AGAIN for the page-2 row — a second
+  // destructive remove-then-add on a member who had just been resynced, which is
+  // exactly what the collapse promises never to do. The collapse has to hold for
+  // the whole drain, not per fetch.
+  it('collapses repeat taps that straddle a page boundary', async () => {
+    // 100 distinct requesters fill page 1; STUCK taps at 100 (page 1's tail) and
+    // again at 101 (page 2's head).
+    const rows = [
+      ...Array.from({length: 99}, (_, i) =>
+        readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+      ),
+      readdRow({msgPk: 100, sender: STUCK, peerAddress: STUCK}),
+      readdRow({msgPk: 101, sender: STUCK, peerAddress: STUCK}),
+    ];
+    const {deps, applied, cursorNow} = harness(rows);
+    const {settled} = await runReaddReplay(deps);
+    expect(deps.fetch).toHaveBeenCalledTimes(2); // it really did cross a page
+    // ONE recovery for STUCK, not two — 100 acted on, 101 collapsed onto it.
+    expect(applied).toEqual(expect.arrayContaining([100]));
+    expect(applied).not.toContain(101);
+    expect(applied).toHaveLength(100);
+    expect(settled.filter(r => r.requester === STUCK.toLowerCase())).toHaveLength(1);
+    // The collapsed row is still burned, so it cannot come back next pass.
+    expect(cursorNow()).toBe(101);
+    await runReaddReplay(deps);
+    expect(applied).toHaveLength(100);
+  });
+
+  it('keeps different peers and groups apart across a page boundary', async () => {
+    // The cross-page collapse must key on (group, requester) like the in-page one,
+    // not swallow every repeat sender or every repeat group.
+    const rows = [
+      ...Array.from({length: 99}, (_, i) =>
+        readdRow({msgPk: i + 1, sender: `0xstuck${i}`, peerAddress: `0xstuck${i}`}),
+      ),
+      readdRow({msgPk: 100, sender: STUCK, peerAddress: STUCK}),
+      // same peer, DIFFERENT group — a real second recovery.
+      readdRow({
+        msgPk: 101,
+        sender: STUCK,
+        peerAddress: STUCK,
+        content: encodeReadd(OTHER_GROUP),
+      }),
+      // same group, DIFFERENT peer — also a real second recovery.
+      readdRow({msgPk: 102, sender: STRANGER, peerAddress: STRANGER}),
+    ];
+    const {deps, applied} = harness(rows);
+    await runReaddReplay(deps);
+    expect(applied).toContain(100);
+    expect(applied).toContain(101);
+    expect(applied).toContain(102);
+  });
+
+  it('a repeat tap in a LATER drain is a fresh request, not a collapsed one', async () => {
+    // The collapse is scoped to one drain. A peer who taps again after the backlog
+    // was cleared genuinely wants another recovery, and must get one.
+    const rows = [readdRow({msgPk: 1})];
+    const {deps, applied} = harness(rows);
+    await runReaddReplay(deps);
+    rows.push(readdRow({msgPk: 2}));
+    await runReaddReplay(deps);
+    expect(applied).toEqual([1, 2]);
+  });
+
   it('a completed drain, a failure and a dead page all report drained', async () => {
     const {deps: ok} = harness([readdRow({msgPk: 1})]);
     expect((await runReaddReplay(ok)).drained).toBe(true);

@@ -382,6 +382,18 @@ export interface ReplayDeps {
  * request we still owe) and on a cursor that didn't advance (a full page we
  * could not account for at all — the only shape that could spin forever).
  *
+ * THE COLLAPSE OF REPEAT TAPS SPANS THE WHOLE DRAIN, NOT ONE PAGE. Requests
+ * arrive as rows, and `planReaddReplay` only ever sees the page in front of it —
+ * so a peer whose taps straddled a page boundary was settled once for the page-1
+ * row and AGAIN for the page-2 row, running a second destructive remove-then-add
+ * on a member the first one had just resynced. The debt cannot catch this: it is
+ * pinned to a msg_pk and cleared once the add lands, so the next row looks like a
+ * brand-new request. So the drain remembers which (group, requester) it has
+ * already recovered and skips the rest — still counting them as resolved, so the
+ * cursor burns them and they cannot come back. The scope is ONE drain: a tap that
+ * arrives after the backlog is clear is a genuine new request and gets its own
+ * recovery.
+ *
  * IT IS BOUNDED BY PROGRESS, NOT BY A PAGE COUNT. A fixed budget is the wrong
  * bound for a drain whose whole purpose is that nothing else will come back for
  * the tail: exhausting it looked identical to a finished drain, so a backlog
@@ -406,6 +418,9 @@ export async function runReaddReplay(
   const maxPages = deps.maxPages ?? Number.POSITIVE_INFINITY;
   let cursor = await deps.readCursor();
   const settled: ReaddRequest[] = [];
+  // (group, requester) already recovered in THIS drain — the page-spanning half
+  // of the collapse `planReaddReplay` performs within a page.
+  const recovered = new Set<string>();
   // Only an exhausted explicit budget leaves the backlog unfinished: a failure
   // and a dead page are deliberate stops that re-entering could not improve on.
   let drained = true;
@@ -415,9 +430,18 @@ export async function runReaddReplay(
     let lastResolved: number | null = null;
     let failed = false;
     for (const req of requests) {
+      const key = readdDebtKey(req);
+      if (recovered.has(key)) {
+        // An earlier page of this same drain already recovered this peer for this
+        // group. Acting again would remove-then-add a member we just put back, so
+        // this row is settled by that recovery — resolved, and burnable.
+        lastResolved = req.msgPk;
+        continue;
+      }
       try {
         await deps.apply(req);
         settled.push(req);
+        recovered.add(key);
         lastResolved = req.msgPk;
       } catch {
         // The node was down / the re-add rejected — leave this one pending so the
