@@ -312,9 +312,14 @@ Java_com_logoschat_NodeBridge_chatAddGroupMember(JNIEnv *env, jobject thiz, jlon
   return rc;
 }
 
-// #349: creator-gated removal of ANOTHER member. rc==0 means the MLS Remove
-// commit was produced + published and applied locally (GroupV1 plain MLS —
-// unlike leave's async de-mls round). Creator-gating is enforced app-side.
+// #349: removal of ANOTHER member. rc==0 means the MLS Remove commit was
+// produced + published and applied locally (GroupV1 plain MLS — unlike leave's
+// async de-mls round).
+//
+// SECURITY: this verb performs NO authorization. "Creator-only" is app-side
+// policy on the CALLING device (GroupRemovalPolicy.kt), which an instrumented
+// client bypasses; MLS accepts a Remove commit from any member and every honest
+// client merges it. See GroupRemovalPolicy.kt / src/security/groupRemoval.ts.
 JNIEXPORT jint JNICALL
 Java_com_logoschat_NodeBridge_chatRemoveGroupMember(JNIEnv *env, jobject thiz, jlong handle,
                                                     jstring convoId, jstring peerAddress) {

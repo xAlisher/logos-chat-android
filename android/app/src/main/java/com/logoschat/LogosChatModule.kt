@@ -899,10 +899,13 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * #349: remove another member (by hex address) from a group. Creator-gated
-   * (mirrors [recreateGroup]) — only the group creator may eject a member. The
-   * native call produces an MLS Remove commit that advances the epoch and locks
-   * the target out; we then drop them from the app-side roster.
+   * #349: remove another member (by hex address) from a group. The native call produces an
+   * MLS Remove commit that advances the epoch and locks the target out; we then drop them
+   * from the app-side roster.
+   *
+   * Creator-only is decided by [decideRemove] — LOCAL policy on this device, NOT a security
+   * boundary: MLS authorizes no removals, so a modified client can reach the native verb
+   * regardless. Read the SECURITY note on [GroupRemovalPolicy.kt] before relying on it.
    */
   @ReactMethod
   fun removeGroupMember(convoPk: Double, peerAddress: String, promise: Promise) {
@@ -914,22 +917,21 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       }
       val pk = convoPk.toLong()
       val d = ChatRepo.requireDb()
-      if (!d.createdByMe(pk)) {
-        promise.reject("remove_group_member", "only the group creator can remove members")
-        return@execute
-      }
-      val libConvoId = d.libConvoIdOf(pk)
-      if (libConvoId == null) {
-        promise.reject("remove_group_member", "group not bound")
-        return@execute
-      }
-      val addr = peerAddress.trim().lowercase()
-      val rc = NodeBridge.chatRemoveGroupMember(c, libConvoId, addr)
+      val decision = decideRemove(d.createdByMe(pk), d.libConvoIdOf(pk), NodeRuntime.address, peerAddress)
+      val allowed =
+          when (decision) {
+            is RemoveDecision.Deny -> {
+              promise.reject("remove_group_member", decision.reason)
+              return@execute
+            }
+            is RemoveDecision.Allow -> decision
+          }
+      val rc = NodeBridge.chatRemoveGroupMember(c, allowed.libConvoId, allowed.target)
       if (rc != 0) {
         promise.reject("remove_group_member", NodeBridge.chatLastError())
         return@execute
       }
-      d.removeGroupMember(pk, addr)
+      d.removeGroupMember(pk, allowed.target)
       promise.resolve(null)
     }
   }

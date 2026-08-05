@@ -20,6 +20,7 @@ import {useChatStore, convoDisplayName, isAddressVerified} from '../stores/chatS
 import type {GroupMember} from '../stores/chatStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {shortAddress} from '../native/LogosChat';
+import {canRemoveMember} from '../security/groupRemoval';
 import type {RootStackParamList} from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -47,7 +48,11 @@ export function GroupInfoScreen() {
   const hydrateGroupStorage = useChatStore(s => s.hydrateGroupStorage);
   // The member a row-menu / label editor is acting on.
   const [storageInfoOpen, setStorageInfoOpen] = useState(false); // #344 (i) explainer
-  const [menuMember, setMenuMember] = useState<{address: string; label: string | null} | null>(null);
+  const [menuMember, setMenuMember] = useState<{
+    address: string;
+    label: string | null;
+    isSelf: boolean;
+  } | null>(null);
   const [menuMemberY, setMenuMemberY] = useState(0); // #157: tap Y to anchor the menu
   const [labelMember, setLabelMember] = useState<{
     address: string;
@@ -145,12 +150,20 @@ export function GroupInfoScreen() {
         disabled={item.isSelf}
         onPress={e => {
           setMenuMemberY(e.nativeEvent.pageY);
-          setMenuMember({address: item.address, label: labelFor(item.address)});
+          setMenuMember({
+            address: item.address,
+            label: labelFor(item.address),
+            isSelf: item.isSelf,
+          });
         }}
         onLongPress={e => {
           Vibration.vibrate(18); // #131: hold a roster member for its menu
           setMenuMemberY(e.nativeEvent.pageY); // #157
-          setMenuMember({address: item.address, label: labelFor(item.address)});
+          setMenuMember({
+            address: item.address,
+            label: labelFor(item.address),
+            isSelf: item.isSelf,
+          });
         }}
         delayLongPress={300}
         testID={`member-${item.address}`}>
@@ -238,7 +251,12 @@ export function GroupInfoScreen() {
               }),
           },
           // #349: creator-only — eject a member. Destructive → confirm first.
-          ...(convo?.createdByMe
+          // The predicate is LOCAL policy, not a security boundary (see
+          // src/security/groupRemoval.ts) — it only keeps this client coherent.
+          ...(canRemoveMember({
+            createdByMe: convo?.createdByMe ?? false,
+            isSelf: menuMember.isSelf,
+          })
             ? [
                 {
                   key: 'remove',

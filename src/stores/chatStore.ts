@@ -618,9 +618,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().refreshConversations();
   },
 
-  // #349: creator-only removal. The native side (creator-gated again there)
-  // produces an MLS Remove commit that advances the epoch and locks the target
-  // out; we then refresh the roster. On failure the error surfaces to the caller.
+  // #349: creator-only removal. The bridge re-checks createdByMe on THIS device
+  // (not a security boundary — MLS authorizes no removals; see
+  // src/security/groupRemoval.ts), then produces an MLS Remove commit that
+  // advances the epoch and locks the target out; we then refresh the roster.
+  // On failure the error surfaces to the caller.
   removeMember: async (convoPk: number, address: string) => {
     await LogosChat.removeGroupMember(convoPk, address.toLowerCase());
     await get().loadMembers(convoPk);
