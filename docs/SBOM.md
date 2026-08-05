@@ -17,7 +17,8 @@ sha256sum /tmp/peers-so/lib/arm64-v8a/*.so
 ### Logos / Peers-built (the security-critical TCB)
 | Library | Purpose | Source / provenance |
 |---|---|---|
-| `liblogoschat.so`, `liblogoschat_bridge.so` | MLS chat core + JNI bridge (E2E messaging) | Built from `logos-libchat-mls-android`, **patch-based** on pinned commit `d2124fd` + `patches/libchat-android-arm64.patch` (see `libchat-build/`) |
+| `liblogoschat.so` | MLS chat core (E2E messaging) | Built from `logos-libchat-mls-android` @ `6b6305f`, **patch-based** on pinned upstream `libchat` commit `d2124fd` + `patches/libchat-android-arm64.patch` + `patches/349-groupv1-remove-member.patch` + `patches/437-replace-on-desync-welcome.patch` (see `libchat-build/`) |
+| `liblogoschat_bridge.so` | JNI bridge | Built **in this repo** from `android/app/src/main/cpp/logoschat_jni.c` by `scripts/build-bridge.sh` (out-of-band; not a gradle task) |
 | `liblogosdelivery.so` | Delivery layer (Waku-based) + SDS reliable channels | Logos delivery (`vpavlin/logos-delivery`; see #402) |
 | `librln.so` | RLN rate-limiting nullifier (delivery spam control) | Waku/RLN stack |
 | `libtor.so`, `libtorexec.so` | Embedded Tor for Private mode (#318/#319) | Tor |
@@ -35,10 +36,46 @@ JS/native-module versions are pinned by `package-lock.json`; Gradle dependencies
 resolved Gradle graph isn't lock-verified. Enabling it (`dependencyLocking { lockAllConfigurations() }`
 + `./gradlew dependencies --write-locks`, committed) is tracked under the remaining #366 work.
 
+## Committed hash manifest + CI gate (#437 review)
+
+The prebuilt `.so` files are checked into the repo, so "which binary is supposed to be
+here?" has to be answerable from the repo alone. It is:
+[`android/app/src/main/jniLibs/arm64-v8a/SHA256SUMS`](../android/app/src/main/jniLibs/arm64-v8a/SHA256SUMS)
+records the SHA-256 of every shipped library plus the native revision each came from.
+
+```sh
+cd android/app/src/main/jniLibs/arm64-v8a && sha256sum -c SHA256SUMS
+```
+
+Comparing against a **release APK** instead: `liblogoschat.so`, `liblogosdelivery.so` and
+`librln.so` are already fully stripped and pass through packaging **bit-identical**, so their
+in-APK hashes match the manifest directly (verified on the `#437` build:
+`6dd23bc7…` in `jniLibs/` = `6dd23bc7…` in `lib/arm64-v8a/` of `app-release.apk`).
+`liblogoschat_bridge.so` and `libc++_shared.so` still carry a symbol table that AGP's strip
+pass removes during packaging, so their in-APK hashes differ **by design** — cross-check
+those two by GNU build-id (`readelf -n`), recorded in the manifest header.
+
+`__tests__/nativeProvenance.test.ts` (in the CI logic run) enforces it on every PR, so a
+binary cannot change without the manifest changing in the same commit. It also asserts two
+things a hash alone can't:
+- **bridge → core link contract** — every `logoschat_*` symbol `liblogoschat_bridge.so`
+  imports is exported by `liblogoschat.so`. A miss here is an `UnsatisfiedLinkError` on a
+  tester's phone, not a build failure. (The gradle `checkBridgeSymbols` task covers the
+  layer above — Kotlin `external fun` → bridge — but skips itself when the NDK is absent.)
+- **the native change is really in the binary** — a marker string from
+  `patches/437-replace-on-desync-welcome.patch`.
+
+Known gap: the companion native repo's own `prebuilt/arm64-v8a/SHA256SUMS` at `6b6305f` is
+**stale** — it still publishes the pre-#292/#349/#437 build
+(`8f4fbdc6…`), which exports neither `logoschat_catchup_now` nor
+`logoschat_remove_group_member`. Refreshing that publication is tracked on the native PR;
+the app must not be "reconciled" down to it.
+
 ## Toolchain / provenance
 - Rust libs: `cargo` targeting `aarch64-linux-android`, Android **NDK r27**.
 - Android: **JDK 17**, Gradle (see `android/gradle/wrapper`).
-- Source pins: `libchat` @ `d2124fd` (+ vendored patch); JS deps @ `package-lock.json`.
+- Source pins: upstream `libchat` @ `d2124fd` + the `logos-libchat-mls-android` @ `6b6305f`
+  patch set (see the manifest above); JS deps @ `package-lock.json`.
 - **Reproducible builds:** the inputs are pinned (source commit + patch + toolchain), but
   full **bit-for-bit** reproducibility is not yet proven (needs a deterministic NDK/cargo
   container). Tracked as future work under #366. Until then, provenance = pinned inputs +

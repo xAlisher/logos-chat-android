@@ -41,6 +41,7 @@ module.exports = {
     '<rootDir>/__tests__/readd.test.ts',
     '<rootDir>/__tests__/readdRecovery.test.ts',
     '<rootDir>/__tests__/markers.test.ts',
+    '<rootDir>/__tests__/nativeProvenance.test.ts',
     '<rootDir>/__tests__/address-marker.test.ts',
     '<rootDir>/__tests__/metadataPrivacy.test.ts',
     '<rootDir>/__tests__/a11yLabels.test.ts',

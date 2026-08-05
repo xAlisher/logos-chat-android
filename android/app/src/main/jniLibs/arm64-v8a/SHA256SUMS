@@ -1,0 +1,49 @@
+# SHA-256 of every native library this app ships for arm64-v8a.
+#
+# WHY THIS FILE EXISTS (#437 review): the prebuilt .so files are the app's trusted
+# computing base and the only carrier of the MLS security/correctness behaviour, but
+# nothing in this repo recorded WHICH binary was supposed to be here. A reviewer
+# could not tell an intended rebuild from a silent swap. This manifest is that
+# record; `__tests__/nativeProvenance.test.ts` enforces it on every CI run, so
+# changing a binary without consciously updating this file fails the gate.
+#
+# Verify by hand:
+#   cd android/app/src/main/jniLibs/arm64-v8a && sha256sum -c SHA256SUMS
+#
+# These are the hashes of the files AS CHECKED IN. Verifying against a release APK
+# instead: liblogoschat.so, liblogosdelivery.so and librln.so pass through packaging
+# BIT-IDENTICAL (they are already fully stripped), so their in-APK hashes match this
+# file directly. liblogoschat_bridge.so and libc++_shared.so still carry a symbol
+# table, which AGP's strip pass removes while packaging — their in-APK hashes DIFFER
+# by design. Cross-check those two by GNU build-id instead (`readelf -n <lib>`):
+#   liblogoschat_bridge.so  9c3ab5ab86357ee11e9751c10414151e0cfae804
+#   libc++_shared.so        6783a7f3a0d9c67c55a74cadc441ed55aaa493da
+#
+# PROVENANCE — see docs/SBOM.md for the full table and the caveats.
+#   liblogoschat.so        xAlisher/logos-libchat-mls-android @ 6b6305f
+#                          (PR #4, branch exp/349-groupv1-remove-member) =
+#                          upstream libchat @ d2124fd + patches/libchat-android-arm64.patch
+#                          + patches/349-groupv1-remove-member.patch
+#                          + patches/437-replace-on-desync-welcome.patch,
+#                          built by scripts/build-android-arm64.sh (NDK r27).
+#   liblogoschat_bridge.so built in-repo from android/app/src/main/cpp/logoschat_jni.c
+#                          by scripts/build-bridge.sh.
+#   liblogosdelivery.so    Logos delivery (vpavlin/logos-delivery, #402).
+#   librln.so              Waku/RLN.
+#   libc++_shared.so       Android NDK r27 runtime.
+#
+# NOTE: the native repo's own prebuilt/arm64-v8a/SHA256SUMS at 6b6305f is STALE — it
+# still publishes the pre-#292/#349/#437 build (liblogoschat.so
+# 8f4fbdc60c0f13e245eb9c65cf1ad248699c843532ab59cbb6ad0e6dafe9bcb6), which does not
+# export logoschat_catchup_now or logoschat_remove_group_member and would not link
+# against the bridge we ship. Refreshing that publication is tracked on the native PR;
+# do NOT "reconcile" by copying that older binary here.
+#
+# Bit-for-bit reproducibility of liblogoschat.so is NOT yet proven (no deterministic
+# NDK/cargo container — tracked under #366). Provenance today = pinned inputs above
+# + these hashes + the symbol/marker assertions in the gate test.
+e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  libc++_shared.so
+9df7677c609759250dc368874224a8fbeb0df056104663859c284f29080835b5  liblogoschat_bridge.so
+6dd23bc7e93e94c35ba5fb913dc0b65217b67dc6df1911880e30b254389fef31  liblogoschat.so
+944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f  liblogosdelivery.so
+766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45  librln.so
