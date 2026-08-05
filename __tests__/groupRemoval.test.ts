@@ -4,9 +4,13 @@ import {canRemoveMember} from '../src/security/groupRemoval';
 // a non-creator is never offered (nor allowed to fire) a removal, and nobody
 // ejects themselves through the remove path.
 //
-// They do NOT pin the protocol property: MLS authorizes no removals, so this
-// gate is defeated by an instrumented client regardless. See the SECURITY note
-// in src/security/groupRemoval.ts.
+// They do NOT pin the protocol property, and no JS test can: this gate runs on
+// the caller's own device and an instrumented client skips it. The property
+// ("a non-creator's Remove commit is not applied by anyone") is enforced on the
+// RECEIVE side in the native MLS layer and pinned there —
+// libchat `group_v1.rs::remove_auth_tests` (unit) and
+// `remove_member_authorization.rs` (a real 3-member group, forged commit).
+// See the SECURITY note in src/security/groupRemoval.ts.
 
 describe('canRemoveMember (#349)', () => {
   it('offers removal to the group creator, for another member', () => {

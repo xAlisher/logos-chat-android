@@ -5,13 +5,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * #349: the remove-member gate. These pin the ONLY control that exists on the remove path —
- * a regression here (dropping the creator check, or reordering it after the bridge call)
- * silently turns "creator-gated" into "anyone with the app can eject anyone".
+ * #349: the app-side remove-member gate. These pin the local affordance — a regression here
+ * (dropping the creator check, or reordering it after the bridge call) means an unprivileged
+ * user is offered a removal that the group will drop, stranding their own client on a dead
+ * epoch.
  *
- * They do NOT — and cannot — pin the protocol property: MLS itself authorizes no removals,
- * so this gate is defeated by an instrumented client regardless. See the SECURITY note on
- * GroupRemovalPolicy.kt.
+ * They do NOT — and cannot — pin the protocol property: this gate runs on the caller's own
+ * device and an instrumented client skips it. "A non-creator's Remove commit is applied by
+ * nobody" is enforced on the RECEIVE side in the native MLS layer and pinned there — libchat
+ * `group_v1.rs::remove_auth_tests` and `remove_member_authorization.rs`. See the SECURITY
+ * note on GroupRemovalPolicy.kt.
  */
 class GroupRemovalPolicyTest {
 

@@ -3,25 +3,29 @@
 // attempts a removal, mirrored by GroupRemovalPolicy.kt on the native side.
 //
 // SECURITY — read this before trusting the word "gated" anywhere in the remove
-// path. This is a LOCAL policy, NOT a security boundary:
+// path. This function is a LOCAL affordance check, NOT the security boundary:
 //
-//   GroupV1 is plain MLS, and MLS (RFC 9420) carries no authorization for
-//   Remove. Any member can author a Remove commit, and every honest client
-//   merges it unconditionally (libchat group_v1.rs `process_frame` →
-//   `merge_staged_commit` — no proposal inspection, no sender check). So a
-//   member running a modified or instrumented client can eject an arbitrary
-//   peer no matter what this function returns, and no matter what the Kotlin
-//   bridge decides — both gates run on the ATTACKER's own device.
+//   MLS (RFC 9420) carries no authorization for Remove — any member can author a
+//   Remove commit. So this check, and the Kotlin one, both run on the ATTACKER's
+//   own device and an instrumented client skips them.
 //
-//   Making "only the creator may remove" true requires an authorization policy
-//   encoded in group state and enforced on the RECEIVE side, in the native MLS
-//   layer. That is not implemented. Tracked against the #367 security epic; the
-//   analysis lives on PR #431.
+//   The boundary that actually holds is on the RECEIVE side, in the native MLS
+//   layer: GroupV1 records the creator's leaf credential in the (authenticated,
+//   epoch-stable) MLS group-context extension at creation, and every receiver
+//   drops a Commit carrying Remove proposals unless the committer is that
+//   creator — or every Remove is a member's own leave. See libchat
+//   `group_v1.rs::removes_authorized` / `process_frame`, shipped in
+//   liblogoschat.so and covered by 4 integration tests that drive a genuinely
+//   forged commit through a real 3-member group.
+//
+//   Consequence worth knowing: a group created BEFORE that native change has no
+//   creator in its group context, so no member is authorized on receipt and
+//   removal is unavailable for it (fail-closed). The native layer reports that
+//   case distinctly.
 //
 // What this module IS for: keeping the honest client coherent — no self-eject
-// through the bridge, no remove affordance for a non-creator who would only get
-// a native error back, and a single call site to change when the real policy
-// lands.
+// through the bridge, and no remove affordance for a non-creator who would only
+// get a native refusal back.
 
 export interface RemovalPolicyInput {
   /** conversation.createdByMe — this device created the group (ChatDb-local). */

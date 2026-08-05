@@ -903,9 +903,10 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
    * MLS Remove commit that advances the epoch and locks the target out; we then drop them
    * from the app-side roster.
    *
-   * Creator-only is decided by [decideRemove] — LOCAL policy on this device, NOT a security
-   * boundary: MLS authorizes no removals, so a modified client can reach the native verb
-   * regardless. Read the SECURITY note on [GroupRemovalPolicy.kt] before relying on it.
+   * Creator-only is decided here by [decideRemove] — LOCAL policy on this device, which a
+   * modified client bypasses. What makes it hold is the receive-side gate in the native MLS
+   * layer, where every member drops a Remove commit that did not come from the group's
+   * recorded creator. Read the SECURITY note on [GroupRemovalPolicy.kt].
    */
   @ReactMethod
   fun removeGroupMember(convoPk: Double, peerAddress: String, promise: Promise) {

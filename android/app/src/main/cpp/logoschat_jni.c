@@ -316,10 +316,13 @@ Java_com_logoschat_NodeBridge_chatAddGroupMember(JNIEnv *env, jobject thiz, jlon
 // produced + published and applied locally (GroupV1 plain MLS — unlike leave's
 // async de-mls round).
 //
-// SECURITY: this verb performs NO authorization. "Creator-only" is app-side
-// policy on the CALLING device (GroupRemovalPolicy.kt), which an instrumented
-// client bypasses; MLS accepts a Remove commit from any member and every honest
-// client merges it. See GroupRemovalPolicy.kt / src/security/groupRemoval.ts.
+// SECURITY: this verb performs no authorization of its own, and neither does
+// the app-side check on the CALLING device (GroupRemovalPolicy.kt) — an
+// instrumented client bypasses both. Authorization is enforced by every
+// RECEIVER inside liblogoschat.so: a Commit carrying Remove proposals is
+// dropped unless the committer is the creator recorded in the MLS group
+// context (libchat group_v1.rs `removes_authorized`). Callers must not read
+// rc==0 here as "the group accepted it".
 JNIEXPORT jint JNICALL
 Java_com_logoschat_NodeBridge_chatRemoveGroupMember(JNIEnv *env, jobject thiz, jlong handle,
                                                     jstring convoId, jstring peerAddress) {

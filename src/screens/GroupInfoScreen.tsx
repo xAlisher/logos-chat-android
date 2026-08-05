@@ -251,8 +251,10 @@ export function GroupInfoScreen() {
               }),
           },
           // #349: creator-only — eject a member. Destructive → confirm first.
-          // The predicate is LOCAL policy, not a security boundary (see
-          // src/security/groupRemoval.ts) — it only keeps this client coherent.
+          // The predicate decides the AFFORDANCE only; the boundary is enforced by
+          // every receiver in the native MLS layer (see src/security/groupRemoval.ts).
+          // A group created before that change refuses removal — the native error is
+          // surfaced verbatim rather than pretending it worked.
           ...(canRemoveMember({
             createdByMe: convo?.createdByMe ?? false,
             isSelf: menuMember.isSelf,

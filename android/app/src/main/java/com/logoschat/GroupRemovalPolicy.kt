@@ -5,19 +5,22 @@ package com.logoschat
  * control that exists on the remove path is unit-testable on the JVM (the native call it
  * guards is exercised on-device). Mirrors `src/security/groupRemoval.ts`.
  *
- * SECURITY — this is LOCAL policy, NOT a security boundary. GroupV1 is plain MLS, and MLS
- * (RFC 9420) carries no authorization for Remove: any member can author a Remove commit,
- * and every honest client merges it unconditionally (libchat `group_v1.rs` `process_frame`
- * → `merge_staged_commit` — no proposal inspection, no sender check). Both this gate and
- * the JS one run on the *caller's own device*, so a member with a modified or instrumented
- * client can call `logoschat_remove_group_member` directly and eject an arbitrary peer.
- * Real creator-only removal needs an authorization policy encoded in group state and
- * enforced on the RECEIVE side, in the native MLS layer — not implemented; tracked against
- * the #367 security epic, analysis on PR #431.
+ * SECURITY — this is LOCAL policy, NOT the security boundary. MLS (RFC 9420) carries no
+ * authorization for Remove: any member can author a Remove commit, and both this gate and
+ * the JS one run on the *caller's own device*, so an instrumented client skips them.
  *
- * What this DOES buy: the honest client never fires a removal it has no authority for, and
- * never routes a self-departure through `remove_members` (that is [LogosChatModule.leaveGroup],
- * #108 — asking MLS to commit our own leaf removal is not a valid self-departure).
+ * The boundary that holds is on the RECEIVE side, in the native MLS layer: GroupV1 records
+ * the creator's leaf credential in the authenticated MLS group-context extension at
+ * creation, and every receiver drops a Commit carrying Remove proposals unless the
+ * committer is that creator (or every Remove is a member's own leave). See libchat
+ * `group_v1.rs::removes_authorized` / `process_frame`, shipped in liblogoschat.so.
+ * A group created before that change records no creator, so removal is unavailable for it
+ * — fail-closed, reported distinctly by the native layer.
+ *
+ * What this DOES buy: the honest client never fires a removal the group would drop (which
+ * would strand it on a dead epoch), and never routes a self-departure through
+ * `remove_members` (that is [LogosChatModule.leaveGroup], #108 — asking MLS to commit our
+ * own leaf removal is not a valid self-departure).
  */
 internal sealed class RemoveDecision {
   /** Proceed: call the bridge with these normalized arguments. */
