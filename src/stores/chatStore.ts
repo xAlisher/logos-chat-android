@@ -317,6 +317,10 @@ interface ChatState {
   /** #230: drop all per-member status lines for a thread (e.g. on group re-create,
    *  so the fresh invite round starts clean). Non-membership notes are kept. */
   clearMemberStatuses: (convoPk: number) => void;
+  /** #437: drop the "you've fallen out of sync" desync notice for a thread — called
+   *  when the member rejoins (group_ready) so the recovered group stops showing a
+   *  stale "ask to be re-added" prompt after the #350 re-add welcome resyncs us. */
+  clearDesyncNotice: (convoPk: number) => void;
   /** #228: load persisted system notes for a thread into memory (on thread open). */
   hydrateSystemLines: (convoPk: number) => Promise<void>;
   /** #344: per-group storage opt-out — true ⇒ this group is text-only (no media
@@ -1562,6 +1566,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  clearDesyncNotice: convoPk => {
+    set(s => {
+      const cur = s.systemLines[convoPk];
+      if (cur == null || !cur.some(n => n.info === 'desynced')) return {};
+      const next = cur.filter(n => n.info !== 'desynced');
+      persistSystemLines(convoPk, next);
+      return {systemLines: {...s.systemLines, [convoPk]: next}};
+    });
+  },
+
   hydrateSystemLines: async (convoPk: number) => {
     // Already in memory (pushed this session) → nothing to load.
     if (get().systemLines[convoPk] != null) return;
@@ -1990,6 +2004,9 @@ addLogosChatListener(e => {
     // and only once per convo per session.
     if (e.kind === 'group_ready' && e.convoPk != null) {
       const convoPk = e.convoPk;
+      // #437: rejoining (a #350 re-add welcome resynced us at a fresh epoch) clears
+      // any lingering "you've fallen out of sync" notice — the group works again.
+      s.clearDesyncNotice(convoPk);
       if (!ackedGroups.has(convoPk)) {
         ackedGroups.add(convoPk);
         setTimeout(() => {

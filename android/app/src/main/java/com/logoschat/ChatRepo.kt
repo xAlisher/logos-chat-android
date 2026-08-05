@@ -255,6 +255,13 @@ object ChatRepo {
         // departure is detectable — reconcile can only report "left" against
         // members we already recorded.
         reconcileRoster(existing, libConvoId)
+        // #437: a Welcome for a group we ALREADY hold means we just re-adopted it
+        // at a fresh epoch (the desync-recovery path — native replace-on-desync
+        // swapped the stale group for the newer one). Surface group_ready so the JS
+        // side clears the "you've fallen out of sync" notice and re-acks the join;
+        // clearDesyncNotice is a no-op when there was no desync line, so this is safe
+        // for an ordinary message-first-then-Welcome ordering too.
+        return Outcome("group_ready", existing, "in", "")
       }
       return null
     }
