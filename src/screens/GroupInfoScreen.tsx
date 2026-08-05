@@ -351,7 +351,7 @@ export function GroupInfoScreen() {
                 The stored flag is storageOff (true = OFF), so display/write the inverse. */}
             <Text style={[type.caption, {color: colors.textDim}]}>
               {storageOff
-                ? 'Text, voice and location only — nothing about this group rides the Logos Storage node.'
+                ? 'No photos, GIFs or videos — everything else (text, voice, location, reactions, replies) works as normal, and nothing about this group rides the Logos Storage node.'
                 : 'Send photos, GIFs and videos. The Storage node relays them end-to-end encrypted — it can tell media moved here, never what\'s in it.'}
             </Text>
           </View>
@@ -375,7 +375,7 @@ export function GroupInfoScreen() {
                 <InfoIcon size={15} color={colors.textFaint} />
               </View>
               <Text style={[type.caption, {color: colors.textDim}]}>
-                Text, voice and location only — nothing about this group rides the Logos Storage node.
+                No photos, GIFs or videos — everything else (text, voice, location, reactions, replies) works as normal, and nothing about this group rides the Logos Storage node.
               </Text>
             </View>
           </Pressable>
