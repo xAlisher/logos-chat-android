@@ -51,9 +51,11 @@ interface ImagePickerNative {
    * carries {durationMs, posterPath}.
    */
   pickRawMedia(maxBytes: number, kind: 'gif' | 'video'): Promise<string | null>;
-  /** #440: pick a Peers backup file to restore. Resolves the chosen content URI as a
-   *  string (pass it + the passphrase to LogosChat.importChatData), or null if cancelled. */
-  pickBackup(): Promise<string | null>;
+  /** #440: pick a Peers backup file AND restore it in one native flow — the passphrase is
+   *  passed in FIRST (so it's captured before the picker can recreate the Activity).
+   *  Resolves the restored address, null if cancelled, or rejects with code
+   *  'import' / 'import_partial' (see restoreOutcome.ts). DESTRUCTIVE. */
+  pickAndImportBackup(passphrase: string): Promise<string | null>;
 }
 
 /** #300: a raw (un-re-encoded) gif/video the user picked, staged in a cache file. */

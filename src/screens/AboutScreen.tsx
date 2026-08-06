@@ -19,6 +19,7 @@ import {useNodeStore} from '../stores/nodeStore';
 import LogosChat, {shortAddress} from '../native/LogosChat';
 import ImagePicker from '../native/ImagePicker';
 import {BackupPassphraseModal} from '../components/BackupPassphraseModal';
+import {restoreFailed, restoreSucceeded} from '../lib/restoreOutcome';
 
 const REPO_URL = 'https://github.com/xAlisher/peers';
 
@@ -40,7 +41,6 @@ export function AboutScreen() {
   const [askPass, setAskPass] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const [askRestorePass, setAskRestorePass] = useState(false);
-  const [restoreUri, setRestoreUri] = useState<string | null>(null);
 
   // #38/#361: back up the app-side store as a PASSPHRASE-ENCRYPTED file, then open the
   // share sheet. The passphrase prompt (scope + no-recovery warning) gates the export;
@@ -63,32 +63,32 @@ export function AboutScreen() {
     }
   };
 
-  // #440: restore identity + history from a backup. Pick the file (SAF), then take the
-  // passphrase; the native import is DESTRUCTIVE (replaces this device's identity) and
-  // reopens the node with the restored address.
-  const onRestore = async () => {
+  // #440: restore identity + history from a backup. Take the passphrase FIRST (a JS
+  // modal — no Activity leave), THEN pick the file + decrypt + import all natively in one
+  // flow (ImagePicker.pickAndImportBackup). Ordering matters: the SAF picker can recreate
+  // the Activity, which used to reset the passphrase-prompt state and silently drop the
+  // restore. DESTRUCTIVE — replaces this device's identity, then reopens the node.
+  const onRestore = () => {
     if (restoring) return;
-    try {
-      const uri = await ImagePicker.pickBackup();
-      if (uri == null) return; // cancelled
-      setRestoreUri(uri);
-      setAskRestorePass(true);
-    } catch {
-      ToastAndroid.show('Could not open the file picker', ToastAndroid.SHORT);
-    }
+    setAskRestorePass(true);
   };
 
+  // #443 (review): restore has THREE outcomes, not two — a chat import that fails after
+  // the destructive wipe leaves the identity restored and the history gone, and must not
+  // be reported as "Restored". `restoreFailed` reads the native reject code; only a
+  // retryable failure (refused before the wipe) keeps the passphrase modal open.
   const onRestoreConfirm = async (passphrase: string) => {
-    if (restoreUri == null) return;
     setRestoring(true);
     try {
-      const addr = await LogosChat.importChatData(restoreUri, passphrase);
+      const addr = await ImagePicker.pickAndImportBackup(passphrase);
+      if (addr == null) return; // picker cancelled — keep the modal open to retry
+      const ok = restoreSucceeded(shortAddress(addr));
       setAskRestorePass(false);
-      setRestoreUri(null);
-      ToastAndroid.show(`Restored ${shortAddress(addr)}`, ToastAndroid.LONG);
+      ToastAndroid.show(ok.message, ToastAndroid.LONG);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Restore failed';
-      ToastAndroid.show(msg, ToastAndroid.LONG);
+      const outcome = restoreFailed(e);
+      if (!outcome.retryable) setAskRestorePass(false);
+      ToastAndroid.show(outcome.message, ToastAndroid.LONG);
     } finally {
       setRestoring(false);
     }
@@ -224,10 +224,7 @@ export function AboutScreen() {
         busy={restoring}
         mode="restore"
         onClose={() => {
-          if (!restoring) {
-            setAskRestorePass(false);
-            setRestoreUri(null);
-          }
+          if (!restoring) setAskRestorePass(false);
         }}
         onConfirm={onRestoreConfirm}
       />

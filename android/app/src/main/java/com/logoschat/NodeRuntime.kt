@@ -43,6 +43,14 @@ object NodeRuntime {
   private const val IDENTITY_ENC_FILE = "logoschat-identity.enc"
   private const val STORE_FILE = "logoschat-store.db"
 
+  /**
+   * #443 (review): marks the one restore outcome that is neither success nor failure —
+   * the wipe happened, the identity/address came back, but the chat history did not.
+   * [importAndRestart] prefixes its error with this so the bridge can reject with a
+   * distinct code and the UI can say what actually survived instead of "Restored".
+   */
+  const val PARTIAL_RESTORE_PREFIX = "identity restored, but the chat history was not: "
+
   @Volatile var ctx: Long = 0L; private set
   @Volatile var status: String = "stopped"; private set
   @Volatile var address: String? = null; private set
@@ -455,12 +463,28 @@ object NodeRuntime {
    * tables before reopening — so the node comes back up with the SAME address, and
    * the app history/contacts are restored. The native store is intentionally NOT
    * restored (MLS group state isn't portable — groups are re-formed via re-invite).
+   *
+   * #443 (review): the chat payload is VALIDATED against this build's schema before
+   * anything destructive happens, and a chat import that fails anyway (after the wipe)
+   * is reported as [PARTIAL_RESTORE_PREFIX] rather than swallowed — the caller must not
+   * tell the user "Restored" when the history it just wiped did not come back.
    */
   fun importAndRestart(seed: ByteArray, chatJson: String?, onDone: (String?) -> Unit) {
     executor.execute {
       try {
         val context = appContext ?: run { onDone("no app context"); return@execute }
         if (seed.size != 64) { onDone("bad identity seed (${seed.size} bytes, expected 64)"); return@execute }
+        // Gate FIRST: refuse a backup this build can't read while the user's data is
+        // still here, instead of finding out after the wipe has thrown it away.
+        if (!chatJson.isNullOrEmpty()) {
+          try {
+            ChatRepo.requireDb().validateImportJson(chatJson)
+          } catch (t: Throwable) {
+            Log.w(TAG, "restore refused before wipe: ${t.message}")
+            onDone("${t.message} — nothing on this device was changed")
+            return@execute
+          }
+        }
         stopBlocking()
         // Clean slate — identical to the wipe flow so no stale identity/store/keys survive.
         deleteWithSiblings(File(context.filesDir, IDENTITY_FILE))
@@ -473,17 +497,23 @@ object NodeRuntime {
         // open (no .enc present → prepareIdentity no-ops → open_persistent uses this →
         // same address → sealIdentity re-seals it right after).
         File(identityPath(context)).writeBytes(seed)
-        // Restore app-side history/contacts (best-effort — never block the identity restore).
+        // Restore app-side history/contacts. Validation above makes this the unlikely
+        // path, but if it still fails the wipe has already happened — so the identity
+        // comes back and the caller is told the history did NOT (#443 review). Never
+        // silently swallowed: the user must know what they lost.
+        var partial: String? = null
         if (!chatJson.isNullOrEmpty()) {
           try {
             ChatRepo.requireDb().importJson(chatJson)
           } catch (t: Throwable) {
-            Log.w(TAG, "importJson failed (identity still restored): ${t.message}")
+            Log.e(TAG, "importJson failed after wipe (identity still restored)", t)
+            partial = "$PARTIAL_RESTORE_PREFIX${t.message ?: t.toString()}"
           }
         }
         Log.i(TAG, "identity restored from backup; reopening")
         val err = startBlocking()
-        onDone(err)
+        // A node-open failure outranks the partial-history report — it's the harder stop.
+        onDone(err ?: partial)
       } catch (t: Throwable) {
         setStatus("error", t.message)
         onDone(t.message ?: t.toString())

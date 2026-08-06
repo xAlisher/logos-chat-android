@@ -1425,37 +1425,22 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
    * wipes local state, installs the seed + history, and reopens with the SAME address).
    * Resolves with the restored address; rejects on a wrong passphrase / non-backup / a
    * pre-#440 backup that has no identity. DESTRUCTIVE — replaces the current identity.
+   *
+   * #443 (review): a backup this build's schema can't read is refused BEFORE the wipe
+   * (nothing on the device changes). If the chat import fails after the wipe anyway, the
+   * promise rejects with code `import_partial` — the identity is back but the history is
+   * not, and the UI must not report a clean "Restored".
    */
   @ReactMethod
   fun importChatData(uriStr: String, passphrase: String, promise: Promise) {
-    NodeRuntime.executor.execute {
-      try {
-        val ctx = reactApplicationContext
-        val envelope =
-            ctx.contentResolver
-                .openInputStream(android.net.Uri.parse(uriStr))
-                ?.bufferedReader(Charsets.UTF_8)
-                ?.use { it.readText() }
-                ?: throw IllegalArgumentException("could not read the backup file")
-        val json =
-            try {
-              BackupCrypto.decrypt(passphrase, envelope)
-            } catch (e: Throwable) {
-              throw IllegalArgumentException("wrong passphrase, or not a Peers backup")
-            }
-        val root = org.json.JSONObject(json)
-        val idB64 = root.optString("identity", "")
-        if (idB64.isEmpty()) {
-          throw IllegalArgumentException(
-              "this backup has no identity (it was made before identity backup existed)")
-        }
-        val seed = android.util.Base64.decode(idB64, android.util.Base64.NO_WRAP)
-        NodeRuntime.importAndRestart(seed, json) { err ->
-          if (err == null) promise.resolve(NodeRuntime.address) else promise.reject("import", err)
-        }
-      } catch (t: Throwable) {
-        Log.w("logos-chat-bridge", "import failed: ${t.message}")
-        promise.reject("import", t.message ?: t.toString())
+    // Delegates to the shared BackupImport (used by the resilient picker path too, #440).
+    // The error string carries NodeRuntime.PARTIAL_RESTORE_PREFIX for the middle case
+    // (identity back, history lost) so the UI stops offering a destructive retry.
+    BackupImport.run(reactApplicationContext, uriStr, passphrase) { addr, err ->
+      when {
+        err == null -> promise.resolve(addr)
+        err.startsWith(NodeRuntime.PARTIAL_RESTORE_PREFIX) -> promise.reject("import_partial", err)
+        else -> promise.reject("import", err)
       }
     }
   }
