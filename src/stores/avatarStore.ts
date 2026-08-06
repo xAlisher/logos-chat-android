@@ -22,6 +22,13 @@ const norm = (a: string) => a.toLowerCase();
 // Addresses we've already attempted a lazy KV hydrate for (avoid repeat reads / loops).
 const hydrated = new Set<string>();
 
+// #441 (review): identity generation. A KV read that STARTED before a wipe/restore
+// resolves after it, and would otherwise write the PREVIOUS identity's MediaRef back
+// into the freshly-cleared store — re-creating the exact bug reset() exists to fix.
+// reset() bumps this; every async read captures it up front and drops its result if
+// the generation has moved on.
+let generation = 0;
+
 interface AvatarState {
   /** address(lowercased) → the contact's avatar MediaRef. */
   refs: Record<string, MediaRef>;
@@ -39,6 +46,11 @@ interface AvatarState {
   hydrate: () => Promise<void>;
   /** Lazily hydrate one contact's ref from KV the first time it's needed (idempotent). */
   ensureHydrated: (address: string) => void;
+  /** #441: drop ALL in-memory avatars after an identity wipe/reset. The native wipe
+   *  already deletes the KV (avatar refs live in the wiped DB), but the JS store
+   *  survives — so a fresh identity would otherwise keep rendering the old custom
+   *  sigil. Mirrors chatStore.reset() (#328). In-memory only; no KV write. */
+  reset: () => void;
 }
 
 export const useAvatarStore = create<AvatarState>((set, get) => ({
@@ -74,8 +86,10 @@ export const useAvatarStore = create<AvatarState>((set, get) => ({
   },
 
   hydrate: async () => {
+    const gen = generation;
     try {
       const raw = await LogosChat.getSetting(KV_MY_AVATAR);
+      if (gen !== generation) return; // a wipe/restore landed mid-read
       if (raw && raw.length > 0) {
         set({mine: JSON.parse(raw) as MediaRef});
       }
@@ -84,13 +98,21 @@ export const useAvatarStore = create<AvatarState>((set, get) => ({
     }
   },
 
+  reset: () => {
+    generation += 1; // invalidate every KV read already in flight
+    hydrated.clear();
+    set({refs: {}, mine: null});
+  },
+
   ensureHydrated: address => {
     const key = norm(address);
     if (hydrated.has(key)) return;
     hydrated.add(key);
     if (get().refs[key] != null) return;
+    const gen = generation;
     LogosChat.getSetting(KV_AVATAR_PREFIX + key)
       .then(raw => {
+        if (gen !== generation) return; // a wipe/restore landed mid-read
         if (!raw || raw.length === 0) return;
         try {
           const ref = JSON.parse(raw) as MediaRef;

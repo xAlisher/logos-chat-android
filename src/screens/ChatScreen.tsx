@@ -637,6 +637,12 @@ export function ChatScreen() {
   const convo = useChatStore(s => s.conversations[convoPk]);
   const messages = useChatStore(s => s.messages[convoPk]) ?? [];
   const groupMembers = useChatStore(s => s.members[convoPk]);
+  // #444 (review of PR #447): the header subtitle depends on the roster SIZE, and
+  // the header is registered through navigation.setOptions — a closure that only
+  // re-registers when the effect re-runs. loadMembers() replaces the roster array
+  // wholesale, so depending on `groupMembers` itself would re-register the header
+  // on every reload; the count is the stable value the header actually reads.
+  const groupMemberCount = groupMembers?.length ?? 0;
   // #174: all rosters — used to resolve whether the 1:1 peer is mesh-mapped.
   const allMembers = useChatStore(s => s.members);
   const loadMembers = useChatStore(s => s.loadMembers);
@@ -1083,13 +1089,25 @@ export function ChatScreen() {
           <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={28} disableImage={storageOff} locked={isGroup && storageOff} />
         );
         if (isGroup) {
+          // #444: member count as a second line under the group name, matching the
+          // conversation list. Hidden until the roster hydrates so it never flashes
+          // "0 members".
           return (
             <View style={styles.headerLeftCluster} testID="chat-title">
               {back}
               {avatar}
-              <Text style={[styles.headerTitleText, styles.headerTitleFlex]} numberOfLines={1}>
-                {convoDisplayName(convo)}
-              </Text>
+              <View style={[styles.headerTitleCol, styles.headerTitleFlex]}>
+                <Text style={styles.headerTitleText} numberOfLines={1}>
+                  {convoDisplayName(convo)}
+                </Text>
+                {groupMemberCount > 0 && (
+                  <Text style={styles.headerTitleSub} numberOfLines={1} testID="chat-header-membercount">
+                    {groupMemberCount === 1
+                      ? '1 member'
+                      : `${groupMemberCount} members`}
+                  </Text>
+                )}
+              </View>
             </View>
           );
         }
@@ -1199,7 +1217,18 @@ export function ChatScreen() {
         </Pressable>
       ),
     });
-  }, [navigation, convo, isGroup, peerMesh, peerPresence, bleReachable]);
+    // Every reactive value the header closure READS must be listed here — the
+    // options are a snapshot, not a render. Pinned by chatHeaderDeps.test.ts.
+  }, [
+    navigation,
+    convo,
+    isGroup,
+    peerMesh,
+    peerPresence,
+    bleReachable,
+    groupMemberCount,
+    storageOff,
+  ]);
 
   // #193/docs/test-matrix: composer/liveness state is derived by the pure,
   // unit-tested deriveComposerState — the screen only maps sendColorKind→color
