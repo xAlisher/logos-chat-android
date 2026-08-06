@@ -47,9 +47,11 @@ section.)
   app auto removes-and-re-adds them; you'll see them briefly leave and rejoin the member list.
 - **Everything else should be unchanged** — normal group messaging, adding/removing members,
   and 1:1 chats. This release only *adds* recovery; it shouldn't change anything you rely on.
-- **F-Droid users:** just refresh and update as usual — nothing else to do. **If you sideloaded
-  an APK from GitHub Releases:** this is the first build signed with our production key, so
-  Android will ask you to uninstall the old one and reinstall (one-time; F-Droid is unaffected).
+- **One-time reinstall required (everyone).** This is the first build signed with our own
+  production key (previous builds used the throwaway Android debug key — a security fix, #356).
+  Android won't update across a key change, so **you must uninstall Peers and reinstall it** from
+  F-Droid — for this release only. Uninstalling resets your identity, so **back up / re-share your
+  address and re-add contacts** afterward. Future updates go back to being seamless.
 
 ### v0.8.7-groups
 - **Remove a member from a group you created.** Create a new group, add a couple of
