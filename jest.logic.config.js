@@ -51,5 +51,6 @@ module.exports = {
     '<rootDir>/__tests__/videoA11y.test.ts',
     '<rootDir>/__tests__/restoreOutcome.test.ts',
     '<rootDir>/__tests__/avatarReset.test.ts',
+    '<rootDir>/__tests__/chatHeaderDeps.test.ts',
   ],
 };
