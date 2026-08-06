@@ -38,6 +38,28 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.0-signed — one-time reinstall + restore (read before updating!)
+This is the release we prepared you for. Peers is now signed with our **own production key**
+instead of the throwaway Android debug key (a security fix — nobody can forge a build as "Peers").
+Android will **not** auto-update across a signing-key change, so this update — **this one only** —
+needs a manual uninstall + reinstall. Everything is seamless again afterward.
+
+**Do it in this exact order — a backup is what saves your identity:**
+1. **Back up first (if you haven't already on v0.8.9).** About → **Back up identity + chats** →
+   choose a passphrase → save the `.peersenc` file somewhere off your phone (share it to
+   yourself). **No backup = you cannot get your address or chats back.** Do not skip this.
+2. **Uninstall Peers.** (This is what resets your identity — which is why step 1 matters.)
+3. **Install v0.9.0 from F-Droid** (refresh the repo first so it shows the new version).
+4. **Restore.** Open Peers → About → **Restore from backup** → enter your passphrase → pick the
+   file. Your identity comes back with the **same address** and your chats return.
+5. **Sanity check:** your address in About should match what it was before. If a group is quiet,
+   ask its creator to re-add you (a re-add heals it).
+
+- **If restore fails with "wrong passphrase, or not a Peers backup":** nothing was changed by the
+  restore — you just have the wrong file or passphrase. Nothing is lost as long as you still have a
+  good backup file; try again.
+- **From here on, updates are seamless** — no more reinstalls.
+
 ### v0.8.9-backup — back up your identity (do this now!)
 - **Back up your identity + chats.** Side menu → **About** → **Back up identity + chats** → choose a
   passphrase → the share sheet saves an encrypted `.peersenc` file. Keep both the file and the
