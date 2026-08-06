@@ -88,7 +88,7 @@ type Row =
   | {kind: 'msg'; msg: Message}
   | {kind: 'sys'; sys: SystemNote}
   | {kind: 'media'; send: MediaSend}; // #308 in-flight video compress/upload
-import {shortAddress} from '../native/LogosChat';
+import LogosChat, {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
 import {parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal} from '../native/voiceMsg';
@@ -2116,23 +2116,38 @@ export function ChatScreen() {
                         if (!reviving) doRestart();
                       }
                     : () => {
-                        const creator = (groupMembers ?? []).find(
-                          m => !m.isSelf,
-                        )?.address;
-                        if (creator == null) {
-                          useNodeStore.setState({
-                            error: 'Creator unknown — no member to ping yet',
-                          });
-                          return;
-                        }
-                        const gname =
-                          convo != null
-                            ? convoDisplayName(convo)
-                            : route.params.convoName;
-                        openDirectWith(
-                          creator,
-                          `"${gname}" ended — could you re-create it?`,
-                        );
+                        // #442: address the group's ACTUAL recorded creator (from
+                        // authenticated MLS state), not the first member on the roster
+                        // — a joiner's roster order doesn't identify the creator. Fall
+                        // back to a roster guess only for pre-#349 groups that record no
+                        // creator natively (groupCreator resolves null there).
+                        (async () => {
+                          let creator: string | null = null;
+                          try {
+                            creator = await LogosChat.groupCreator(convoPk);
+                          } catch {
+                            // native unavailable — fall through to the roster guess
+                          }
+                          if (creator == null) {
+                            creator =
+                              (groupMembers ?? []).find(m => !m.isSelf)?.address ??
+                              null;
+                          }
+                          if (creator == null) {
+                            useNodeStore.setState({
+                              error: 'Creator unknown — no member to ping yet',
+                            });
+                            return;
+                          }
+                          const gname =
+                            convo != null
+                              ? convoDisplayName(convo)
+                              : route.params.convoName;
+                          openDirectWith(
+                            creator,
+                            `"${gname}" ended — could you re-create it?`,
+                          );
+                        })();
                       }
                 }
               />

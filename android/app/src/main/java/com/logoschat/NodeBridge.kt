@@ -133,6 +133,10 @@ object NodeBridge {
    */
   external fun chatGroupMembers(handle: Long, convoId: String): String?
 
+  /** #433: the group's recorded creator as its address hex, "" if none recorded,
+   *  null on error. Lets a non-creator member address the actual creator. */
+  external fun chatGroupCreator(handle: Long, convoId: String): String?
+
   /** Register the persistent event callback for this handle. 0 on success. */
   external fun chatSetEventCallback(handle: Long): Int
 
