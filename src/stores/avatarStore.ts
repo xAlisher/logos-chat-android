@@ -39,6 +39,11 @@ interface AvatarState {
   hydrate: () => Promise<void>;
   /** Lazily hydrate one contact's ref from KV the first time it's needed (idempotent). */
   ensureHydrated: (address: string) => void;
+  /** #441: drop ALL in-memory avatars after an identity wipe/reset. The native wipe
+   *  already deletes the KV (avatar refs live in the wiped DB), but the JS store
+   *  survives — so a fresh identity would otherwise keep rendering the old custom
+   *  sigil. Mirrors chatStore.reset() (#328). In-memory only; no KV write. */
+  reset: () => void;
 }
 
 export const useAvatarStore = create<AvatarState>((set, get) => ({
@@ -82,6 +87,11 @@ export const useAvatarStore = create<AvatarState>((set, get) => ({
     } catch {
       // no cached own avatar yet
     }
+  },
+
+  reset: () => {
+    hydrated.clear();
+    set({refs: {}, mine: null});
   },
 
   ensureHydrated: address => {

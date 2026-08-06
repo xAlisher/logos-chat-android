@@ -1083,13 +1083,24 @@ export function ChatScreen() {
           <HexAvatar seed={avatarSeed(convo)} kind={convoKind(convo)} size={28} disableImage={storageOff} locked={isGroup && storageOff} />
         );
         if (isGroup) {
+          // #444: member count as a second line under the group name, matching the
+          // conversation list. Hidden until the roster hydrates so it never flashes
+          // "0 members".
+          const memberCount = groupMembers?.length ?? 0;
           return (
             <View style={styles.headerLeftCluster} testID="chat-title">
               {back}
               {avatar}
-              <Text style={[styles.headerTitleText, styles.headerTitleFlex]} numberOfLines={1}>
-                {convoDisplayName(convo)}
-              </Text>
+              <View style={[styles.headerTitleCol, styles.headerTitleFlex]}>
+                <Text style={styles.headerTitleText} numberOfLines={1}>
+                  {convoDisplayName(convo)}
+                </Text>
+                {memberCount > 0 && (
+                  <Text style={styles.headerTitleSub} numberOfLines={1} testID="chat-header-membercount">
+                    {memberCount === 1 ? '1 member' : `${memberCount} members`}
+                  </Text>
+                )}
+              </View>
             </View>
           );
         }

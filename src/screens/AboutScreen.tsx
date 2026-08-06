@@ -20,6 +20,7 @@ import LogosChat, {shortAddress} from '../native/LogosChat';
 import ImagePicker from '../native/ImagePicker';
 import {BackupPassphraseModal} from '../components/BackupPassphraseModal';
 import {restoreFailed, restoreSucceeded} from '../lib/restoreOutcome';
+import {useAvatarStore} from '../stores/avatarStore';
 
 const REPO_URL = 'https://github.com/xAlisher/peers';
 
@@ -82,6 +83,15 @@ export function AboutScreen() {
     try {
       const addr = await ImagePicker.pickAndImportBackup(passphrase);
       if (addr == null) return; // picker cancelled — keep the modal open to retry
+      // #441: the restore replaced the identity; drop the pre-restore custom avatar
+      // from memory and re-read it from the restored backup's KV (if the backup had one).
+      useAvatarStore.getState().reset();
+      useAvatarStore.getState().hydrate();
+      // #446: a freshly restored member lags the group's current epoch, so its first
+      // group send can fail with "No matching key package…" until it processes the
+      // group's pending commits. Force an immediate store catch-up now to shrink that
+      // window. (Full auto-retry + friendly-error mapping tracked in #446.)
+      LogosChat.catchupNow();
       const ok = restoreSucceeded(shortAddress(addr));
       setAskRestorePass(false);
       ToastAndroid.show(ok.message, ToastAndroid.LONG);

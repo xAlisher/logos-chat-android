@@ -6,6 +6,7 @@
 import {create} from 'zustand';
 import LogosChat from '../native/LogosChat';
 import {useChatStore} from './chatStore'; // #328: clear in-memory chat state on wipe
+import {useAvatarStore} from './avatarStore'; // #441: clear in-memory avatars on wipe
 import {
   makeVerifier,
   parseVerifier,
@@ -202,6 +203,9 @@ export const useSecurityStore = create<SecurityState>((set, get) => ({
     // conversation reusing an old convoPk renders the previous identity's cached
     // messages/system-lines (phantom "joined" lines in a fresh DM).
     useChatStore.getState().reset();
+    // #441: same in-memory-survives-native-wipe problem for custom avatars — a fresh
+    // identity must not keep rendering the previous identity's chosen sigil.
+    useAvatarStore.getState().reset();
     set({
       mainVerifier: null,
       duressVerifier: null,
