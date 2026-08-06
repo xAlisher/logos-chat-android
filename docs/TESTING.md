@@ -58,6 +58,12 @@ needs a manual uninstall + reinstall. Everything is seamless again afterward.
 - **If restore fails with "wrong passphrase, or not a Peers backup":** nothing was changed by the
   restore — you just have the wrong file or passphrase. Nothing is lost as long as you still have a
   good backup file; try again.
+- **Xiaomi / Redmi / POCO (MIUI/HyperOS) users:** because this is a *fresh* install (not an update),
+  MIUI may show an extra **"Install blocked"** / **"Install via USB"** confirmation, or hold the
+  install for a security scan. This is normal — tap **Install** / **Allow / More details → Install
+  anyway** to let it through. (If F-Droid can't install at all, enable *Install unknown apps* for
+  F-Droid in Settings, and if you're sideloading over a cable, turn on *Install via USB* in
+  Developer options.) Non-MIUI phones won't see this.
 - **From here on, updates are seamless** — no more reinstalls.
 
 ### v0.8.9-backup — back up your identity (do this now!)
