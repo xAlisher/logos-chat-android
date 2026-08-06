@@ -44,6 +44,11 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     private const val REQ_MULTI = 0xC0DF
     private const val REQ_CAPTURE = 0xC0E0
     private const val REQ_RAW = 0xC0E1 // #300: raw gif/video (no downscale)
+    private const val REQ_BACKUP = 0xC0E2 // #440: pick a Peers backup file to restore
+    // #440: the restore passphrase, stashed PROCESS-WIDE so it survives the file picker
+    // recreating the Activity / RN context (low memory / "Don't keep activities") — then
+    // onActivityResult imports natively without depending on a JS-held promise.
+    @Volatile private var pendingRestorePass: String? = null
   }
 
   init {
@@ -210,6 +215,42 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #440: pick a Peers backup file AND restore it — the passphrase is taken FIRST (JS
+   * modal, no Activity leave), then the file pick + decrypt + import all run natively, so
+   * the destructive restore survives the picker recreating the host Activity (which was
+   * losing the JS-held promise + passphrase prompt). Resolves the restored address, null
+   * if cancelled, or rejects "import"/"import_partial" (see restoreOutcome.ts). If the
+   * Activity is recreated mid-pick the import still runs (passphrase is process-static) —
+   * the promise may just not resolve, but the identity is already restored on reopen.
+   */
+  @ReactMethod
+  fun pickAndImportBackup(passphrase: String, promise: Promise) {
+    val activity = reactApplicationContext.currentActivity
+    if (activity == null) {
+      promise.reject("no_activity", "no foreground activity")
+      return
+    }
+    if (pending != null) {
+      promise.reject("busy", "a restore is already in progress")
+      return
+    }
+    pending = promise
+    pendingRestorePass = passphrase
+    try {
+      val intent =
+          Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "*/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+          }
+      activity.startActivityForResult(Intent.createChooser(intent, "Choose a backup"), REQ_BACKUP)
+    } catch (t: Throwable) {
+      pending = null
+      pendingRestorePass = null
+      promise.reject("launch_failed", t.message ?: "could not open picker")
+    }
+  }
+
   override fun onActivityResult(
       activity: Activity,
       requestCode: Int,
@@ -221,6 +262,27 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
       REQ_CAPTURE -> handleSingle(pendingCaptureUri.also { pendingCaptureUri = null }, resultCode)
       REQ_MULTI -> handleMulti(data, resultCode)
       REQ_RAW -> handleRaw(data?.data, resultCode)
+      REQ_BACKUP -> {
+        // `pending` may be null if the Activity/RN context was recreated while the picker
+        // was foreground — the import must still run (passphrase is process-static), the
+        // promise is just best-effort.
+        val promise = pending
+        pending = null
+        val pass = pendingRestorePass
+        pendingRestorePass = null
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null || pass == null) {
+          promise?.resolve(null) // cancelled / no passphrase carried over
+          return
+        }
+        BackupImport.run(reactApplicationContext, uri.toString(), pass) { addr, err ->
+          when {
+            err == null -> promise?.resolve(addr)
+            err.startsWith(NodeRuntime.PARTIAL_RESTORE_PREFIX) -> promise?.reject("import_partial", err)
+            else -> promise?.reject("import", err)
+          }
+        }
+      }
       else -> return
     }
   }

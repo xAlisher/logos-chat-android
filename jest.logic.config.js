@@ -49,5 +49,6 @@ module.exports = {
     '<rootDir>/__tests__/releaseSigning.test.ts',
     '<rootDir>/__tests__/a11yLabels.test.ts',
     '<rootDir>/__tests__/videoA11y.test.ts',
+    '<rootDir>/__tests__/restoreOutcome.test.ts',
   ],
 };

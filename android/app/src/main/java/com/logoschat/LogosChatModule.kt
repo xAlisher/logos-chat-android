@@ -1368,7 +1368,15 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
           throw IllegalArgumentException("passphrase too short")
         }
         val ctx = reactApplicationContext
-        val json = ChatRepo.requireDb().exportJson()
+        // #440: fold the 64-byte identity seed into the (passphrase-encrypted) backup so
+        // the same address can be restored on a fresh install. It rides inside the same
+        // AES-GCM envelope — never written anywhere in the clear. Absent only if no
+        // identity is provisioned yet (then the backup is data-only, as before #440).
+        val root = org.json.JSONObject(ChatRepo.requireDb().exportJson())
+        NodeRuntime.readIdentitySeed(ctx)?.let {
+          root.put("identity", android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP))
+        }
+        val json = root.toString()
         val envelope = BackupCrypto.encrypt(passphrase, json)
         val dir = java.io.File(ctx.cacheDir, "exports")
         dir.mkdirs()
@@ -1406,6 +1414,33 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       } catch (t: Throwable) {
         Log.w("logos-chat-bridge", "export failed: ${t.message}")
         promise.reject("export", t)
+      }
+    }
+  }
+
+  /**
+   * #440: restore an identity + chat history from a backup produced by [exportChatData].
+   * Reads the chosen file (a SAF content URI), decrypts it with the passphrase, extracts
+   * the 64-byte identity seed, and hands off to [NodeRuntime.importAndRestart] (which
+   * wipes local state, installs the seed + history, and reopens with the SAME address).
+   * Resolves with the restored address; rejects on a wrong passphrase / non-backup / a
+   * pre-#440 backup that has no identity. DESTRUCTIVE — replaces the current identity.
+   *
+   * #443 (review): a backup this build's schema can't read is refused BEFORE the wipe
+   * (nothing on the device changes). If the chat import fails after the wipe anyway, the
+   * promise rejects with code `import_partial` — the identity is back but the history is
+   * not, and the UI must not report a clean "Restored".
+   */
+  @ReactMethod
+  fun importChatData(uriStr: String, passphrase: String, promise: Promise) {
+    // Delegates to the shared BackupImport (used by the resilient picker path too, #440).
+    // The error string carries NodeRuntime.PARTIAL_RESTORE_PREFIX for the middle case
+    // (identity back, history lost) so the UI stops offering a destructive retry.
+    BackupImport.run(reactApplicationContext, uriStr, passphrase) { addr, err ->
+      when {
+        err == null -> promise.resolve(addr)
+        err.startsWith(NodeRuntime.PARTIAL_RESTORE_PREFIX) -> promise.reject("import_partial", err)
+        else -> promise.reject("import", err)
       }
     }
   }

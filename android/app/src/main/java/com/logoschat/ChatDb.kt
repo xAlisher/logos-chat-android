@@ -57,6 +57,17 @@ class ChatDb(
     // MeshCoreModule's in-memory map. Additive, no FFI (Kotlin BLE + DB).
     const val DB_VERSION = 10
 
+    /** #38 backup envelope marker — what [exportJson] writes and a restore requires. */
+    const val BACKUP_FORMAT = "logos-chat-backup"
+
+    /**
+     * #440: the tables a backup restores, PARENT FIRST (conversations before the rows
+     * that reference its pk). Single source of truth for both the validation pass and
+     * the import itself, so the two can't drift apart (#443 review).
+     */
+    val RESTORABLE_TABLES =
+        listOf("kv", "conversations", "messages", "group_members", "mesh_map", "mesh_contacts")
+
     // #168 (dual-send dedup): a mirrored group's message can arrive on BOTH
     // transports; the two copies land within this window (LoRa latency = minutes).
     const val DEDUP_WINDOW_MS = 10 * 60 * 1000L
@@ -1030,7 +1041,7 @@ class ChatDb(
     val db = readableDatabase
     val root =
         JSONObject().apply {
-          put("format", "logos-chat-backup")
+          put("format", BACKUP_FORMAT)
           put("version", 1)
           put("schemaVersion", DB_VERSION)
           put("exportedAt", System.currentTimeMillis())
@@ -1043,6 +1054,124 @@ class ChatDb(
           put("mesh_contacts", dumpTable(db, "mesh_contacts"))
         }
     return root.toString()
+  }
+
+  /**
+   * #443 (review): decide whether [json] can be restored into THIS build's schema —
+   * WITHOUT writing anything. The restore flow is destructive (wipe, then import), so
+   * this runs BEFORE the wipe: a backup this build cannot read must be refused while
+   * the user's history is still on the device, not discovered after it is gone.
+   *
+   * Throws [IllegalArgumentException] with a user-readable reason when the payload is
+   * not a Peers backup, was written by a NEWER schema than this build knows
+   * (`schemaVersion` — exported since #38 and, until this fix, never checked), carries
+   * a column this build's table does not have, or has a malformed table array. The
+   * column check is made against the live schema via `PRAGMA table_info`, which is the
+   * same schema [ChatRepo.wipeAndReinit] recreates, so a pass here means the INSERTs in
+   * [importJson] will bind.
+   */
+  fun validateImportJson(json: String) {
+    val root =
+        try {
+          JSONObject(json)
+        } catch (t: Throwable) {
+          throw IllegalArgumentException("not a Peers backup (unreadable contents)")
+        }
+    val format = root.optString("format", "")
+    if (format != BACKUP_FORMAT) {
+      throw IllegalArgumentException("not a Peers backup (format='$format')")
+    }
+    // schemaVersion is written by exportJson; a backup from a newer app can contain
+    // tables/columns this build has never heard of, so refuse it outright.
+    val schemaVersion = root.optInt("schemaVersion", -1)
+    if (schemaVersion < 0) {
+      throw IllegalArgumentException("backup has no schemaVersion")
+    }
+    if (schemaVersion > DB_VERSION) {
+      throw IllegalArgumentException(
+          "backup was made by a newer version of Peers (schema v$schemaVersion, " +
+              "this build reads up to v$DB_VERSION) — update Peers and restore again")
+    }
+    val db = readableDatabase
+    for (table in RESTORABLE_TABLES) {
+      val arr = root.opt(table) ?: continue
+      if (arr !is JSONArray) {
+        throw IllegalArgumentException("backup table '$table' is malformed")
+      }
+      if (arr.length() == 0) continue
+      val known = columnsOf(db, table)
+      for (i in 0 until arr.length()) {
+        val row =
+            arr.opt(i) as? JSONObject
+                ?: throw IllegalArgumentException("backup table '$table' row $i is malformed")
+        for (c in row.keys()) {
+          if (c !in known) {
+            throw IllegalArgumentException(
+                "backup table '$table' has an unknown column '$c' (schema v$schemaVersion)")
+          }
+        }
+      }
+    }
+  }
+
+  /** The column names [table] actually has in this build, via `PRAGMA table_info`. */
+  private fun columnsOf(db: SupportSQLiteDatabase, table: String): Set<String> {
+    val cols = mutableSetOf<String>()
+    db.query("PRAGMA table_info($table)").use { c ->
+      val nameIdx = c.getColumnIndex("name")
+      while (c.moveToNext()) cols.add(c.getString(nameIdx))
+    }
+    if (cols.isEmpty()) throw IllegalArgumentException("this build has no table '$table'")
+    return cols
+  }
+
+  /**
+   * #440: re-import a backup produced by [exportJson] into a FRESH ChatDb (the
+   * restore flow wipes + reinits the DB first, so these INSERT into empty tables).
+   * Written INSERT OR REPLACE so a re-run is idempotent, and in ONE transaction so a
+   * malformed row aborts the whole import (leaving the clean empty DB, not a
+   * half-restored one). Parent table (conversations) is restored before its children.
+   * PIN/duress verifiers were never exported, so they stay unset — the restorer sets
+   * a fresh PIN.
+   *
+   * #443 (review): re-runs [validateImportJson] first so this is safe to call directly
+   * — an unreadable backup throws BEFORE the transaction rather than mid-way through.
+   */
+  fun importJson(json: String) {
+    validateImportJson(json)
+    val root = JSONObject(json)
+    val db = writableDatabase
+    db.beginTransaction()
+    try {
+      for (table in RESTORABLE_TABLES) {
+        val arr = root.optJSONArray(table) ?: continue
+        for (i in 0 until arr.length()) restoreRow(db, table, arr.getJSONObject(i))
+      }
+      db.setTransactionSuccessful()
+    } finally {
+      db.endTransaction()
+    }
+  }
+
+  /** Reinsert one exported row (INSERT OR REPLACE), binding JSON types to SQLite. */
+  private fun restoreRow(db: SupportSQLiteDatabase, table: String, row: JSONObject) {
+    val cols = row.keys().asSequence().toList()
+    if (cols.isEmpty()) return
+    val args = arrayOfNulls<Any?>(cols.size)
+    for ((i, c) in cols.withIndex()) {
+      args[i] =
+          if (row.isNull(c)) null
+          else when (val v = row.get(c)) {
+            is Int -> v.toLong()
+            is Long -> v
+            is Double -> v
+            is Boolean -> if (v) 1L else 0L
+            else -> v.toString()
+          }
+    }
+    val colList = cols.joinToString(",")
+    val placeholders = cols.joinToString(",") { "?" }
+    db.execSQL("INSERT OR REPLACE INTO $table ($colList) VALUES ($placeholders)", args)
   }
 
   /**
