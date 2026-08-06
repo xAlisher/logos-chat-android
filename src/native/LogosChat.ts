@@ -245,6 +245,10 @@ interface LogosChatNative {
   leaveGroupLocal(convoPk: number): Promise<null>;
   /** #112: is a group still operable by the lib? 'live' | 'dead' | 'unknown'. */
   groupLiveness(convoPk: number): Promise<string>;
+  /** #433/#442: the group's recorded creator address (hex), or null when none is
+   *  recorded (a group created before #349) or on error. Read from authenticated MLS
+   *  group state — lets a non-creator address the ACTUAL creator, not a roster guess. */
+  groupCreator(convoPk: number): Promise<string | null>;
   /** #112: re-create a dead group in place. NATIVE resolves '{"members":[…]}'
    *  (the addresses to re-invite); chatStore.recreateGroup derives {invited,total}
    *  from it. (Doc corrected per the #161 API-surface audit.) */

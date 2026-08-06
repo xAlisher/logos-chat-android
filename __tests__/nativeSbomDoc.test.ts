@@ -116,6 +116,10 @@ describe('docs/SBOM.md quotes no unexplained native hash', () => {
       'the credential-bytes-gated #437 build (@70a7743), superseded by the ' +
       'signature_key-gated 84b751c2 — same log lines, same 25 symbols, so only ' +
       'the hash tells them apart',
+    '84b751c2':
+      'the signature_key-gated #437 build (@a81464c), superseded by the #433 ' +
+      'creator-accessor build c5293f89 — same #437 gate, +1 exported symbol ' +
+      '(logoschat_group_creator), so 25 → 26',
     '81223080': 'full-clean rebuild of 6dd23bc7 — the non-reproducibility measurement',
     '58c766b9':
       "the delivery repo's own published liblogosdelivery.so — cited as the round-2 " +

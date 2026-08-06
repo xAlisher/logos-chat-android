@@ -17,7 +17,7 @@ sha256sum /tmp/peers-so/lib/arm64-v8a/*.so
 ### Logos / Peers-built (the security-critical TCB)
 | Library | Purpose | Source / provenance |
 |---|---|---|
-| `liblogoschat.so` | MLS chat core (E2E messaging) | Published by `xAlisher/logos-libchat-mls-android` @ `a81464c`; **patch-based** on pinned upstream `libchat` commit `d2124fd` + `patches/libchat-android-arm64.patch` + `patches/349-groupv1-remove-member.patch` + `patches/437-replace-on-desync-welcome.patch` |
+| `liblogoschat.so` | MLS chat core (E2E messaging) | Published by `xAlisher/logos-libchat-mls-android` @ `1d8639f`; **patch-based** on pinned upstream `libchat` commit `d2124fd` + `patches/libchat-android-arm64.patch` + `patches/349-groupv1-remove-member.patch` + `patches/437-replace-on-desync-welcome.patch` + `patches/433-expose-group-creator.patch` |
 | `liblogoschat_bridge.so` | JNI bridge | Built **in this repo** from `android/app/src/main/cpp/logoschat_jni.c` by `scripts/build-bridge.sh` (out-of-band; not a gradle task) — the only shipped lib whose source is reviewable in the same diff as its binary |
 | `liblogosdelivery.so` | Delivery layer (Waku-based) + SDS reliable channels | Published by `xAlisher/logos-libdelivery-android` @ `1646770` (Logos delivery / nwaku; see #402) |
 | `librln.so` | RLN rate-limiting nullifier (delivery spam control) | Published by `xAlisher/logos-libdelivery-android` @ `1646770` (Waku/RLN stack) |
@@ -51,8 +51,8 @@ cd android/app/src/main/jniLibs/arm64-v8a && sha256sum -c SHA256SUMS
 
 Comparing against a **release APK** instead: `liblogoschat.so`, `liblogosdelivery.so` and
 `librln.so` are already fully stripped and pass through packaging **bit-identical**, so their
-in-APK hashes match the manifest directly (re-verified on the signing-key-gated `#437`
-build: `84b751c2…` in `jniLibs/` = `84b751c2…` in `lib/arm64-v8a/` of `app-release.apk`).
+in-APK hashes match the manifest directly (re-verified on the `#433` creator-accessor
+build: `c5293f89…` in `jniLibs/` = `c5293f89…` in `lib/arm64-v8a/` of `app-release.apk`).
 `liblogoschat_bridge.so` and `libc++_shared.so` still carry a symbol table that AGP's strip
 pass removes during packaging, so their in-APK hashes differ **by design** — cross-check
 those two by GNU build-id (`readelf -n`), recorded in the manifest header.
@@ -171,7 +171,7 @@ only evidence there is.
 ## Toolchain / provenance
 - Rust libs: `cargo` targeting `aarch64-linux-android`, Android **NDK r27**.
 - Android: **JDK 17**, Gradle (see `android/gradle/wrapper`).
-- Source pins: upstream `libchat` @ `d2124fd` + the `logos-libchat-mls-android` @ `a81464c`
+- Source pins: upstream `libchat` @ `d2124fd` + the `logos-libchat-mls-android` @ `1d8639f`
   patch set (see the manifest above); JS deps @ `package-lock.json`.
 - **Reproducible builds: measured, and currently NOT reproducible.** This was upgraded from
   "not yet proven" to a measurement during the #437 review. A full `cargo clean` + rerun of
