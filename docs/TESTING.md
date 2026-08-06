@@ -38,20 +38,21 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
-### v0.8.8-recovery — group desync auto-recovery
-- **If you ever see "You've fallen out of sync — Ask to be re-added" in a group:** tap it.
-  Within a minute or so the banner should clear and your messages should send again — the
-  group works normally. That's the whole recovery loop; before this it was a permanent,
-  silent lockout with no way back.
-- **Group creators:** you don't have to do anything when a member asks to be re-added — the
-  app auto removes-and-re-adds them; you'll see them briefly leave and rejoin the member list.
-- **Everything else should be unchanged** — normal group messaging, adding/removing members,
-  and 1:1 chats. This release only *adds* recovery; it shouldn't change anything you rely on.
-- **One-time reinstall required (everyone).** This is the first build signed with our own
-  production key (previous builds used the throwaway Android debug key — a security fix, #356).
-  Android won't update across a key change, so **you must uninstall Peers and reinstall it** from
-  F-Droid — for this release only. Uninstalling resets your identity, so **back up / re-share your
-  address and re-add contacts** afterward. Future updates go back to being seamless.
+### v0.8.9-backup — back up your identity (do this now!)
+- **Back up your identity + chats.** Side menu → **About** → **Back up identity + chats** → choose a
+  passphrase → the share sheet saves an encrypted `.peersenc` file. Keep both the file and the
+  passphrase somewhere safe. **Please actually do this** — the *next* release changes our app
+  signing key, which forces a one-time uninstall+reinstall, and this backup is what brings your
+  identity back afterward. No backup = lost identity when that release lands.
+- **Try restoring it.** About → **Restore from backup** → it asks for the passphrase *first*, then
+  you pick the file. It replaces the identity on this device with the one in the backup. Easiest
+  full test: note your address, make a backup, then restore it — your address should come back
+  unchanged. (Restoring is destructive — only do it on purpose.)
+- **Group desync auto-recovery is now live too.** If you ever see "You've fallen out of sync —
+  Ask to be re-added" in a group, tap it; within a minute the banner clears and your messages
+  send again. Creators don't have to do anything — the app auto removes-and-re-adds the member.
+- **No reinstall this time — updates normally from F-Droid.** (The signing-key change, and the
+  one-time reinstall it needs, comes in the *next* release. That's exactly why you back up now.)
 
 ### v0.8.7-groups
 - **Remove a member from a group you created.** Create a new group, add a couple of

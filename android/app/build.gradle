@@ -98,8 +98,8 @@ android {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 111
-        versionName "0.8.8-recovery"
+        versionCode 112
+        versionName "0.8.9-backup"
         // #300: Logos Storage (Codex) media endpoint + bearer token. The token is injected
         // at build time from the `storageToken` gradle property (kept OUT of git); empty by
         // default so the feature no-ops in a plain build.
