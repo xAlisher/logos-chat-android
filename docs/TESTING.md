@@ -38,6 +38,20 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.2-fixes — rollout polish (member count, avatar reset, ping-creator)
+Seamless update from 0.9.1 (same signing key) — just refresh F-Droid.
+- **Group member count.** Open any group chat — the header now shows the member count as a
+  second line under the group name (e.g. "3 members"). Check it matches the roster.
+- **Reset clears your custom avatar.** If you've set a custom avatar (About-side sigil), then do
+  Settings → Reset identity and data: the fresh identity should show a **new generated identicon**,
+  not your old photo. (Restoring from a backup brings your backed-up avatar back.)
+- **Ping creator hits the real creator.** In a group that has *ended*, tapping **Ping creator** now
+  opens a DM with the group's **actual creator** — not a random member. (Only groups created in
+  recent versions record the creator; older ones fall back to a best guess.)
+- **Smoother restore into groups.** Right after restoring a backup, the app now forces a catch-up so
+  your first message in a group is less likely to hit "No matching key package". If it still does,
+  open/read the group, or ask the group creator to remove-and-re-add you — that always clears it.
+
 ### v0.9.1-signed — GrapheneOS restore fix (same key as 0.9.0)
 Small but important fix for the reinstall+restore in 0.9.0. On some hardened ROMs
 (**GrapheneOS** especially) app data / the keystore key could survive an uninstall, which
