@@ -38,6 +38,20 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.1-signed — GrapheneOS restore fix (same key as 0.9.0)
+Small but important fix for the reinstall+restore in 0.9.0. On some hardened ROMs
+(**GrapheneOS** especially) app data / the keystore key could survive an uninstall, which
+made a fresh install refuse to open its database and blocked **Restore from backup** with
+*"secure storage unavailable / ChatRepo.init not called"*. 0.9.1 treats that state as a clean
+first run and restores normally.
+- **Same signing key as 0.9.0**, so if you're already on 0.9.0 this updates **seamlessly** from
+  F-Droid — no reinstall.
+- **If you're doing the 0.9.0 reinstall for the first time, use 0.9.1** — it's the one that
+  restores cleanly on GrapheneOS.
+- **If you hit the error on 0.9.0:** update to 0.9.1 and restore again; or as a one-time
+  workaround, clear Peers' storage (Settings → Apps → Peers → Storage → Clear) and restore —
+  your backup file in Downloads is untouched.
+
 ### v0.9.0-signed — one-time reinstall + restore (read before updating!)
 This is the release we prepared you for. Peers is now signed with our **own production key**
 instead of the throwaway Android debug key (a security fix — nobody can forge a build as "Peers").

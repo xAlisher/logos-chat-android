@@ -156,8 +156,17 @@ object ChatDbCrypto {
     if (prefs.getBoolean(KEY_CHATDB_ENCRYPTED, false)) return true
 
     val dbFile = context.getDatabasePath(DB_NAME)
-    if (!dbFile.exists()) {
-      // Fresh install: the SQLCipher factory will create the db encrypted.
+    // Fresh start: no db, a 0-byte file, or a leftover "phantom" that exists() reports
+    // but which is NOT a readable plaintext Peers db. The last case is #445: on GrapheneOS
+    // (and similar) SECURE_PREFS / the Keystore-wrapped key can survive an uninstall while
+    // the db does not, so `wasEnc` is true with nothing real on disk. There is nothing to
+    // migrate — drop any leftover and let the SQLCipher factory create the db fresh +
+    // encrypted. Previously this fell through to the migration path, threw opening the
+    // missing/invalid db, and failed CLOSED, which blocked restore after the v0.9.0
+    // signing-key reinstall (ChatRepo.init could never open the db).
+    if (!dbFile.exists() || dbFile.length() == 0L || !isReadablePlaintextDb(dbFile)) {
+      listOf(dbFile, File("${dbFile.path}-wal"), File("${dbFile.path}-shm"), File("${dbFile.path}-journal"))
+          .forEach { if (it.exists()) runCatching { it.delete() } }
       prefs.edit().putBoolean(KEY_CHATDB_ENCRYPTED, true).commit()
       return true
     }
@@ -232,4 +241,24 @@ object ChatDbCrypto {
       return false // stay plaintext — data preserved, just not encrypted
     }
   }
+
+  /**
+   * #445: true only if [dbFile] opens as a real plaintext Peers db (its `conversations`
+   * table is queryable). A leftover/phantom entry that survived an uninstall — exists()
+   * true but not a usable db — returns false, so [migrateIfNeeded] treats it as a fresh
+   * run and creates a clean encrypted db instead of failing the (impossible) migration.
+   * Read-only + fully guarded: any failure means "no real plaintext data to migrate".
+   */
+  private fun isReadablePlaintextDb(dbFile: File): Boolean =
+      try {
+        val p = PlainDb.openDatabase(dbFile.path, null, PlainDb.OPEN_READONLY)
+        try {
+          p.rawQuery("SELECT count(*) FROM conversations", null).use { it.moveToFirst() }
+          true
+        } finally {
+          p.close()
+        }
+      } catch (t: Throwable) {
+        false
+      }
 }
