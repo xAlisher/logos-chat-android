@@ -374,6 +374,19 @@ Java_com_logoschat_NodeBridge_chatGroupMembers(JNIEnv *env, jobject thiz, jlong 
   return take_cstr(env, json);
 }
 
+// #433: the group's recorded creator as its address hex (empty string when the group
+// records no creator). Lets a non-creator member address the actual creator (e.g. to
+// ping them to re-create a dead group) instead of guessing the roster. NULL on error.
+JNIEXPORT jstring JNICALL
+Java_com_logoschat_NodeBridge_chatGroupCreator(JNIEnv *env, jobject thiz, jlong handle,
+                                               jstring convoId) {
+  (void)thiz;
+  const char *c = (*env)->GetStringUTFChars(env, convoId, 0);
+  char *hex = logoschat_group_creator((void *)handle, c);
+  (*env)->ReleaseStringUTFChars(env, convoId, c);
+  return take_cstr(env, hex);
+}
+
 // Register the persistent event callback for this handle. The wrapper spawns a
 // pump; events arriving before this are buffered on the crossbeam channel, so
 // there is no early-event-loss window (unlike the old lib).

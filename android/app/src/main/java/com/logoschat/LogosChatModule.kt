@@ -1124,6 +1124,31 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * #433/#442: the group's recorded creator as its address hex, or null when no
+   * creator is recorded (a group created before #349, or an error). Lets a
+   * non-creator member address the ACTUAL creator (e.g. "Ping creator" to ask them to
+   * re-create a dead group) instead of guessing the first member on the roster.
+   */
+  @ReactMethod
+  fun groupCreator(convoPk: Double, promise: Promise) {
+    NodeRuntime.executor.execute {
+      val c = NodeRuntime.ctx
+      if (c == 0L) {
+        promise.resolve(null)
+        return@execute
+      }
+      val libConvoId = ChatRepo.requireDb().libConvoIdOf(convoPk.toLong())
+      if (libConvoId == null) {
+        promise.resolve(null)
+        return@execute
+      }
+      val creator = NodeBridge.chatGroupCreator(c, libConvoId)
+      // "" = no creator recorded (pre-#349); surface both that and errors as null.
+      promise.resolve(if (creator.isNullOrEmpty()) null else creator)
+    }
+  }
+
+  /**
    * Re-create a dead group in place (#112): make a NEW lib group with the same
    * name and rebind THIS conversation row to it, so local history continues.
    * Resolves {"members":[…]} — the persisted roster for the CALLER to re-invite,
