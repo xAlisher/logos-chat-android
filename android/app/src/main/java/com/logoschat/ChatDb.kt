@@ -1046,6 +1046,52 @@ class ChatDb(
   }
 
   /**
+   * #440: re-import a backup produced by [exportJson] into a FRESH ChatDb (the
+   * restore flow wipes + reinits the DB first, so these INSERT into empty tables).
+   * Written INSERT OR REPLACE so a re-run is idempotent, and in ONE transaction so a
+   * malformed row aborts the whole import (leaving the clean empty DB, not a
+   * half-restored one). Parent table (conversations) is restored before its children.
+   * PIN/duress verifiers were never exported, so they stay unset — the restorer sets
+   * a fresh PIN.
+   */
+  fun importJson(json: String) {
+    val root = JSONObject(json)
+    val db = writableDatabase
+    db.beginTransaction()
+    try {
+      for (table in listOf(
+          "kv", "conversations", "messages", "group_members", "mesh_map", "mesh_contacts")) {
+        val arr = root.optJSONArray(table) ?: continue
+        for (i in 0 until arr.length()) restoreRow(db, table, arr.getJSONObject(i))
+      }
+      db.setTransactionSuccessful()
+    } finally {
+      db.endTransaction()
+    }
+  }
+
+  /** Reinsert one exported row (INSERT OR REPLACE), binding JSON types to SQLite. */
+  private fun restoreRow(db: SupportSQLiteDatabase, table: String, row: JSONObject) {
+    val cols = row.keys().asSequence().toList()
+    if (cols.isEmpty()) return
+    val args = arrayOfNulls<Any?>(cols.size)
+    for ((i, c) in cols.withIndex()) {
+      args[i] =
+          if (row.isNull(c)) null
+          else when (val v = row.get(c)) {
+            is Int -> v.toLong()
+            is Long -> v
+            is Double -> v
+            is Boolean -> if (v) 1L else 0L
+            else -> v.toString()
+          }
+    }
+    val colList = cols.joinToString(",")
+    val placeholders = cols.joinToString(",") { "?" }
+    db.execSQL("INSERT OR REPLACE INTO $table ($colList) VALUES ($placeholders)", args)
+  }
+
+  /**
    * Dump every row of [table] as a JSON array of {column: value} objects. When [skipKeyColumn]
    * is given, rows whose value in that column is in [skipKeys] are omitted (#361/#365: keeps
    * the PIN/duress verifiers out of exports).

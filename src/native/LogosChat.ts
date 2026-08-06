@@ -275,8 +275,15 @@ interface LogosChatNative {
    * Android share sheet. Resolves the on-device path of the written file. Does NOT
    * include the lib's MLS crypto identity/ratchet state (ephemeral, not portable).
    */
-  /** #361: passphrase-encrypted backup (PBKDF2 → AES-GCM). Passphrase min length 8. */
+  /** #361: passphrase-encrypted backup (PBKDF2 → AES-GCM). Passphrase min length 8.
+   *  #440: the backup now also carries the 64-byte identity seed (inside the same
+   *  encrypted envelope) so `importChatData` can restore the SAME address. */
   exportChatData(passphrase: string): Promise<string>;
+  /** #440: restore identity + history from a backup file (a SAF content URI) with its
+   *  passphrase. DESTRUCTIVE — replaces the current identity, then reopens the node.
+   *  Resolves the restored address; rejects on wrong passphrase / non-backup / a
+   *  pre-#440 backup with no identity. */
+  importChatData(uri: string, passphrase: string): Promise<string>;
   /**
    * #241: share a PNG (base64, no data: prefix) via the OS share sheet
    * (ACTION_SEND, image/png). Used to share the my-address QR + sigil as an image.

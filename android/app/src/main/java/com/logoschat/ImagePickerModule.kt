@@ -44,6 +44,7 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     private const val REQ_MULTI = 0xC0DF
     private const val REQ_CAPTURE = 0xC0E0
     private const val REQ_RAW = 0xC0E1 // #300: raw gif/video (no downscale)
+    private const val REQ_BACKUP = 0xC0E2 // #440: pick a Peers backup file to restore
   }
 
   init {
@@ -210,6 +211,36 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * #440: pick a Peers backup file (any type — a backup has no extension guarantee).
+   * Resolves the chosen content URI as a string (JS then passes it + the passphrase to
+   * LogosChat.importChatData), or null if cancelled.
+   */
+  @ReactMethod
+  fun pickBackup(promise: Promise) {
+    val activity = reactApplicationContext.currentActivity
+    if (activity == null) {
+      promise.reject("no_activity", "no foreground activity")
+      return
+    }
+    if (pending != null) {
+      promise.reject("busy", "a pick is already in progress")
+      return
+    }
+    pending = promise
+    try {
+      val intent =
+          Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "*/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+          }
+      activity.startActivityForResult(Intent.createChooser(intent, "Choose a backup"), REQ_BACKUP)
+    } catch (t: Throwable) {
+      pending = null
+      promise.reject("launch_failed", t.message ?: "could not open picker")
+    }
+  }
+
   override fun onActivityResult(
       activity: Activity,
       requestCode: Int,
@@ -221,6 +252,12 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
       REQ_CAPTURE -> handleSingle(pendingCaptureUri.also { pendingCaptureUri = null }, resultCode)
       REQ_MULTI -> handleMulti(data, resultCode)
       REQ_RAW -> handleRaw(data?.data, resultCode)
+      REQ_BACKUP -> {
+        val promise = pending ?: return
+        pending = null
+        if (resultCode != Activity.RESULT_OK || data?.data == null) promise.resolve(null)
+        else promise.resolve(data.data.toString())
+      }
       else -> return
     }
   }

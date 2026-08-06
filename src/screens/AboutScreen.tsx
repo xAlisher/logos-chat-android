@@ -17,6 +17,7 @@ import {Logo} from '../components/Logo';
 import {HexAvatar} from '../components/HexAvatar';
 import {useNodeStore} from '../stores/nodeStore';
 import LogosChat, {shortAddress} from '../native/LogosChat';
+import ImagePicker from '../native/ImagePicker';
 import {BackupPassphraseModal} from '../components/BackupPassphraseModal';
 
 const REPO_URL = 'https://github.com/xAlisher/peers';
@@ -37,6 +38,9 @@ export function AboutScreen() {
   }, []);
 
   const [askPass, setAskPass] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [askRestorePass, setAskRestorePass] = useState(false);
+  const [restoreUri, setRestoreUri] = useState<string | null>(null);
 
   // #38/#361: back up the app-side store as a PASSPHRASE-ENCRYPTED file, then open the
   // share sheet. The passphrase prompt (scope + no-recovery warning) gates the export;
@@ -51,11 +55,42 @@ export function AboutScreen() {
     try {
       await LogosChat.exportChatData(passphrase);
       setAskPass(false);
-      ToastAndroid.show('Encrypted backup exported', ToastAndroid.SHORT);
+      ToastAndroid.show('Encrypted backup saved', ToastAndroid.SHORT);
     } catch {
-      ToastAndroid.show('Export failed', ToastAndroid.SHORT);
+      ToastAndroid.show('Backup failed', ToastAndroid.SHORT);
     } finally {
       setExporting(false);
+    }
+  };
+
+  // #440: restore identity + history from a backup. Pick the file (SAF), then take the
+  // passphrase; the native import is DESTRUCTIVE (replaces this device's identity) and
+  // reopens the node with the restored address.
+  const onRestore = async () => {
+    if (restoring) return;
+    try {
+      const uri = await ImagePicker.pickBackup();
+      if (uri == null) return; // cancelled
+      setRestoreUri(uri);
+      setAskRestorePass(true);
+    } catch {
+      ToastAndroid.show('Could not open the file picker', ToastAndroid.SHORT);
+    }
+  };
+
+  const onRestoreConfirm = async (passphrase: string) => {
+    if (restoreUri == null) return;
+    setRestoring(true);
+    try {
+      const addr = await LogosChat.importChatData(restoreUri, passphrase);
+      setAskRestorePass(false);
+      setRestoreUri(null);
+      ToastAndroid.show(`Restored ${shortAddress(addr)}`, ToastAndroid.LONG);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Restore failed';
+      ToastAndroid.show(msg, ToastAndroid.LONG);
+    } finally {
+      setRestoring(false);
     }
   };
 
@@ -151,12 +186,29 @@ export function AboutScreen() {
           disabled={exporting}
           testID="about-export">
           <Text style={styles.linkText}>
-            {exporting ? 'Exporting…' : 'Export chat data'}
+            {exporting ? 'Backing up…' : 'Back up identity + chats'}
           </Text>
           <Text style={styles.helper}>
-            Save an encrypted backup of your conversations, messages and contacts,
-            protected by a passphrase you choose. Your encryption identity and PIN are
-            not included. Keep the passphrase safe — the backup can't be opened without it.
+            Save an encrypted backup of your identity, conversations, messages and
+            contacts, protected by a passphrase you choose. Restore it after a reinstall
+            to keep the same address. Your PIN is not included. Keep the passphrase safe —
+            the backup can't be opened without it.
+          </Text>
+        </Pressable>
+
+        {/* #440: restore identity + history from a backup — pick the file, enter its
+            passphrase. Destructive: replaces the identity on this device. */}
+        <Pressable
+          style={[styles.linkRow, restoring && styles.rowDisabled]}
+          onPress={onRestore}
+          disabled={restoring}
+          testID="about-restore">
+          <Text style={styles.linkText}>
+            {restoring ? 'Restoring…' : 'Restore from backup'}
+          </Text>
+          <Text style={styles.helper}>
+            Pick a backup file and enter its passphrase to restore your identity and
+            history — this replaces the identity currently on this device.
           </Text>
         </Pressable>
       </ScrollView>
@@ -166,6 +218,18 @@ export function AboutScreen() {
         busy={exporting}
         onClose={() => !exporting && setAskPass(false)}
         onConfirm={onExportConfirm}
+      />
+      <BackupPassphraseModal
+        visible={askRestorePass}
+        busy={restoring}
+        mode="restore"
+        onClose={() => {
+          if (!restoring) {
+            setAskRestorePass(false);
+            setRestoreUri(null);
+          }
+        }}
+        onConfirm={onRestoreConfirm}
       />
     </SafeAreaView>
   );

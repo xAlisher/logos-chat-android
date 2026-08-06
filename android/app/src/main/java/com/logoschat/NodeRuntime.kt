@@ -425,6 +425,72 @@ object NodeRuntime {
     }
   }
 
+  // -- identity backup / restore (#440) --------------------------------------
+
+  /**
+   * #440: read this device's 64-byte identity seed (account||delegate) for an
+   * encrypted backup. While the node is up the plaintext seed has been sealed +
+   * deleted (#258), so it is read back out of the Keystore-wrapped `.enc`; on the
+   * rare window where a plaintext `.bin` still exists we read that. `null` if no
+   * identity is provisioned yet or the Keystore unwrap fails.
+   */
+  fun readIdentitySeed(context: Context): ByteArray? {
+    val enc = File(context.filesDir, IDENTITY_ENC_FILE)
+    if (enc.exists()) {
+      return try {
+        Base64.decode(KeystoreCrypto.unwrap(enc.readText()), Base64.NO_WRAP)
+      } catch (t: Throwable) {
+        Log.e(TAG, "readIdentitySeed unwrap failed: ${t.message}")
+        null
+      }
+    }
+    val plain = File(identityPath(context))
+    return if (plain.exists()) plain.readBytes() else null
+  }
+
+  /**
+   * #440: restore an identity + chat history from a decrypted backup. Same
+   * destructive primitive as [wipeAndRestart] (stop → clear all local state →
+   * reopen), except we INSTALL the backed-up 64-byte seed and re-import the ChatDb
+   * tables before reopening — so the node comes back up with the SAME address, and
+   * the app history/contacts are restored. The native store is intentionally NOT
+   * restored (MLS group state isn't portable — groups are re-formed via re-invite).
+   */
+  fun importAndRestart(seed: ByteArray, chatJson: String?, onDone: (String?) -> Unit) {
+    executor.execute {
+      try {
+        val context = appContext ?: run { onDone("no app context"); return@execute }
+        if (seed.size != 64) { onDone("bad identity seed (${seed.size} bytes, expected 64)"); return@execute }
+        stopBlocking()
+        // Clean slate — identical to the wipe flow so no stale identity/store/keys survive.
+        deleteWithSiblings(File(context.filesDir, IDENTITY_FILE))
+        deleteWithSiblings(File(context.filesDir, IDENTITY_ENC_FILE))
+        deleteWithSiblings(File(context.filesDir, STORE_FILE))
+        context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE).edit().clear().commit()
+        deleteRecursively(File(context.filesDir, "chat-images"))
+        ChatRepo.wipeAndReinit(context)
+        // INSTALL the backup's identity: write the plaintext seed the wrapper reads at
+        // open (no .enc present → prepareIdentity no-ops → open_persistent uses this →
+        // same address → sealIdentity re-seals it right after).
+        File(identityPath(context)).writeBytes(seed)
+        // Restore app-side history/contacts (best-effort — never block the identity restore).
+        if (!chatJson.isNullOrEmpty()) {
+          try {
+            ChatRepo.requireDb().importJson(chatJson)
+          } catch (t: Throwable) {
+            Log.w(TAG, "importJson failed (identity still restored): ${t.message}")
+          }
+        }
+        Log.i(TAG, "identity restored from backup; reopening")
+        val err = startBlocking()
+        onDone(err)
+      } catch (t: Throwable) {
+        setStatus("error", t.message)
+        onDone(t.message ?: t.toString())
+      }
+    }
+  }
+
   /**
    * ChatService START_STICKY path: the process died with the node running and the
    * system restarted the service — bring the node back, no JS involved. The

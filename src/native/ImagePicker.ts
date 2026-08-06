@@ -51,6 +51,9 @@ interface ImagePickerNative {
    * carries {durationMs, posterPath}.
    */
   pickRawMedia(maxBytes: number, kind: 'gif' | 'video'): Promise<string | null>;
+  /** #440: pick a Peers backup file to restore. Resolves the chosen content URI as a
+   *  string (pass it + the passphrase to LogosChat.importChatData), or null if cancelled. */
+  pickBackup(): Promise<string | null>;
 }
 
 /** #300: a raw (un-re-encoded) gif/video the user picked, staged in a cache file. */

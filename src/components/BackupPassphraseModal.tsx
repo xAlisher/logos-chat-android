@@ -11,16 +11,21 @@ export const MIN_PASSPHRASE_LEN = 8;
 export function BackupPassphraseModal({
   visible,
   busy,
+  mode = 'export',
   onClose,
   onConfirm,
 }: {
   visible: boolean;
   busy?: boolean;
+  /** #440: 'export' sets a new passphrase (entered twice); 'restore' enters the
+   *  passphrase of an existing backup to decrypt it (single field). */
+  mode?: 'export' | 'restore';
   onClose: () => void;
   onConfirm: (passphrase: string) => void;
 }) {
   const [pass, setPass] = useState('');
   const [confirm, setConfirm] = useState('');
+  const restore = mode === 'restore';
 
   useEffect(() => {
     if (visible) {
@@ -31,7 +36,11 @@ export function BackupPassphraseModal({
 
   const tooShort = pass.length < MIN_PASSPHRASE_LEN;
   const mismatch = confirm.length > 0 && pass !== confirm;
-  const canExport = !tooShort && pass === confirm && !busy;
+  // Restore only needs the passphrase (a wrong one fails to decrypt); export needs a
+  // valid new passphrase entered twice.
+  const canExport = restore
+    ? !tooShort && !busy
+    : !tooShort && pass === confirm && !busy;
 
   return (
     <Modal
@@ -42,33 +51,37 @@ export function BackupPassphraseModal({
       statusBarTranslucent>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="backup-passphrase-modal">
-          <Text style={styles.heading}>Encrypt backup</Text>
+          <Text style={styles.heading}>{restore ? 'Restore from backup' : 'Encrypt backup'}</Text>
           <Text style={styles.helper}>
-            Includes your conversations, messages, and contacts. It does not include your
-            encryption identity or your PIN. The file is encrypted with your passphrase —
-            there is no way to recover it if you forget the passphrase.
+            {restore
+              ? 'Enter the passphrase you set when you made this backup. This REPLACES the identity and history on this device with the ones in the backup.'
+              : 'Includes your conversations, messages, and contacts, and your identity so you can restore this address later. The file is encrypted with your passphrase — there is no way to recover it if you forget the passphrase.'}
           </Text>
 
           <TextInput
             style={styles.input}
             value={pass}
             onChangeText={setPass}
-            placeholder={`Passphrase (min ${MIN_PASSPHRASE_LEN} chars)…`}
+            placeholder={
+              restore ? 'Backup passphrase…' : `Passphrase (min ${MIN_PASSPHRASE_LEN} chars)…`
+            }
             placeholderTextColor={colors.textFaint}
             secureTextEntry
             autoFocus
             testID="backup-passphrase-input"
           />
-          <TextInput
-            style={styles.input}
-            value={confirm}
-            onChangeText={setConfirm}
-            placeholder="Confirm passphrase…"
-            placeholderTextColor={colors.textFaint}
-            secureTextEntry
-            testID="backup-passphrase-confirm"
-          />
-          {mismatch && <Text style={styles.warn}>Passphrases don't match.</Text>}
+          {!restore && (
+            <TextInput
+              style={styles.input}
+              value={confirm}
+              onChangeText={setConfirm}
+              placeholder="Confirm passphrase…"
+              placeholderTextColor={colors.textFaint}
+              secureTextEntry
+              testID="backup-passphrase-confirm"
+            />
+          )}
+          {!restore && mismatch && <Text style={styles.warn}>Passphrases don't match.</Text>}
 
           <View style={styles.actions}>
             <Pressable style={styles.cancelBtn} onPress={onClose} testID="backup-cancel">
@@ -80,7 +93,7 @@ export function BackupPassphraseModal({
               disabled={!canExport}
               testID="backup-export">
               <Text style={[type.title, {color: colors.onAccent}]}>
-                {busy ? 'Encrypting…' : 'Export'}
+                {busy ? (restore ? 'Restoring…' : 'Encrypting…') : restore ? 'Restore' : 'Export'}
               </Text>
             </Pressable>
           </View>

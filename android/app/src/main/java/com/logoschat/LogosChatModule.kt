@@ -1368,7 +1368,15 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
           throw IllegalArgumentException("passphrase too short")
         }
         val ctx = reactApplicationContext
-        val json = ChatRepo.requireDb().exportJson()
+        // #440: fold the 64-byte identity seed into the (passphrase-encrypted) backup so
+        // the same address can be restored on a fresh install. It rides inside the same
+        // AES-GCM envelope — never written anywhere in the clear. Absent only if no
+        // identity is provisioned yet (then the backup is data-only, as before #440).
+        val root = org.json.JSONObject(ChatRepo.requireDb().exportJson())
+        NodeRuntime.readIdentitySeed(ctx)?.let {
+          root.put("identity", android.util.Base64.encodeToString(it, android.util.Base64.NO_WRAP))
+        }
+        val json = root.toString()
         val envelope = BackupCrypto.encrypt(passphrase, json)
         val dir = java.io.File(ctx.cacheDir, "exports")
         dir.mkdirs()
@@ -1406,6 +1414,48 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
       } catch (t: Throwable) {
         Log.w("logos-chat-bridge", "export failed: ${t.message}")
         promise.reject("export", t)
+      }
+    }
+  }
+
+  /**
+   * #440: restore an identity + chat history from a backup produced by [exportChatData].
+   * Reads the chosen file (a SAF content URI), decrypts it with the passphrase, extracts
+   * the 64-byte identity seed, and hands off to [NodeRuntime.importAndRestart] (which
+   * wipes local state, installs the seed + history, and reopens with the SAME address).
+   * Resolves with the restored address; rejects on a wrong passphrase / non-backup / a
+   * pre-#440 backup that has no identity. DESTRUCTIVE — replaces the current identity.
+   */
+  @ReactMethod
+  fun importChatData(uriStr: String, passphrase: String, promise: Promise) {
+    NodeRuntime.executor.execute {
+      try {
+        val ctx = reactApplicationContext
+        val envelope =
+            ctx.contentResolver
+                .openInputStream(android.net.Uri.parse(uriStr))
+                ?.bufferedReader(Charsets.UTF_8)
+                ?.use { it.readText() }
+                ?: throw IllegalArgumentException("could not read the backup file")
+        val json =
+            try {
+              BackupCrypto.decrypt(passphrase, envelope)
+            } catch (e: Throwable) {
+              throw IllegalArgumentException("wrong passphrase, or not a Peers backup")
+            }
+        val root = org.json.JSONObject(json)
+        val idB64 = root.optString("identity", "")
+        if (idB64.isEmpty()) {
+          throw IllegalArgumentException(
+              "this backup has no identity (it was made before identity backup existed)")
+        }
+        val seed = android.util.Base64.decode(idB64, android.util.Base64.NO_WRAP)
+        NodeRuntime.importAndRestart(seed, json) { err ->
+          if (err == null) promise.resolve(NodeRuntime.address) else promise.reject("import", err)
+        }
+      } catch (t: Throwable) {
+        Log.w("logos-chat-bridge", "import failed: ${t.message}")
+        promise.reject("import", t.message ?: t.toString())
       }
     }
   }
