@@ -260,12 +260,17 @@ interface ChatState {
   sendStagedVideo: (convoPk: number, video: PickedRawMedia) => Promise<void>;
   /** #308: in-flight media sends (video compress→upload), keyed by a temp id. */
   mediaSends: Record<string, MediaSend>;
-  /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send). */
+  /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send).
+   *  #423: staged at high quality; SQ/HQ is decided at send. */
   stageImages: (convoPk: number) => Promise<PickedImage[]>;
   /** #261: capture a photo to STAGE (guards + camera permission, no send). */
   stageCameraPhoto: (convoPk: number) => Promise<PickedImage[]>;
   /** #261: send previously-staged images (each its own message, in order). */
-  sendStagedImages: (convoPk: number, images: PickedImage[]) => Promise<void>;
+  sendStagedImages: (
+    convoPk: number,
+    images: PickedImage[],
+    hq?: boolean,
+  ) => Promise<void>;
   /** #204: share the current location as clickable coordinates. */
   sendLocation: (convoPk: number) => Promise<void>;
   /**
@@ -1196,7 +1201,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return [];
     }
     try {
-      return parsePickedArray(await ImagePicker.pickImages(1024, 60_000, MAX_ALBUM));
+      // #423: always stage at HIGH quality and keep it; the SQ/HQ choice is made
+      // at Send (SQ downscales this to the inline budget, HQ uploads it as-is), so
+      // the toggle works AFTER attaching — no more lossy pick-time decision.
+      return parsePickedArray(
+        await ImagePicker.pickImages(2048, 2_000_000, MAX_ALBUM),
+      );
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
       return [];
@@ -1218,7 +1228,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return [];
     }
     try {
-      const p = parsePicked(await ImagePicker.capturePhoto(1024, 60_000));
+      const p = parsePicked(await ImagePicker.capturePhoto(2048, 2_000_000));
       return p != null ? [p] : [];
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
@@ -1227,14 +1237,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   // #261: send images the user staged in the composer, each its own message.
-  sendStagedImages: async (convoPk: number, images: PickedImage[]) => {
+  sendStagedImages: async (
+    convoPk: number,
+    images: PickedImage[],
+    hq = false,
+  ) => {
     for (const p of images) {
       try {
-        const res = JSON.parse(
-          await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64),
-        );
-        if (res.status === 'failed') {
-          useNodeStore.setState({error: 'image send failed — tap to retry'});
+        // #423: staged images are high-quality; persist the original once, then
+        // the SEND-TIME toggle decides how it goes out — so flipping HQ after
+        // attaching works (we still hold the original).
+        const path = await ImagePicker.saveBase64Jpeg(p.base64);
+        if (hq) {
+          // HIGH: upload the original to Storage, send a store2: marker (no ~120KB
+          // inline cap — the same path as gif/video).
+          const {cid, key, cap} = await Storage.uploadEncrypted(path, '');
+          const marker = encodeMedia({
+            cid,
+            key,
+            cap,
+            mime: p.mime,
+            width: p.width,
+            height: p.height,
+          });
+          await get().send(convoPk, marker);
+        } else {
+          // STANDARD: downscale the original to the inline budget, send inline.
+          const small = parsePicked(
+            await ImagePicker.downscaleFileToBase64(path, 1024, 120_000),
+          );
+          const s = small ?? p;
+          const res = JSON.parse(
+            await LogosChat.sendImageTo(convoPk, s.mime, s.width, s.height, s.base64),
+          );
+          if (res.status === 'failed') {
+            useNodeStore.setState({error: 'image send failed — tap to retry'});
+          }
         }
       } catch (e: any) {
         useNodeStore.setState({error: String(e?.message ?? e)});
