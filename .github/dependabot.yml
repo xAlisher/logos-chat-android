@@ -1,0 +1,56 @@
+# Dependency updates. Grouped and rate-limited deliberately: this is a solo-maintained repo and
+# an unbounded PR firehose is worse than no automation at all.
+#
+# Every ecosystem sets a `cooldown`. A newly published version is the highest-risk version there
+# is — compromised-maintainer and typosquat attacks are usually caught within days of publish, so
+# waiting before auto-proposing an upgrade turns "we adopted it in an hour" into "we adopted it
+# after the ecosystem had a week to notice." For a messenger whose users assume their traffic is
+# private, that trade is clearly worth one week of latency on non-security bumps.
+#
+# Note: cooldown delays *version* updates. Dependabot **security** alerts and security PRs are not
+# subject to it, so a known-CVE fix still arrives immediately.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      # One PR for routine patch/minor bumps; majors still come through individually so they
+      # get read properly.
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels: [dependencies]
+
+  - package-ecosystem: gradle
+    directory: "/android"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+    labels: [dependencies]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+    labels: [dependencies]
+
+# NOTE: this does NOT cover the native messaging cores. liblogoschat.so is built from a patched
+# fork of logos-messaging/libchat and its Rust dependency tree has no advisory feed reaching this
+# repo — so a clean Dependabot/npm-audit run says nothing about it. That gap is real and is not
+# closed by this file.

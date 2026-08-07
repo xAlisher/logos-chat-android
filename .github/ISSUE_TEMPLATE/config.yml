@@ -1,0 +1,13 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/xAlisher/peers/security/advisories/new
+    about: >-
+      Do NOT open a public issue for anything that could expose messages, impersonate a user,
+      or forge a build. Report it privately here — it stays visible only to you and the
+      maintainer. See SECURITY.md for scope and what to expect.
+  - name: 💬 Question or general discussion
+    url: https://github.com/xAlisher/peers/issues
+    about: >-
+      Search the existing issues first — this project is issue-driven and most in-flight work
+      is already described in one.
