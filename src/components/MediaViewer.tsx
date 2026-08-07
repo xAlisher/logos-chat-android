@@ -20,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import {Gesture, GestureDetector} from 'react-native-gesture-handler';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -253,6 +254,9 @@ export function MediaViewer({
   const [controls, setControls] = useState(false);
   const [zoomed, setZoomed] = useState(false);
   const listRef = useRef<FlatList<MediaItem>>(null);
+  // Keep the bar's actions and the close circle clear of the system status/nav
+  // bars (we hide the status bar but the nav bar/gesture area still occupies space).
+  const insets = useSafeAreaInsets();
 
   // Hardware back closes the viewer (an overlay, not a Modal — so we intercept it).
   useEffect(() => {
@@ -317,7 +321,7 @@ export function MediaViewer({
 
         {/* top-right close circle — always available */}
         <Pressable
-          style={styles.closeCircle}
+          style={[styles.closeCircle, {top: Math.max(16, insets.top) + 12}]}
           onPress={onClose}
           hitSlop={12}
           testID="media-viewer-close">
@@ -326,7 +330,9 @@ export function MediaViewer({
 
         {/* mode-2 bottom bar */}
         {controls && (
-          <View style={styles.bar} pointerEvents="box-none">
+          <View
+            style={[styles.bar, {paddingBottom: Math.max(20, insets.bottom + 14)}]}
+            pointerEvents="box-none">
             {author != null && (
               <View style={styles.authorRow}>
                 <HexAvatar seed={author.address} kind={author.kind} size={18} />
