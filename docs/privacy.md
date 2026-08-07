@@ -79,3 +79,8 @@ Anonymity is a **pluggable transport pipe** under Logos messaging — never a re
   That's the proper fix for who-talks-to-whom.
 
 If you found a gap not listed here, please open an issue — honest threat-modeling is the point.
+
+**If the gap is exploitable, please use the private report form instead of a public issue:**
+[Report a vulnerability](https://github.com/xAlisher/peers/security/advisories/new). See
+[`SECURITY.md`](../SECURITY.md). Documentation gaps and anything without exploit potential are
+very welcome on the public tracker.
