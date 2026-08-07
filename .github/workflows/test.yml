@@ -39,6 +39,11 @@ jobs:
           distribution: temurin
           java-version: 17
       - run: npm ci
+      # New-Arch autolinking (generateAutolinkingNewArchitectureFiles) creates a
+      # nested dir under app/build with a non-recursive mkdir, so it fails on a
+      # clean runner where app/build doesn't exist yet. Pre-create it.
+      - name: Pre-create app/build (New-Arch autolinking mkdir)
+        run: mkdir -p android/app/build
       - name: Kotlin unit tests (Robolectric — schema, epochs, merge, ns-timestamp)
         working-directory: android
         run: ./gradlew testDebugUnitTest
