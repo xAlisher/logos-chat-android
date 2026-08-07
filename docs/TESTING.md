@@ -38,6 +38,18 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.6-media — media viewer polish
+Seamless update from 0.9.x. Fixes to the new viewer:
+- **First tap is clean.** Open a photo/video → it's full-screen with **no buttons**. **Tap again**
+  to show the close (top-right) + the bottom bar. Tap once more to hide them.
+- **Download works.** Open a photo/GIF/video → tap it → **download** → it saves to your gallery
+  (Pictures/Peers or Movies/Peers) and you get a "saved to gallery" confirmation.
+- **Video actions work.** Open a video, tap to show the bar — **download / share / forward** now
+  work for video too (before, only close worked).
+- **Smoother close.** No more glitchy animation when closing; the bottom bar no longer has a
+  redundant close button (use the top-right X, swipe down, or back).
+- **GrapheneOS:** no more empty bar above the chat header after closing a photo.
+
 ### v0.9.5-media — new full-screen media viewer + HQ photos
 Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
 - **Tap any photo, GIF, or video.** It opens **full-screen, edge-to-edge** (no more sitting under
