@@ -40,4 +40,5 @@ you were reviewing this.
 - [ ] Docs updated if behaviour changed — including `docs/privacy.md` if this changes what
       leaves the device
 - [ ] No checked-in `.so` was hand-edited
-- [ ] Commit messages follow the existing convention (see CONTRIBUTING.md)
+- [ ] Commit messages follow the existing convention: `#<issue>: <what changed>` for issue
+      work, or a `chore:` / `docs(scope):` / `feat:` prefix when there is no issue
