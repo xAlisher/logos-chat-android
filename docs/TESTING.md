@@ -38,6 +38,23 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.5-media — new full-screen media viewer + HQ photos
+Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
+- **Tap any photo, GIF, or video.** It opens **full-screen, edge-to-edge** (no more sitting under
+  the title bar). **Tap again** to show a bottom bar (who sent it + download / share / forward /
+  close) and a close button top-right; tap once more to hide it.
+- **Gestures in the viewer:** **pinch to zoom** a photo; **swipe down** to close; **swipe left/right**
+  to flip through *all* the photos/GIFs/videos in that chat. Try each — it should feel smooth and
+  never crash.
+- **Share out of the app:** open a photo/video → tap the **share** icon → your Android share sheet
+  should appear (send to another app).
+- **HQ photos.** When you attach a photo, a small **`HQ`** label appears to the right of the
+  thumbnail — **gray = off, orange = on**. Tap it on, then send: the photo goes out in **high
+  quality** (via storage) instead of the compressed inline version. Toggling works before *or* after
+  attaching. In a storage-off group the `HQ` label is gray and disabled (no high-quality path there).
+- **Storage-off groups:** the **photo and camera** buttons are now always available (they never used
+  storage anyway); only GIF/video stay hidden when storage is off.
+
 ### v0.9.4 — fewer false error banners + tidier group recovery
 Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
 - **The "welcome not addressed to this member" banner should be gone.** In earlier builds, when
