@@ -59,6 +59,7 @@ export interface MediaSend {
 }
 import {useNodeStore} from './nodeStore';
 import {useMeshStore} from './meshStore';
+import {sendFailedMessage} from './sendFailure'; // #446
 import {useAvatarStore} from './avatarStore';
 import {convoDisplayName} from './conversationView';
 
@@ -1439,7 +1440,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (running) {
           const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
           if (res.status === 'failed') {
-            useNodeStore.setState({error: 'send failed — tap the message to retry'});
+            useNodeStore.setState({error: sendFailedMessage(convo?.isGroup)});
+            if (convo?.isGroup) LogosChat.catchupNow();
           }
         } else if (meshOk) {
           // Node down but the mesh leg went — record the mesh-only outbound (what
@@ -1458,7 +1460,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       } else {
         const res = JSON.parse(await LogosChat.sendMessageTo(convoPk, text));
         if (res.status === 'failed') {
-          useNodeStore.setState({error: 'send failed — tap the message to retry'});
+          useNodeStore.setState({error: sendFailedMessage(convo?.isGroup)});
+          if (convo?.isGroup) LogosChat.catchupNow();
         }
       }
     } catch (e: any) {
