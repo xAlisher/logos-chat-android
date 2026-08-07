@@ -12,6 +12,12 @@ export interface PickedImage {
   byteLength: number;
   /** base64 (no line wrapping) of the downscaled JPEG. */
   base64: string;
+  /**
+   * #423: staged as HIGH quality — picked at a larger budget and sent through the
+   * Storage path (store2: marker) instead of the ~120KB inline path. Set by the
+   * staging code from the composer's SQ/HQ toggle, not by native.
+   */
+  hq?: boolean;
 }
 
 interface ImagePickerNative {

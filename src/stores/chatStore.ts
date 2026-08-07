@@ -260,10 +260,11 @@ interface ChatState {
   sendStagedVideo: (convoPk: number, video: PickedRawMedia) => Promise<void>;
   /** #308: in-flight media sends (video compress→upload), keyed by a temp id. */
   mediaSends: Record<string, MediaSend>;
-  /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send). */
-  stageImages: (convoPk: number) => Promise<PickedImage[]>;
+  /** #261: pick up to {@link MAX_ALBUM} images to STAGE (guards + pick, no send).
+   *  #423: hq → pick at a larger budget and mark them for the Storage/HQ path. */
+  stageImages: (convoPk: number, hq?: boolean) => Promise<PickedImage[]>;
   /** #261: capture a photo to STAGE (guards + camera permission, no send). */
-  stageCameraPhoto: (convoPk: number) => Promise<PickedImage[]>;
+  stageCameraPhoto: (convoPk: number, hq?: boolean) => Promise<PickedImage[]>;
   /** #261: send previously-staged images (each its own message, in order). */
   sendStagedImages: (convoPk: number, images: PickedImage[]) => Promise<void>;
   /** #204: share the current location as clickable coordinates. */
@@ -1185,7 +1186,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // #261: guard + pick, but DON'T send — return the picked images so the composer
   // can stage them as removable thumbnails and send on the user's confirm.
-  stageImages: async (convoPk: number) => {
+  stageImages: async (convoPk: number, hq = false) => {
     const convo = get().conversations[convoPk];
     if ((convo?.transport ?? 'logos') === 'mesh') {
       useNodeStore.setState({error: 'images are not supported on mesh'});
@@ -1196,14 +1197,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return [];
     }
     try {
-      return parsePickedArray(await ImagePicker.pickImages(1024, 60_000, MAX_ALBUM));
+      // #423: HQ picks at a much larger budget (goes out via Storage, not the
+      // ~120KB inline cap); SQ keeps the small downscale.
+      const [maxDim, budget] = hq ? [2048, 2_000_000] : [1024, 60_000];
+      const picked = parsePickedArray(
+        await ImagePicker.pickImages(maxDim, budget, MAX_ALBUM),
+      );
+      return picked.map(p => ({...p, hq}));
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
       return [];
     }
   },
 
-  stageCameraPhoto: async (convoPk: number) => {
+  stageCameraPhoto: async (convoPk: number, hq = false) => {
     const convo = get().conversations[convoPk];
     if ((convo?.transport ?? 'logos') === 'mesh') {
       useNodeStore.setState({error: 'images are not supported on mesh'});
@@ -1218,8 +1225,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return [];
     }
     try {
-      const p = parsePicked(await ImagePicker.capturePhoto(1024, 60_000));
-      return p != null ? [p] : [];
+      const [maxDim, budget] = hq ? [2048, 2_000_000] : [1024, 60_000];
+      const p = parsePicked(await ImagePicker.capturePhoto(maxDim, budget));
+      return p != null ? [{...p, hq}] : [];
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
       return [];
@@ -1230,11 +1238,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendStagedImages: async (convoPk: number, images: PickedImage[]) => {
     for (const p of images) {
       try {
-        const res = JSON.parse(
-          await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64),
-        );
-        if (res.status === 'failed') {
-          useNodeStore.setState({error: 'image send failed — tap to retry'});
+        if (p.hq === true) {
+          // #423: HIGH quality → persist the (larger) JPEG to a file, encrypt +
+          // upload to Storage, send a store2: marker (same path as gif/video, so
+          // the ~120KB inline cap doesn't apply). Falls back to nothing on error.
+          const path = await ImagePicker.saveBase64Jpeg(p.base64);
+          const {cid, key, cap} = await Storage.uploadEncrypted(path, '');
+          const marker = encodeMedia({
+            cid,
+            key,
+            cap,
+            mime: p.mime,
+            width: p.width,
+            height: p.height,
+          });
+          await get().send(convoPk, marker);
+        } else {
+          const res = JSON.parse(
+            await LogosChat.sendImageTo(convoPk, p.mime, p.width, p.height, p.base64),
+          );
+          if (res.status === 'failed') {
+            useNodeStore.setState({error: 'image send failed — tap to retry'});
+          }
         }
       } catch (e: any) {
         useNodeStore.setState({error: String(e?.message ?? e)});

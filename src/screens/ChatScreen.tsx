@@ -717,6 +717,9 @@ export function ChatScreen() {
   const [pendingImages, setPendingImages] = useState<PickedImage[]>(
     initialDraft?.pendingImages ?? [],
   );
+  // #423: SQ (default, ~120KB inline) vs HQ (high quality via Storage). HQ needs
+  // Storage, so it's unavailable — and forced off — in a storage-off group.
+  const [hqPhotos, setHqPhotos] = useState(false);
   // #307: a single video staged in the composer (poster thumbnail + play badge), sent on Send.
   const [pendingVideo, setPendingVideo] = useState<PickedRawMedia | null>(null);
   // #308: in-flight video sends for this convo (compress→upload), rendered as progress bubbles.
@@ -1528,16 +1531,18 @@ export function ChatScreen() {
   };
   // #261: pick/capture STAGES the images (appended to the tray) — nothing is sent
   // until the user taps Send, mirroring the location flow.
+  // #423: HQ only when Storage is available in this group.
+  const hqActive = hqPhotos && !storageOff;
   const onPickImages = () =>
     withAttaching(async () => {
-      const picked = await stageImages(convoPk);
+      const picked = await stageImages(convoPk, hqActive);
       if (picked.length > 0) {
         setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
       }
     });
   const onCamera = () =>
     withAttaching(async () => {
-      const picked = await stageCameraPhoto(convoPk);
+      const picked = await stageCameraPhoto(convoPk, hqActive);
       if (picked.length > 0) {
         setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
       }
@@ -2316,30 +2321,64 @@ export function ChatScreen() {
           {/* #261: staged image thumbnails — a removable row above the input, sent
               on Send (mirrors the staged-location chip). */}
           {pendingImages.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.pendingImages}
-              testID="pending-images"
-              keyboardShouldPersistTaps="handled">
-              {pendingImages.map((img, i) => (
-                <View key={i} style={styles.pendingImageWrap}>
-                  <Image
-                    source={{uri: `data:${img.mime};base64,${img.base64}`}}
-                    style={styles.pendingImage}
-                  />
-                  <Pressable
-                    style={styles.pendingImageX}
-                    onPress={() =>
-                      setPendingImages(prev => prev.filter((_, j) => j !== i))
-                    }
-                    hitSlop={8}
-                    testID={`pending-image-clear-${i}`}>
-                    <Text style={styles.pendingImageXText}>✕</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
+            <View style={styles.pendingRow}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.pendingImages}
+                style={styles.pendingScroll}
+                testID="pending-images"
+                keyboardShouldPersistTaps="handled">
+                {pendingImages.map((img, i) => (
+                  <View key={i} style={styles.pendingImageWrap}>
+                    <Image
+                      source={{uri: `data:${img.mime};base64,${img.base64}`}}
+                      style={styles.pendingImage}
+                    />
+                    <Pressable
+                      style={styles.pendingImageX}
+                      onPress={() =>
+                        setPendingImages(prev => prev.filter((_, j) => j !== i))
+                      }
+                      hitSlop={8}
+                      testID={`pending-image-clear-${i}`}>
+                      <Text style={styles.pendingImageXText}>✕</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+              {/* #423: SQ (default, white outline) ↔ HQ (orange) quality toggle.
+                  HQ needs Storage → gray + disabled in a storage-off group. */}
+              <Pressable
+                style={[
+                  styles.qualityToggle,
+                  hqActive && styles.qualityToggleOn,
+                  storageOff && styles.qualityToggleDisabled,
+                ]}
+                onPress={() => {
+                  if (!storageOff) setHqPhotos(v => !v);
+                }}
+                disabled={storageOff}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  storageOff
+                    ? 'High quality unavailable (storage off)'
+                    : hqActive
+                    ? 'High quality photos on'
+                    : 'Standard quality photos'
+                }
+                testID="composer-quality">
+                <Text
+                  style={[
+                    styles.qualityText,
+                    hqActive && styles.qualityTextOn,
+                    storageOff && styles.qualityTextDisabled,
+                  ]}>
+                  {hqActive ? 'HQ' : 'SQ'}
+                </Text>
+              </Pressable>
+            </View>
           )}
           {/* #307: staged video — a poster thumbnail with a play badge, removable, sent on Send. */}
           {pendingVideo != null && (
@@ -2936,6 +2975,24 @@ const styles = StyleSheet.create({
   pendingLocClear: {...type.label, color: colors.textDim, paddingHorizontal: spacing.xs},
   // #261 staged-image thumbnails
   pendingImages: {gap: spacing.sm, paddingBottom: spacing.xs},
+  pendingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  pendingScroll: {flexShrink: 1},
+  // #423: SQ/HQ quality toggle — small outlined pill right of the thumbnails.
+  qualityToggle: {
+    minWidth: 40,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: colors.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qualityToggleOn: {backgroundColor: colors.accent, borderColor: colors.accent},
+  qualityToggleDisabled: {borderColor: colors.textFaint, backgroundColor: 'transparent'},
+  qualityText: {color: colors.text, fontSize: 13, fontWeight: '700'},
+  qualityTextOn: {color: colors.onAccent},
+  qualityTextDisabled: {color: colors.textFaint},
   pendingImageWrap: {width: 64, height: 64},
   pendingImage: {
     width: 64,
