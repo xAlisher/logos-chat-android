@@ -7,22 +7,19 @@
 // - Pinch-zoom (bar hides during zoom, tap brings it back); swipe-down dismisses
 //   in both modes; swipe left/right pages across ALL conversation media.
 // - Uses react-native-gesture-handler + reanimated (added for this; see App.tsx).
-import React, {useCallback, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
+  BackHandler,
   Dimensions,
   FlatList,
   Image,
-  Modal,
   Pressable,
+  StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import {
-  Gesture,
-  GestureDetector,
-  GestureHandlerRootView,
-} from 'react-native-gesture-handler';
+import {Gesture, GestureDetector} from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -257,6 +254,15 @@ export function MediaViewer({
   const [zoomed, setZoomed] = useState(false);
   const listRef = useRef<FlatList<MediaItem>>(null);
 
+  // Hardware back closes the viewer (an overlay, not a Modal — so we intercept it).
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      onClose();
+      return true;
+    });
+    return () => sub.remove();
+  }, [onClose]);
+
   const activeItem = items[active];
   const author = activeItem ? authorFor(activeItem) : null;
   const caption = activeItem && captionFor ? captionFor(activeItem) : null;
@@ -274,18 +280,14 @@ export function MediaViewer({
   );
 
   return (
-    <Modal
-      visible
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={onClose}>
-      {/* A Modal renders in its OWN native root, OUTSIDE the app's
-          GestureHandlerRootView — so gestures only fire if we wrap the Modal's
-          content in its own GestureHandlerRootView. This is the fix for
-          "gestures dead inside a Modal" (and why the app avoided Modal before). */}
-      <GestureHandlerRootView style={styles.root}>
-        <FlatList
+    // #479: an in-tree absolute overlay, NOT a Modal. A Modal renders in its own
+    // native root; tearing it down (with reanimated + a native video inside)
+    // hung the UI thread on dismiss (ANR). An in-tree overlay unmounts cleanly,
+    // and gestures already work here via the app-root GestureHandlerRootView.
+    // ChatScreen hides its header while this is open so it's truly full-screen.
+    <View style={styles.root} collapsable={false}>
+      <StatusBar hidden />
+      <FlatList
           ref={listRef}
           data={items}
           style={styles.list}
@@ -377,8 +379,7 @@ export function MediaViewer({
             </View>
           </View>
         )}
-      </GestureHandlerRootView>
-    </Modal>
+    </View>
   );
 }
 
@@ -396,7 +397,17 @@ function useActivePath(item: MediaItem | undefined): string | null {
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: 'transparent'},
+  // Full-screen in-tree overlay (sits above the chat via zIndex/elevation).
+  root: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    elevation: 1000,
+    backgroundColor: 'transparent',
+  },
   list: {flex: 1},
   page: {width: SCREEN_W, height: SCREEN_H},
   pageInner: {flex: 1, alignItems: 'center', justifyContent: 'center'},

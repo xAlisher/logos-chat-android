@@ -866,6 +866,12 @@ export function ChatScreen() {
       : parseMedia(item.content)?.mime ?? '*/*';
     MediaShare.shareFile(path, mime).catch(() => {});
   }, []);
+  // #479: the media viewer is an in-tree overlay (not a Modal — a Modal teardown
+  // ANR'd on unmount). An overlay can't paint over the NATIVE header, so hide it
+  // while the viewer is open; restore it on close.
+  useEffect(() => {
+    navigation.setOptions({headerShown: viewer == null});
+  }, [navigation, viewer]);
   // #167: a MeshCore channel (transport='mesh') sends over the radio, not the node.
   const isMesh = convo?.transport === 'mesh';
 
