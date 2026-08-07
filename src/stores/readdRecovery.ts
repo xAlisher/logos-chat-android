@@ -59,6 +59,42 @@ export async function shouldAutoReadd(
   return isOnRoster(await resolveRoster(deps), requester);
 }
 
+/**
+ * #324/#433: who to send a readd1: recovery request to.
+ *
+ * Only the group's CREATOR can act on a readd — the creator-gated remove-then-add
+ * in `shouldAutoReadd`; every other member just ignores the marker. #350 shipped
+ * before the app could identify the creator, so it BROADCAST to the whole roster.
+ * Now that #433 exposes the recorded creator we single-target them: less traffic,
+ * less metadata leak, and no readd1: landing in every other member's 1:1.
+ *
+ * Falls back to the broadcast when there is no creator to aim at — a group created
+ * before #349 records none (`creator` is null/empty), and a creator that resolves
+ * to ourselves cannot re-add us. In both cases reaching every other member is the
+ * only way the request can land on whoever the creator turns out to be. Addresses
+ * come back lowercased (canonical hex), self-filtered and de-duplicated.
+ */
+export function chooseReaddTargets(
+  creator: string | null | undefined,
+  roster: ReadonlyArray<{address: string; isSelf?: boolean}>,
+  self: string | null | undefined,
+): {targets: string[]; mode: 'creator' | 'broadcast'} {
+  const me = self?.trim().toLowerCase();
+  const c = creator?.trim().toLowerCase();
+  if (c != null && c !== '' && c !== me) {
+    return {targets: [c], mode: 'creator'};
+  }
+  const targets = Array.from(
+    new Set(
+      roster
+        .filter(m => !m.isSelf)
+        .map(m => m.address.trim().toLowerCase())
+        .filter(a => a !== '' && a !== me),
+    ),
+  );
+  return {targets, mode: 'broadcast'};
+}
+
 // ---------------------------------------------------------------------------
 // Replay of requests that arrived while the JS runtime was dead.
 //

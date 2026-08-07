@@ -18,6 +18,7 @@ import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
 import {encodeReadd, isReaddContent, parseReadd} from '../messages/readd';
 import {
+  chooseReaddTargets,
   isOnRoster,
   parseReaddDebts,
   prunedReaddDebts,
@@ -768,11 +769,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     await get().refreshConversations();
   },
 
-  // #350: broadcast a re-add request to the group's members over 1:1s. Only the
-  // creator can act (creator-gated remove-then-add on receipt); everyone else
-  // ignores the marker. We target every member because the app doesn't know who
-  // the creator is (precise single-target addressing is the #433 follow-up). The
-  // 1:1s are unaffected by the group's MLS desync, so this still gets through.
+  // #350/#324/#433: send a re-add request over 1:1s to the member who can act on
+  // it. Only the creator runs the creator-gated remove-then-add on receipt;
+  // everyone else ignores the marker. #350 shipped before the app could identify
+  // the creator and so broadcast to the whole roster; now #433 exposes the recorded
+  // creator, so we single-target them (`chooseReaddTargets`), falling back to the
+  // broadcast only for a pre-#349 group that records no creator. The 1:1s are
+  // unaffected by the group's MLS desync, so this still gets through.
   requestReadd: async (convoPk: number) => {
     const s = get();
     const group = s.conversations[convoPk];
@@ -783,7 +786,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const me = useNodeStore.getState().myAddress?.toLowerCase();
     // RESOLVE the roster (never read the cache blindly): `members` is only
     // populated by a screen, so a restart-then-tap would otherwise broadcast to
-    // nobody while the UI claimed success.
+    // nobody while the UI claimed success. Only needed for the broadcast fallback,
+    // but resolving it is also the roster we hand `chooseReaddTargets`.
     const roster = await resolveRoster<GroupMember>({
       cached: () => s.members[convoPk],
       load: async () => {
@@ -791,25 +795,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return get().members[convoPk] ?? [];
       },
     });
+    // The creator address comes from authenticated native group state, so it is
+    // valid even while our own epoch is behind. A native error / older build that
+    // can't answer just leaves us on the broadcast fallback.
+    let creator: string | null = null;
+    try {
+      creator = await LogosChat.groupCreator(convoPk);
+    } catch {
+      // unsupported build / native error — fall back to broadcast below
+    }
+    const {targets, mode} = chooseReaddTargets(creator, roster, me);
     const marker = encodeReadd(libConvoId);
     let sent = 0;
-    for (const m of roster) {
-      const addr = m.address.toLowerCase();
-      if (m.isSelf || addr === me) continue;
+    for (const addr of targets) {
       try {
         // resolve-or-create the 1:1 (never navigates), then send silently
-        const dmPk = await LogosChat.createConversation(m.address, null);
+        const dmPk = await LogosChat.createConversation(addr, null);
         await get().send(dmPk, marker);
         sent++;
       } catch {
-        // a member we can't open a 1:1 with — skip; another member (the creator)
-        // will still receive it.
+        // a target we can't open a 1:1 with — skip; in broadcast mode another
+        // member (the creator) may still receive it.
       }
     }
     // Reaching nobody is a FAILURE, not a quiet success — the caller surfaces it
     // instead of toasting "the creator will resync you" into the void.
     if (sent === 0) {
-      throw new Error('no group member could be reached');
+      throw new Error(
+        mode === 'creator'
+          ? 'could not reach the group creator'
+          : 'no group member could be reached',
+      );
     }
   },
 
@@ -1995,9 +2011,10 @@ addLogosChatListener(e => {
         );
         if (!already) {
           const me = useNodeStore.getState().myAddress?.toLowerCase();
-          // Best-effort re-add contact: the first non-self group member (there is
-          // no stored "creator" flag — any member can re-add us). Falls back to
-          // undefined, in which case the notice is shown without a tap target.
+          // A display-only contact hint (first non-self member). The tap action
+          // does NOT use this: `requestReadd` resolves the recorded creator itself
+          // (#433) and single-targets them, so this only labels the notice and may
+          // be undefined without affecting recovery.
           const pushDesync = () => {
             const roster = useChatStore.getState().members[convoPk] ?? [];
             const target = roster.find(
