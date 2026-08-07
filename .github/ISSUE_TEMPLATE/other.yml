@@ -1,0 +1,30 @@
+name: Something else
+description: A question, a feature request, or anything that is not a bug
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **Not for security problems.** Anything that could expose messages, impersonate a
+        user, or forge a build goes through the private advisory link on the previous screen,
+        not here. See SECURITY.md for scope.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What is this about?
+      description: >-
+        For a feature request, say what you are trying to do and why the current app makes it
+        hard — that is more useful than a proposed design.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this
+          required: true
+        - label: This is not a security vulnerability (those go through the private link above)
+          required: true
