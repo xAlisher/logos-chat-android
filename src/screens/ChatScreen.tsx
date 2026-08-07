@@ -854,21 +854,38 @@ export function ChatScreen() {
     },
     [convoPk, isGroup, convo],
   );
-  const saveMediaFromViewer = useCallback((item: MediaItem, path: string) => {
-    if (isImageContent(item.content)) {
-      ImagePickerNative.saveImageToGallery(path).catch(() => {});
-    } else {
-      const ref = parseMedia(item.content);
-      if (ref != null) {
-        ImagePickerNative.saveMediaToGallery(path, ref.mime).catch(() => {});
+  // #483: the download silently no-op'd — the promise error was swallowed and
+  // there was no success feedback. Await it, confirm with a toast, surface errors.
+  const saveMediaFromViewer = useCallback(
+    async (item: MediaItem, path: string) => {
+      try {
+        if (isImageContent(item.content)) {
+          await ImagePickerNative.saveImageToGallery(path);
+        } else {
+          const ref = parseMedia(item.content);
+          if (ref == null) return;
+          await ImagePickerNative.saveMediaToGallery(path, ref.mime);
+        }
+        useNodeStore.setState({error: 'saved to gallery'});
+        // auto-clear the success note so it doesn't linger like a stuck error.
+        setTimeout(() => {
+          if (useNodeStore.getState().error === 'saved to gallery') {
+            useNodeStore.setState({error: null});
+          }
+        }, 2500);
+      } catch (e: any) {
+        useNodeStore.setState({error: `save failed: ${e?.message ?? e}`});
       }
-    }
-  }, []);
+    },
+    [],
+  );
   const shareMediaFromViewer = useCallback((item: MediaItem, path: string) => {
     const mime = isImageContent(item.content)
       ? parseImageLocal(item.content)?.meta.mime ?? 'image/*'
       : parseMedia(item.content)?.mime ?? '*/*';
-    MediaShare.shareFile(path, mime).catch(() => {});
+    MediaShare.shareFile(path, mime).catch((e: any) =>
+      useNodeStore.setState({error: `share failed: ${e?.message ?? e}`}),
+    );
   }, []);
   // #479: the media viewer is an in-tree overlay (not a Modal — a Modal teardown
   // ANR'd on unmount). An overlay can't paint over the NATIVE header, so hide it
