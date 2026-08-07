@@ -25,6 +25,14 @@ DerivedData
 # Android/IntelliJ
 #
 build/
+# WHY `build/` above is not enough, and why the entries here are slashless: git's trailing-slash
+# patterns match DIRECTORIES ONLY, so a build dir that is a SYMLINK (a local disk offload, e.g.
+# build -> /extra/build/...) slips past it and `git add` takes it silently. That is how one got
+# committed in #480; tracked, it dangles on any machine without that absolute path, and `mkdir`
+# on a dangling symlink fails with "File exists" — so Gradle cannot create its own output dir and
+# the build dies at `:app:generateAutolinkingNewArchitectureFiles`.
+# `android/app/build` is covered at the end of this file; this is its sibling, same failure mode.
+/android/build
 .idea
 .gradle
 local.properties
