@@ -870,7 +870,10 @@ export function ChatScreen() {
   // ANR'd on unmount). An overlay can't paint over the NATIVE header, so hide it
   // while the viewer is open; restore it on close.
   useEffect(() => {
-    navigation.setOptions({headerShown: viewer == null});
+    // (options built separately so this simple visibility toggle isn't mistaken
+    // for the header-closure effect below — see chatHeaderDeps.test.ts)
+    const opts = {headerShown: viewer == null};
+    navigation.setOptions(opts);
   }, [navigation, viewer]);
   // #167: a MeshCore channel (transport='mesh') sends over the radio, not the node.
   const isMesh = convo?.transport === 'mesh';
