@@ -717,9 +717,10 @@ export function ChatScreen() {
   const [pendingImages, setPendingImages] = useState<PickedImage[]>(
     initialDraft?.pendingImages ?? [],
   );
-  // #423: SQ (default, ~120KB inline) vs HQ (high quality via Storage). HQ needs
+  // #423: HQ photos (high quality via Storage) vs standard inline. HQ needs
   // Storage, so it's unavailable — and forced off — in a storage-off group.
   const [hqPhotos, setHqPhotos] = useState(false);
+  const hqActive = hqPhotos && !storageOff;
   // #307: a single video staged in the composer (poster thumbnail + play badge), sent on Send.
   const [pendingVideo, setPendingVideo] = useState<PickedRawMedia | null>(null);
   // #308: in-flight video sends for this convo (compress→upload), rendered as progress bubbles.
@@ -1486,7 +1487,7 @@ export function ChatScreen() {
       }
       // #261: send the staged images (each its own message), after any text.
       if (imgs.length > 0) {
-        await sendStagedImages(convoPk, imgs);
+        await sendStagedImages(convoPk, imgs, hqActive);
       }
       // #305/#307: send the staged video — compress→upload→send with an in-chat ring.
       // Fire-and-forget: the mediaSends bubble tracks progress, so Send returns at once.
@@ -1531,18 +1532,16 @@ export function ChatScreen() {
   };
   // #261: pick/capture STAGES the images (appended to the tray) — nothing is sent
   // until the user taps Send, mirroring the location flow.
-  // #423: HQ only when Storage is available in this group.
-  const hqActive = hqPhotos && !storageOff;
   const onPickImages = () =>
     withAttaching(async () => {
-      const picked = await stageImages(convoPk, hqActive);
+      const picked = await stageImages(convoPk);
       if (picked.length > 0) {
         setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
       }
     });
   const onCamera = () =>
     withAttaching(async () => {
-      const picked = await stageCameraPhoto(convoPk, hqActive);
+      const picked = await stageCameraPhoto(convoPk);
       if (picked.length > 0) {
         setPendingImages(prev => [...prev, ...picked].slice(0, MAX_STAGED_IMAGES));
       }
@@ -2347,35 +2346,22 @@ export function ChatScreen() {
                   </View>
                 ))}
               </ScrollView>
-              {/* #423: SQ (default, white outline) ↔ HQ (orange) quality toggle.
-                  HQ needs Storage → gray + disabled in a storage-off group. */}
+              {/* #423: borderless HQ toggle — dark gray = off (send standard),
+                  orange = on (send high quality via Storage). Disabled + stays
+                  gray in a storage-off group (no Storage → no HQ). */}
               <Pressable
-                style={[
-                  styles.qualityToggle,
-                  hqActive && styles.qualityToggleOn,
-                  storageOff && styles.qualityToggleDisabled,
-                ]}
+                style={styles.qualityToggle}
                 onPress={() => {
                   if (!storageOff) setHqPhotos(v => !v);
                 }}
                 disabled={storageOff}
-                hitSlop={8}
+                hitSlop={10}
                 accessibilityRole="button"
-                accessibilityLabel={
-                  storageOff
-                    ? 'High quality unavailable (storage off)'
-                    : hqActive
-                    ? 'High quality photos on'
-                    : 'Standard quality photos'
-                }
+                accessibilityState={{selected: hqActive, disabled: storageOff}}
+                accessibilityLabel="Send photos in high quality"
                 testID="composer-quality">
-                <Text
-                  style={[
-                    styles.qualityText,
-                    hqActive && styles.qualityTextOn,
-                    storageOff && styles.qualityTextDisabled,
-                  ]}>
-                  {hqActive ? 'HQ' : 'SQ'}
+                <Text style={[styles.qualityText, hqActive && styles.qualityTextOn]}>
+                  HQ
                 </Text>
               </Pressable>
             </View>
@@ -2977,22 +2963,10 @@ const styles = StyleSheet.create({
   pendingImages: {gap: spacing.sm, paddingBottom: spacing.xs},
   pendingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   pendingScroll: {flexShrink: 1},
-  // #423: SQ/HQ quality toggle — small outlined pill right of the thumbnails.
-  qualityToggle: {
-    minWidth: 40,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: colors.text,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  qualityToggleOn: {backgroundColor: colors.accent, borderColor: colors.accent},
-  qualityToggleDisabled: {borderColor: colors.textFaint, backgroundColor: 'transparent'},
-  qualityText: {color: colors.text, fontSize: 13, fontWeight: '700'},
-  qualityTextOn: {color: colors.onAccent},
-  qualityTextDisabled: {color: colors.textFaint},
+  // #423: borderless HQ toggle right of the thumbnails — dark gray off, orange on.
+  qualityToggle: {paddingHorizontal: 8, paddingVertical: 6},
+  qualityText: {color: colors.textFaint, fontSize: 14, fontWeight: '700', letterSpacing: 0.5},
+  qualityTextOn: {color: colors.accent},
   pendingImageWrap: {width: 64, height: 64},
   pendingImage: {
     width: 64,
