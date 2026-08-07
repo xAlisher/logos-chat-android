@@ -38,6 +38,30 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.4 — fewer false error banners + tidier group recovery
+Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
+- **The "welcome not addressed to this member" banner should be gone.** In earlier builds, when
+  someone was added to a group, every *other* member could see a red banner reading
+  *"welcome not addressed to this member"* — normal group traffic, not a real error. Have someone
+  add a member to a group you're in; you should **not** see that banner anymore.
+- **"Ask to be re-added" now goes straight to the creator.** If you fall out of sync in a group and
+  tap **Ask to be re-added**, the request now goes only to the group's creator (who is the one that
+  can actually re-add you) instead of pinging every member. You shouldn't notice anything different
+  as the person asking — but other members no longer get a stray recovery message in their 1:1.
+
+### v0.9.3 — no more "No matching key package" banner
+Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
+- **The red error banner should be gone.** In earlier builds a sticky top banner reading
+  *"No matching key package was found in the key store"* could appear during normal group
+  catch-up (a member briefly offline / reinstalled) and **stay stuck** even though nothing was
+  broken. Open your groups, send/receive a bit — that banner should **not** show for routine
+  catch-up anymore. A genuine failure (e.g. you actually can't be added to a group) still surfaces.
+- **Failed group send reads as "catching up", not broken.** If a group message fails to send
+  right after a restore/reinstall (you're briefly behind the group's epoch), you now see
+  *"catching up with the group — tap the message to retry in a moment"* and the app kicks a
+  catch-up automatically. Tap the message to retry — it should land once catch-up finishes.
+- **1:1 send failures** still show the plain *"send failed — tap the message to retry"*.
+
 ### v0.9.2-fixes — rollout polish (member count, avatar reset, ping-creator)
 Seamless update from 0.9.1 (same signing key) — just refresh F-Droid.
 - **Group member count.** Open any group chat — the header now shows the member count as a

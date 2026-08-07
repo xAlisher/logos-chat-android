@@ -38,6 +38,28 @@ const BENIGN: Array<{pattern: RegExp; why: string}> = [
     pattern: /generation is too old/i,
     why: 'replayed/late message past its ratchet generation',
   },
+  {
+    // #446: a group member's key package isn't in the keystore. Hit during a group
+    // reconcile / catch-up (e.g. on opening a group) or an add/re-add that reaches a
+    // member who is offline, has reinstalled, or whose one-time key package was
+    // already consumed. It fired on EVERY open of a group that has an unreachable
+    // member — a persistent red banner over a group that otherwise works fine.
+    // Nothing for the person seeing it to do: the actionable recovery lives in
+    // proper UI (the #437 "fallen out of sync — ask to be re-added" line, the
+    // #446 catch-up-on-restore, or a creator remove-then-re-add), not this raw
+    // string. Stays in logcat.
+    pattern: /no matching key package was found in the key store/i,
+    why: "a member's key package is unavailable (offline / reinstalled / consumed) during reconcile",
+  },
+  {
+    // #455: a member add broadcasts an MLS Welcome to the whole group; every member
+    // that ISN'T the newly-added one tries to process it and finds it is not for them.
+    // Normal group traffic during adds — same #446 class (a benign inbound condition
+    // surfacing as a sticky red banner), just a different string. Nothing for the
+    // person seeing it to do. Stays in logcat.
+    pattern: /welcome not addressed to this member/i,
+    why: 'an MLS Welcome broadcast for the group was not addressed to us (we are already a member)',
+  },
 ];
 
 /** True when this inbound error is routine and must NOT reach the user. */

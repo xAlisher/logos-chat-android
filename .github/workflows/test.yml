@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # #449: a PR opened/pushed during a GitHub Actions webhook throttle (e.g. the
+  # 2026-08-06 incident) can have its pull_request event DROPPED, so no run ever
+  # queues and required checks never report — the PR stays blocked with no config
+  # fault. This lets a maintainer re-run the checks for a branch by hand
+  # (Actions tab -> test -> Run workflow) without pushing an empty commit.
+  workflow_dispatch:
 
 jobs:
   js-logic:

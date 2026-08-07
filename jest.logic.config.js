@@ -20,6 +20,7 @@ module.exports = {
     '<rootDir>/__tests__/relay.test.ts',
     '<rootDir>/__tests__/groupState.test.ts',
     '<rootDir>/__tests__/inboundErrors.test.ts',
+    '<rootDir>/__tests__/sendFailure.test.ts',
     '<rootDir>/__tests__/memberStatus.test.ts',
     '<rootDir>/__tests__/bleMesh.logic.test.ts',
     '<rootDir>/__tests__/imageMsg.test.ts',
@@ -52,5 +53,6 @@ module.exports = {
     '<rootDir>/__tests__/restoreOutcome.test.ts',
     '<rootDir>/__tests__/avatarReset.test.ts',
     '<rootDir>/__tests__/chatHeaderDeps.test.ts',
+    '<rootDir>/__tests__/githubTemplates.test.ts',
   ],
 };

@@ -337,3 +337,13 @@ Structured wins/fails, synthesized at `/retro`. Project lessons also live in
 - Issues: filed epic **#347** + subs #348–#352, **#344/#345/#346** (metadata), **#342/#343** (follow-ups),
   **#353** (modal scroll). Closed #261/#314/#330/#342/#343/#344/#348. Reframed #317/#322/#333/#335/#337.
 - Released v0.8.1 / v0.8.2 / v0.8.3 (GitHub + F-Droid + landing + fleet + tester announce).
+[2026-08-06 win] Red-teamed the persistent "generic: No matching key package was found in the key store" banner testers saw on both phones. Loop: (1) REPRODUCED deterministically — opening ANY group with an offline/unreachable member fires it on the reconcile (cr442test + offline Pixel, fired every open); (2) ROOT-CAUSED — native lib emits it as an inbound_error during reconcile/catch-up when a member's key package is unavailable; JS isBenignInboundError didn't match it so it set nodeStore.error, a sticky banner that never auto-clears → a working group looked broken; (3) FIXED — added it to the benign list (logcat-only), precise to the full openmls string so the DIFFERENT user-initiated "add_group_member failed: no key package" still surfaces (negative test guards it); (4) VERIFIED on-device on RedMe + Samsung — the repro group now opens clean. PR #453. Method note: the on-screen red banner IS nodeStore.error verbatim, so it doubles as the exact error string when the JS console log is __DEV__-gated out of release builds — screenshot the banner to get the string.
+
+## [fail] 2026-08-07
+Monitor tool's shell lacks `jq` (not on its PATH), so a `gh | jq` monitor watching PR #460
+failed silently every poll (`jq: command not found` -> stderr in the `.output` log, not
+notifications). Parsed vars stayed empty, state never changed, the READY condition never fired;
+the PR was green + Senti-approved the whole time while the monitor spun until I manually checked.
+Fix: in Monitor scripts never use standalone `jq` -- use gh's built-in `--jq`/`--template` or
+`python3`; and READ the monitor `.output` log when it "doesn't fire" (stderr lives there).
+Saved to the reference_harness_background_task_gotchas memory.

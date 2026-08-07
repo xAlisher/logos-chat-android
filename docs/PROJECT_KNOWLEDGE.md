@@ -575,3 +575,57 @@ non-collusion + bounded corpus + no incentive layer relax exactly those constrai
 community-scale 2-server PIR (#337). The one *complete* mitigation shippable today is **not to play**
 — a storage-off group has zero storage footprint (#344, ADR 0002). Mix is the right tool for
 **messaging** (ephemeral/low-volume), not storage data — scope #333/#335 to messaging.
+
+## 10g. v0.9.x rollout polish + signing migration + red-team (2026-08-06, v0.8.9→0.9.2)
+
+### The on-screen red banner IS `nodeStore.error` verbatim
+The persistent "generic: No matching key package was found in the key store." banner testers hit
+on every group with an offline member was a **benign native `inbound_error`** (openmls
+`WelcomeError::NoMatchingKeyPackage` during reconcile/catch-up) that JS `isBenignInboundError`
+(`src/stores/inboundErrors.ts`) didn't match → `nodeStore.ts:130 setState({error})` → a **sticky
+banner that never auto-clears** → a working group looked broken. **Fix (#446/#453):** classify it
+benign (logcat-only), *precise to the full openmls string* so the DIFFERENT user-initiated
+`add_group_member failed: no key package` still surfaces (negative unit test guards it). Debug tip:
+the JS `[LogosChatEvent]` log is `__DEV__`-gated out of release builds, so **screenshot the banner —
+it is the exact error string** for your regex.
+
+### A `.so` bump is a THREE-repo edit — the provenance gate enforces it
+Bumping `liblogoschat.so` (e.g. #433 `logoschat_group_creator`, 25→26 exports) requires, in ONE
+change: (1) commit the native source in `xAlisher/logos-libchat-mls-android` (as a new `patches/NNN-*.patch`
+applied after 437 in `scripts/build-android-arm64.sh` + a landing guard + export-floor bump), (2) move
+`published=` + the recorded SHA + build-id in `jniLibs/arm64-v8a/SHA256SUMS` **and** `docs/SBOM.md`'s
+component row + "Source pins", (3) rebuild `liblogoschat_bridge.so` too (`scripts/build-bridge.sh`) when
+`logoschat_jni.c` changes — `checkBridgeSymbols` fails the build if a Kotlin `external fun` has no JNI
+symbol. `__tests__/nativeProvenance.test.ts` + `nativeSbomDoc.test.ts` assert published==recorded==disk
+and that every quoted hash is shipped-or-in-HISTORICAL — a partial update reds the gate.
+
+### "Ping creator" (#442) only renders on a DEAD group; a healthy V1 group won't go dead on restart
+The dead-group footer ("Restart group" for the creator / "Ping creator" for a member) needs
+`groupLiveness == 'dead'` (native `group_metadata` returns "not found"/"cannot be rebuilt"). A fresh
+GroupV1 **reloads live** after an app restart, so you cannot force it dead to test ping-creator — it
+needs a genuine epoch desync that ages out of the store. The pre-#349 dead groups record no creator
+(fallback path). Net: #442 verified via native symbol + the distinguishing roster condition
+(creator NOT first on the member's `added_at` roster), but the final UI tap awaits a dead post-#349 group.
+
+### ROM install gotchas for the signing-key migration
+- **MIUI (Xiaomi/Redmi)**: a *fresh* `adb install` (not `-r`) triggers the "Install via USB" confirmation
+  → `INSTALL_FAILED_USER_RESTRICTED`; you must tap Install on-device while the push is live. Testers hit
+  the same on the v0.9.0 uninstall+reinstall. `install -r` (same key) skips it.
+- **GrapheneOS (#445)**: `SECURE_PREFS`/the Keystore-wrapped ChatDb key can survive an uninstall while the
+  DB doesn't → `ChatDbCrypto` sees `wasEnc=true, no db` → FAIL_CLOSED → `ChatRepo.init` throws → restore
+  blocked. Fix: treat "no readable plaintext db" (missing/0-byte/phantom) as a genuine first run and
+  create encrypted. Stock-Android uninstalls wipe cleanly, so only GrapheneOS hit it.
+
+### Don't call a GitHub "outage" without an independent probe
+F-Droid publish (GitHub Pages) stalling ≠ Pages outage. Verify: do OTHER `*.github.io` sites serve? does
+our own small `index-v2.json` serve 200 while only the 47 MB APK 404s? **index-200 + APK-404 = a stuck
+BUILD, not a serving outage** (the status-dashboard tile can be stale — the Pages incident had resolved
+16:22 UTC while the tile still read "major outage"). The real culprit was the ongoing **Actions**
+degradation hanging Pages builds; an **empty-commit re-trigger** unstuck them (completed in ~60s once the
+queue moved). Repeatedly stuck builds → keep re-triggering, don't announce "refresh F-Droid" into a 404.
+
+### Stacked-PR squash tangle
+Squash-merging a PR (`#447`, `fix/rollout-batch → main`) lands its content on main, but a PR *stacked*
+on that branch (`#451`, `feat/442 → fix/rollout-batch`) merged into the **branch**, leaving its delta
+OFF main. Detect (`git diff origin/main..origin/<branch>` = only the native delta) and re-PR the branch →
+main to land the leftover.

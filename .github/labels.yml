@@ -1,0 +1,37 @@
+# The labels this repository is expected to have.
+#
+# WHY THIS FILE EXISTS: GitHub silently ignores a label that a config file asks it to
+# apply but that does not exist in the repo. `dependabot.yml` shipped `labels: [dependencies]`
+# against a repo that had no `dependencies` label, so every Dependabot PR would have been
+# filed unclassified and nothing would have said so. There is no way to notice that from
+# inside the repo — unless the set of real labels is written down.
+#
+# `__tests__/githubTemplates.test.ts` enforces that every label referenced anywhere under
+# `.github/` appears below. Adding a line here is a declaration that the label exists on
+# GitHub: create it (`gh api repos/xAlisher/peers/labels -f name=… -f color=…`) in the same
+# change. Nothing syncs this automatically — it is a checked-in assertion, not a source of
+# truth for GitHub's state.
+labels:
+  - bug
+  - build
+  - db
+  - dependencies
+  - docs
+  - documentation
+  - duplicate
+  - enhancement
+  - epic
+  - good first issue
+  - help wanted
+  - identity
+  - infra
+  - interop
+  - invalid
+  - logosmesh
+  - mix
+  - native
+  - qr
+  - question
+  - ui
+  - wetware-required
+  - wontfix

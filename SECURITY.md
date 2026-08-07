@@ -1,37 +1,73 @@
-# Security Policy
+# Security policy
 
-**To report a security vulnerability, use GitHub's private reporting form:
-[Report a vulnerability](https://github.com/xAlisher/peers/security/advisories/new)** — or the
-*Report a vulnerability* button on this repository's **Security** tab. Only a title and a
-description are required. The report is not public and is not indexed.
+## Reporting a vulnerability
 
-**Please don't open a public issue for something with exploit potential — an issue *is* a
-disclosure.** If you had to stop and think about whether it's a security issue, use the private
-form; ordinary bugs can be moved to the public tracker afterwards.
+**Report privately, not as a public issue:**
+<https://github.com/xAlisher/peers/security/advisories/new>
 
-## Scope
+That form is visible only to you and the maintainer. Please use it for anything that could
+**expose message content**, **impersonate a user**, or **forge a build** — the three things
+this project treats as the security boundary.
 
-**In scope:** the Peers Android app in this repository (Kotlin, TypeScript/React Native, and the
-JNI/C bridge), local data at rest, the Bluetooth mesh / LoRa / Tor transports as implemented here,
-release signing and artifact verification, and the pinned native library repositories
-`xAlisher/logos-libchat-mls-android` and `xAlisher/logos-libdelivery-android`.
+Useful in a report, roughly in order of value:
 
-**Out of scope — and please do not send traffic at it:** the Logos infrastructure the app talks to,
-including `msg.logos.live` and `devnet.chat-kc.logos.co`. That infrastructure is operated by other
-people and is not mine to authorize testing against.
+- what an attacker gains, and what position they need to be in to get it
+- steps to reproduce, ideally on a specific app version (Settings → About) and device
+- which transport was involved (Logos delivery, Bluetooth mesh, MeshCore/LoRa), if any
+- whether Private mode (Tor) was on
+
+Redact account addresses, peer IDs, and conversation identifiers from any logs you attach —
+they are identifying.
 
 ## What to expect
 
-Peers is a pre-1.0 alpha built by one person, so please read timing as a target rather than a
-guarantee. I will acknowledge reports as soon as I reasonably can, tell you plainly if I don't
-think something is a vulnerability, and credit you on the advisory by default unless you'd rather
-not be named.
+Peers is **alpha** and solo-maintained. There is **no guaranteed response time and no bug
+bounty**. What is committed to is the process, not a clock: reports are triaged in the
+advisory thread, a confirmed issue is fixed there rather than in a public branch, and the
+advisory is published with credit (or without, if you prefer) once a fixed build is out.
 
-There is **no bug bounty** and no monetary reward.
+Only the **latest release** is supported. There are no maintenance branches and fixes are not
+backported — the remedy for a security issue is always to update.
+
+## Scope
+
+**In scope** — the app in this repository: the Android client, the release build and signing
+path (see [docs/SIGNING.md](docs/SIGNING.md)), and the way the app uses the native messaging
+cores. The pinned native library repositories
+[`xAlisher/logos-libchat-mls-android`](https://github.com/xAlisher/logos-libchat-mls-android) and
+[`xAlisher/logos-libdelivery-android`](https://github.com/xAlisher/logos-libdelivery-android) are
+in scope too — they are mine, and the binaries they publish are what ships.
+
+**Known and already documented — not new vulnerabilities.** Please read these before
+reporting; they are limits this project states openly rather than gaps it is unaware of:
+
+- **Metadata is not fully protected.** The conversation graph, subscription sets, and
+  publish→fetch timing are visible to a storage node; Private mode (Tor) removes the IP link
+  but not the shape. See [docs/privacy.md](docs/privacy.md) — "Metadata — the open problem"
+  and "What we do NOT claim".
+- **The storage node is not certificate-pinned.** This is deliberate, with the reasoning and
+  the conditions for changing it in [docs/privacy.md](docs/privacy.md).
+- **Traffic-timing correlation by a determined adversary** is explicitly not defended against.
+
+A report that these are true is not a vulnerability report. A report that one of them is
+*worse than documented* — or that a stated protection does not actually hold — very much is.
+
+**Out of scope — and please do not send traffic at it.** The Logos infrastructure the app
+talks to, including `msg.logos.live` and `devnet.chat-kc.logos.co`, is operated by other people
+and is not mine to authorize testing against. Findings about how *this app* uses it are welcome;
+testing the infrastructure itself is not mine to permit.
+
+**Out of this repository's control, but still worth telling us.** `liblogoschat.so` is built
+from a patched fork of [logos-messaging/libchat](https://github.com/logos-messaging/libchat),
+and its Rust dependency tree has no advisory feed reaching this repo — so nothing here will
+notice a vulnerability in it (this gap is also stated in
+[.github/dependabot.yml](.github/dependabot.yml)). If you find one, report it here anyway: we
+ship the binary, so it is our users' problem regardless of where the fix has to land. What we
+do publish about those binaries is [docs/SBOM.md](docs/SBOM.md).
 
 ## Verifying a build
 
-Releases from **versionCode 113 (v0.9.0-signed)** onward are signed with the production key:
+Releases from **versionCode 113 (`v0.9.0-signed`)** onward are signed with the production key:
 
 ```
 CN=Peers, O=Peers, C=US
@@ -44,9 +80,13 @@ Check a downloaded APK with:
 apksigner verify --print-certs Peers-<version>.apk
 ```
 
+[docs/SIGNING.md](docs/SIGNING.md) covers the *producing* side; this is the value to check a
+download against.
+
 **Builds before versionCode 113 were signed with a publicly-known debug key** and cannot be
 authenticated. If you are still on one, back up your identity, then uninstall and reinstall from a
-current release — the signing key change means it is not an in-place update.
+current release — the signing-key change means it is not an in-place update.
 
-Note that the **F-Droid repository index** fingerprint (`9283c4e3…2acccf32`) is a *different* key
-from the APK signing key above, and serves a different purpose. Don't compare one against the other.
+The **F-Droid repository index** fingerprint
+(`9283c4e3dab31e68675b643ae38222358541431ad07295b6df4a4c6d2acccf32`) is a *different* key from the
+APK signing key above and serves a different purpose. Do not compare one against the other.

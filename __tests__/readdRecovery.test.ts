@@ -7,6 +7,7 @@
 // app restart the cache is empty, `wasMember` was false, and the advertised
 // automatic recovery silently did nothing. The gate must RESOLVE the roster.
 import {
+  chooseReaddTargets,
   isOnRoster,
   resolveRoster,
   shouldAutoReadd,
@@ -18,6 +19,58 @@ const STRANGER = '0xMalloryMalloryMalloryMalloryMalloryMall';
 
 const member = (address: string) => ({address});
 const ROSTER = [member(CREATOR), member(STUCK)];
+
+describe('chooseReaddTargets (#324/#433)', () => {
+  // STUCK is us (the one asking to be re-added); the roster is seen from our side.
+  const rosterSelf = [
+    {address: CREATOR},
+    {address: STUCK, isSelf: true},
+    {address: STRANGER},
+  ];
+
+  it('single-targets the recorded creator when we know it', () => {
+    const {targets, mode} = chooseReaddTargets(CREATOR, rosterSelf, STUCK);
+    expect(mode).toBe('creator');
+    expect(targets).toEqual([CREATOR.toLowerCase()]);
+  });
+
+  it('is case-insensitive on the creator address (canonical lowercase out)', () => {
+    const {targets} = chooseReaddTargets(CREATOR.toUpperCase(), rosterSelf, STUCK);
+    expect(targets).toEqual([CREATOR.toLowerCase()]);
+  });
+
+  it('broadcasts to every other member when no creator is recorded (pre-#349)', () => {
+    const {targets, mode} = chooseReaddTargets(null, rosterSelf, STUCK);
+    expect(mode).toBe('broadcast');
+    expect(targets.sort()).toEqual(
+      [CREATOR.toLowerCase(), STRANGER.toLowerCase()].sort(),
+    );
+    // never ourselves
+    expect(targets).not.toContain(STUCK.toLowerCase());
+  });
+
+  it('falls back to broadcast when the creator resolves to ourselves', () => {
+    const {targets, mode} = chooseReaddTargets(STUCK, rosterSelf, STUCK);
+    expect(mode).toBe('broadcast');
+    expect(targets).not.toContain(STUCK.toLowerCase());
+  });
+
+  it('treats an empty/whitespace creator as no creator', () => {
+    expect(chooseReaddTargets('   ', rosterSelf, STUCK).mode).toBe('broadcast');
+    expect(chooseReaddTargets('', rosterSelf, STUCK).mode).toBe('broadcast');
+  });
+
+  it('de-dupes the broadcast and filters self by both flag and address', () => {
+    const dupRoster = [
+      {address: CREATOR},
+      {address: CREATOR}, // duplicate
+      {address: STUCK}, // self by address, no flag
+      {address: STUCK, isSelf: true}, // self by flag
+    ];
+    const {targets} = chooseReaddTargets(null, dupRoster, STUCK);
+    expect(targets).toEqual([CREATOR.toLowerCase()]);
+  });
+});
 
 describe('resolveRoster', () => {
   it('prefers the authoritative native roster over the cache', async () => {
