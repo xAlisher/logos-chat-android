@@ -7,6 +7,8 @@ const FORWARD_SECRECY =
 const DUPLICATE_WELCOME =
   'demls error: MLS error: A group with this [`GroupId`] already exists.';
 const OLD_GENERATION = 'generic: Generation is too old to be processed.';
+// #446: fired on EVERY open of a group with an unreachable member — verbatim from the banner.
+const KEY_PACKAGE = 'generic: No matching key package was found in the key store.';
 
 describe('isBenignInboundError', () => {
   it('suppresses our own message echoed back by the relay', () => {
@@ -24,6 +26,13 @@ describe('isBenignInboundError', () => {
 
   it('suppresses a replayed message past its ratchet generation (catch-up)', () => {
     expect(isBenignInboundError(OLD_GENERATION)).toBe(true);
+  });
+
+  it('suppresses "no matching key package" from a reconcile with an offline member (#446)', () => {
+    expect(isBenignInboundError(KEY_PACKAGE)).toBe(true);
+    // Precision: a DIFFERENT, user-initiated add failure with a short "no key
+    // package" reason must still surface — the negative case below guards this.
+    expect(isBenignInboundError('add_group_member failed: no key package')).toBe(false);
   });
 
   it('is case-insensitive', () => {
