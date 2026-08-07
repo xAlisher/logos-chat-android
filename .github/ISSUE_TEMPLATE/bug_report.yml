@@ -1,0 +1,94 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        **If this is a security problem — anything that could expose messages, impersonate a
+        user, or forge a build — stop and report it privately instead:**
+        https://github.com/xAlisher/peers/security/advisories/new
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        Minimal steps. If it involves two devices (a group, a contact card, mesh), say what each
+        device did and in what order — ordering matters a lot in this app.
+      placeholder: |
+        1. On device A, …
+        2. On device B, …
+        3. …
+    validations:
+      required: true
+
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: Settings → About. Include the versionCode if you have it.
+      placeholder: "0.9.0-signed (113)"
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: "Pixel 8, Android 15 / GrapheneOS"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Which transport was in use?
+      description: If you are not sure, pick "not sure" — a wrong guess is worse than none.
+      multiple: true
+      options:
+        - Internet (Logos/Waku delivery)
+        - Bluetooth mesh
+        - MeshCore / LoRa
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: private-mode
+    attributes:
+      label: Was Private mode (Tor) enabled?
+      options:
+        - "No"
+        - "Yes"
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        `adb logcat --pid=$(adb shell pidof com.logoschat)` if you can.
+        **Check before pasting:** logs may contain account addresses, peer IDs, or conversation
+        identifiers. Redact anything you would not post publicly.
+      render: text
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this
+          required: true
+        - label: This is not a security vulnerability (those go through the private link above)
+          required: true
