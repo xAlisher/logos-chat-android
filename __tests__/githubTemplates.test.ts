@@ -137,6 +137,56 @@ describe('every doc a .github/ file points at actually exists', () => {
   });
 });
 
+describe('the issue chooser cannot be bypassed', () => {
+  const CHOOSER = path.join(GITHUB_DIR, 'ISSUE_TEMPLATE/config.yml');
+
+  /** The forms the chooser offers — every YAML under ISSUE_TEMPLATE/ except the chooser. */
+  function issueForms(): string[] {
+    return fs
+      .readdirSync(path.join(GITHUB_DIR, 'ISSUE_TEMPLATE'))
+      .filter(f => /\.ya?ml$/.test(f) && f !== 'config.yml')
+      .sort();
+  }
+
+  it('disables blank issues', () => {
+    // PR #456 review (Senti, P2 #3): this shipped `true`, which puts an "Open a blank issue"
+    // link under the chooser. That path skips every form and so every warning printed on one
+    // — including the "this is not a security vulnerability" gate — so someone sitting on
+    // something exploitable can post it publicly without ever passing the advisory link.
+    const flag = /^blank_issues_enabled:\s*(\S+)\s*$/m.exec(fs.readFileSync(CHOOSER, 'utf8'));
+    expect(flag).not.toBeNull();
+    expect(flag![1]).toBe('false');
+  });
+
+  it('still offers a form for everything that is not a bug', () => {
+    // The other half of the fix, and the reason the flag alone is not it. With blank issues
+    // off the chooser is the ONLY intake in the UI, and this repo has no Discussions surface
+    // to divert to. If bug_report.yml were the only form, a question or feature request would
+    // have to be filed as a bug or not at all — the "Browse existing issues" link is a search
+    // pointer, and its New-issue button lands right back on this chooser.
+    const forms = issueForms();
+    expect(forms).toContain('bug_report.yml');
+    expect(forms.length).toBeGreaterThan(1);
+  });
+
+  it('keeps the private security route on the chooser', () => {
+    // Removing the bypass is only worth anything if the route it protects is still offered.
+    expect(fs.readFileSync(CHOOSER, 'utf8')).toContain('security/advisories/new');
+  });
+
+  it('warns off security reports on every form', () => {
+    // Every form is a public box someone could type a vulnerability into, so each one has to
+    // carry the redirect — not just the one that happened to be written first.
+    const missing = issueForms().filter(
+      form =>
+        !/security/i.test(
+          fs.readFileSync(path.join(GITHUB_DIR, 'ISSUE_TEMPLATE', form), 'utf8'),
+        ),
+    );
+    expect(missing).toEqual([]);
+  });
+});
+
 describe('every label a .github/ config applies is one the repo has', () => {
   const declared = declaredLabels();
   const referenced = FILES.filter(
