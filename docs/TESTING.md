@@ -38,6 +38,19 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.3 — no more "No matching key package" banner
+Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
+- **The red error banner should be gone.** In earlier builds a sticky top banner reading
+  *"No matching key package was found in the key store"* could appear during normal group
+  catch-up (a member briefly offline / reinstalled) and **stay stuck** even though nothing was
+  broken. Open your groups, send/receive a bit — that banner should **not** show for routine
+  catch-up anymore. A genuine failure (e.g. you actually can't be added to a group) still surfaces.
+- **Failed group send reads as "catching up", not broken.** If a group message fails to send
+  right after a restore/reinstall (you're briefly behind the group's epoch), you now see
+  *"catching up with the group — tap the message to retry in a moment"* and the app kicks a
+  catch-up automatically. Tap the message to retry — it should land once catch-up finishes.
+- **1:1 send failures** still show the plain *"send failed — tap the message to retry"*.
+
 ### v0.9.2-fixes — rollout polish (member count, avatar reset, ping-creator)
 Seamless update from 0.9.1 (same signing key) — just refresh F-Droid.
 - **Group member count.** Open any group chat — the header now shows the member count as a
