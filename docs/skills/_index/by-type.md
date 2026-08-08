@@ -1,7 +1,7 @@
 # Peers skills — index by type
 
-Retrieval index for `docs/skills/` grouped by technique type. Format:
-**[id](../id.md)** — Title [phase] [severity]
+Retrieval index for `docs/skills/` grouped by technique type.
+Row format: `**[<id>](../<id>.md)** — Title [phase] [severity]`
 
 ## process
 - **[repin-via-3way-rebase](../repin-via-3way-rebase.md)** — Repin the fork via a 3-way rebase [native-fork] [high]
