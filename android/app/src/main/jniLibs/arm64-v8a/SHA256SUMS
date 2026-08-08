@@ -88,7 +88,7 @@
 # Format (parsed by the gate — keep it exact):
 #   # provenance: <file> <origin> published=<sha256>
 #
-# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@0b6c0ca published=069cdb3d914c75517b90b87d7dce9f2310573a7ea3ebffa1aa31acf9b84f2746
+# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@3c38687 published=e879a3e0d4af31d4d6d81b4c1a305f4747eebba008ab28976d7f818372e6916b
 # @0b6c0ca adds the GHSA-xxgx-7757-3qq6 security hardening (KeyPackage<->device
 # binding on the group add path + #239 offline-contact-card signature gate);
 # 26 exported symbols (unchanged). Native branch security/ghsa-xxgx-keypackage-binding.
@@ -98,16 +98,15 @@
 # provenance: liblogoschat_bridge.so in-repo:android/app/src/main/cpp/logoschat_jni.c published=3890d4eabbd769555aa02bea4a231a855d162778cebf8c60ee0bebc7f8e23600
 #
 # What each origin means:
-#   liblogoschat.so        = upstream libchat @ d2124fd + patches/libchat-android-arm64.patch
-#                            + patches/349-groupv1-remove-member.patch
-#                            + patches/437-replace-on-desync-welcome.patch
-#                            + patches/433-expose-group-creator.patch,
-#                            built by scripts/build-android-arm64.sh (NDK r27), stripped.
-#                            (@1d8639f is the head of exp/349-groupv1-remove-member; it
-#                            publishes the signing-key-gated build PLUS the #433 creator
-#                            accessor. The gate landed @7bbfaee, its `replace_authorized`
-#                            unit tests @10518fe, @01fced9 rebound it from credential bytes
-#                            to signature_key, and @1d8639f adds logoschat_group_creator.)
+#   liblogoschat.so        = upstream libchat @ 462a4884 (#427 repin, was d2124fd)
+#                            + patches/libchat-android-arm64.patch  (now the SOLE,
+#                            consolidated fork patch: the former 349/437/433 group-ops
+#                            and 490/491 GHSA-xxgx binding were folded in during the
+#                            upstream rebase), built by scripts/build-android-arm64.sh
+#                            (NDK r27), stripped; 26 exported logoschat_* symbols.
+#                            (#239 offline-card + GHSA-xxgx-7757-3qq6 device-binding were
+#                            re-homed from the deleted http.rs onto #184's store.rs; XWING
+#                            #193 is deferred — CIPHER_SUITE stays MLS_128 for compat.)
 #   liblogosdelivery.so    Logos delivery node (Waku/nwaku, #402) — @1646770 is the
 #   librln.so              build carrying the Persistency-teardown SIGSEGV fix.
 #   libc++_shared.so       Android NDK r27 runtime, vendored by that same repo.
@@ -139,6 +138,6 @@
 # reproducibility and is not. Only a full clean rebuild answers the question.
 e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  libc++_shared.so
 3890d4eabbd769555aa02bea4a231a855d162778cebf8c60ee0bebc7f8e23600  liblogoschat_bridge.so
-069cdb3d914c75517b90b87d7dce9f2310573a7ea3ebffa1aa31acf9b84f2746  liblogoschat.so
+e879a3e0d4af31d4d6d81b4c1a305f4747eebba008ab28976d7f818372e6916b  liblogoschat.so
 944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f  liblogosdelivery.so
 766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45  librln.so
