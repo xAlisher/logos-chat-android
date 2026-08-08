@@ -38,6 +38,16 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.7 — security hardening (group membership + offline contacts)
+Seamless update from 0.9.x. This release hardens the native crypto core under the hood, so
+the main thing to confirm is that **nothing regressed**:
+- **Add a contact OFFLINE over Bluetooth mesh**: on two phones, open Discovery, turn on
+  Bluetooth mesh on both, let them find each other, start a chat and send a message. It should
+  work exactly as before.
+- **Existing chats keep working**: your groups and 1:1s still send/receive text, media, and
+  reactions after updating.
+- No new errors on send or receive right after the update.
+
 ### v0.9.6-media — media viewer polish
 Seamless update from 0.9.x. Fixes to the new viewer:
 - **First tap is clean.** Open a photo/video → it's full-screen with **no buttons**. **Tap again**

@@ -88,7 +88,10 @@
 # Format (parsed by the gate — keep it exact):
 #   # provenance: <file> <origin> published=<sha256>
 #
-# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@1d8639f published=c5293f890f4df85bef5e85fd26142bb8b8e2918f313b125d007cf30dc74e2715
+# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@0b6c0ca published=069cdb3d914c75517b90b87d7dce9f2310573a7ea3ebffa1aa31acf9b84f2746
+# @0b6c0ca adds the GHSA-xxgx-7757-3qq6 security hardening (KeyPackage<->device
+# binding on the group add path + #239 offline-contact-card signature gate);
+# 26 exported symbols (unchanged). Native branch security/ghsa-xxgx-keypackage-binding.
 # provenance: liblogosdelivery.so xAlisher/logos-libdelivery-android@1646770 published=944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f
 # provenance: librln.so xAlisher/logos-libdelivery-android@1646770 published=766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45
 # provenance: libc++_shared.so xAlisher/logos-libdelivery-android@1646770 published=e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6
@@ -136,6 +139,6 @@
 # reproducibility and is not. Only a full clean rebuild answers the question.
 e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  libc++_shared.so
 3890d4eabbd769555aa02bea4a231a855d162778cebf8c60ee0bebc7f8e23600  liblogoschat_bridge.so
-c5293f890f4df85bef5e85fd26142bb8b8e2918f313b125d007cf30dc74e2715  liblogoschat.so
+069cdb3d914c75517b90b87d7dce9f2310573a7ea3ebffa1aa31acf9b84f2746  liblogoschat.so
 944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f  liblogosdelivery.so
 766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45  librln.so
