@@ -6,6 +6,7 @@ import {
   StatusBar,
   View,
 } from 'react-native';
+import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {PaperProvider} from 'react-native-paper';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {paperTheme, colors} from './src/theme';
@@ -155,22 +156,26 @@ function App() {
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <PaperProvider theme={paperTheme}>
-        <StatusBar barStyle="light-content" backgroundColor={colors.canvas} />
-        {/* The navigator stays mounted (node/listeners keep running); the lock is
-            an opaque overlay on top of it until the correct PIN is entered. */}
-        <RootNavigator />
-        {locked && <LockScreen />}
-        {/* #232: cover the UI until the PIN verifiers are read, so the
-            conversation list can never flash before the gate arms. */}
-        {!loaded && (
-          <View style={splashStyle} pointerEvents="none">
-            <Logo size={56} color={colors.accent} strokeWidth={2} />
-          </View>
-        )}
-      </PaperProvider>
-    </SafeAreaProvider>
+    // #479: GestureHandlerRootView must wrap the app so react-native-gesture-handler
+    // gestures (the media viewer's pinch/pager/swipe) work — incl. inside a Modal.
+    <GestureHandlerRootView style={{flex: 1}}>
+      <SafeAreaProvider>
+        <PaperProvider theme={paperTheme}>
+          <StatusBar barStyle="light-content" backgroundColor={colors.canvas} />
+          {/* The navigator stays mounted (node/listeners keep running); the lock is
+              an opaque overlay on top of it until the correct PIN is entered. */}
+          <RootNavigator />
+          {locked && <LockScreen />}
+          {/* #232: cover the UI until the PIN verifiers are read, so the
+              conversation list can never flash before the gate arms. */}
+          {!loaded && (
+            <View style={splashStyle} pointerEvents="none">
+              <Logo size={56} color={colors.accent} strokeWidth={2} />
+            </View>
+          )}
+        </PaperProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
 

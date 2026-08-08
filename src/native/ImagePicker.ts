@@ -37,6 +37,12 @@ interface ImagePickerNative {
   capturePhoto(maxDim: number, budgetBytes: number): Promise<string | null>;
   /** Persist a base64 JPEG to app storage; resolves the absolute file path. */
   saveBase64Jpeg(base64: string): Promise<string>;
+  /** #423: downscale an existing image FILE to a small JPEG (parsePicked shape). */
+  downscaleFileToBase64(
+    path: string,
+    maxDim: number,
+    budgetBytes: number,
+  ): Promise<string>;
   /** #201: read a stored blob file back to base64 (to forward a media message). */
   readFileBase64(path: string): Promise<string>;
   /** #201 Save: copy a stored image into the device gallery; resolves its uri. */
