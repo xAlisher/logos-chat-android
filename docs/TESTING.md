@@ -38,6 +38,15 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.8 — data-loss + duress-PIN hardening
+Mostly under-the-hood safety fixes — nothing to set up. If you use the app-lock PIN:
+- Try changing your **main PIN to the same value as your duress PIN** — it should now be
+  **refused with a clear message** (previously that collision could silently wipe on the next
+  unlock). Normal unlock and an ordinary PIN change work exactly as before.
+- (If you test the duress PIN itself: the wipe now looks like a normal unlock — no spinner.)
+No action needed for the encrypted-DB fix — it just closes a rare window where a crash during
+the at-rest encryption migration could delete the chat database.
+
 ### v0.9.7 — security hardening (group membership + offline contacts)
 Seamless update from 0.9.x. This release hardens the native crypto core under the hood, so
 the main thing to confirm is that **nothing regressed**:

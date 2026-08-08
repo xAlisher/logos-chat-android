@@ -135,6 +135,11 @@ export const useSecurityStore = create<SecurityState>((set, get) => ({
     if (cur != null) {
       if (oldPin == null || !verifyPin(oldPin, cur)) return false;
     }
+    // #489: reject a new main PIN that collides with the duress PIN — otherwise
+    // every ordinary unlock would take the duress branch and wipe the account.
+    // (setDuressPin has the mirror check; the gate has a belt-and-braces resolve.)
+    const duress = get().duressVerifier;
+    if (duress != null && verifyPin(newPin, duress)) return false;
     const verifier = makeVerifier(newPin, await freshSalt());
     try {
       await LogosChat.setSetting(KV_PIN_VERIFIER, serializeVerifier(verifier));

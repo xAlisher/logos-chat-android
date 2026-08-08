@@ -65,8 +65,22 @@ export function LockScreen() {
       return;
     }
     if (outcome === 'duress') {
-      // Look like a normal unlock: no error, no delay cue — then wipe.
-      doWipe();
+      // #489: drop the gate FIRST so the screen behaves exactly like a normal
+      // unlock — no "Preparing…" spinner, no delay cue — then wipe behind the
+      // already-dismissed gate. Do NOT surface busy/error here: a spinner or an
+      // error dialog on this path is a visible tell that betrays the duress
+      // unlock. A kill mid-wipe leaves a partial wipe, acceptable for a
+      // destructive op. (The explicit "Create new identity" button still uses
+      // doWipe, which shows progress — that path is not covert.)
+      unlock();
+      void (async () => {
+        try {
+          await wipeAndReset();
+          await useChatStore.getState().refreshConversations();
+        } catch {
+          // swallow — surfacing an error here would reveal the duress path
+        }
+      })();
       return;
     }
     // wrong | lockout — flash the dots red, clear, keep the attempt count.
