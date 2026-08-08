@@ -7,6 +7,12 @@ is named. Where something was previously believed and turned out wrong, it is
 recorded as a **correction** rather than silently edited, because the wrong
 belief is exactly what a future reader is likely to re-derive.
 
+> **Atomic skills live in [`docs/skills/`](skills/)** (from the #427 retro, 2026-08-08).
+> Discrete, retrievable techniques — native-fork/crypto-mls/delivery/rn-ui/release/on-device —
+> are being moved out of this monolith into one-file-per-technique recipes indexed in
+> `skills/_index/`. This doc keeps the narrative + ADR context; grep `skills/_index/` for a
+> specific how-to. New retros write atomic recipes; old §10x blobs get backfilled opportunistically.
+
 ---
 
 ## 1. What this is
@@ -20,8 +26,8 @@ embedded in the app.
 |---|---|
 | `logos-chat-android` (this) | The app: RN/TS UI, Kotlin native module, JNI bridge, vendored `.so`s |
 | `logos-libchat-mls-android` | Builds `liblogoschat.so` for arm64 from upstream libchat + our patch |
-| upstream `logos-messaging/libchat` | The Rust chat library (pinned `d2124fd`) |
-| upstream `vacp2p/de-mls` | Decentralised-MLS group engine (`2c7a866`) used by libchat's GroupV2 |
+| upstream `logos-messaging/libchat` | The Rust chat library (pinned `462a4884` since #427; was `d2124fd`) |
+| upstream `vacp2p/de-mls` | Decentralised-MLS group engine (`5cfce1b9` since #427; was `2c7a866`) used by libchat's GroupV2 |
 
 ## 2. Layers
 
@@ -30,7 +36,7 @@ React Native (TS)  src/…                     stores: nodeStore, chatStore
       │  NativeModules / DeviceEventEmitter
 Kotlin             LogosChatModule, ChatRepo, ChatDb (SQLite), NodeRuntime
       │  JNI  (liblogoschat_bridge.so — binds C symbols BY NAME)
-C ABI              liblogoschat.so  (15 logoschat_* exports)
+C ABI              liblogoschat.so  (26 logoschat_* exports)
       │
 Rust               libchat  ──►  openmls (crypto)  +  de-mls (group consensus)
       │
@@ -629,3 +635,27 @@ Squash-merging a PR (`#447`, `fix/rollout-batch → main`) lands its content on 
 on that branch (`#451`, `feat/442 → fix/rollout-batch`) merged into the **branch**, leaving its delta
 OFF main. Detect (`git diff origin/main..origin/<branch>` = only the native delta) and re-PR the branch →
 main to land the leftover.
+
+## 10h. #427 libchat upstream repin (2026-08-08, v0.9.9) — see docs/skills/
+
+The engine repin (upstream libchat `d2124fd` → `462a4884`, +9 commits) is captured as
+**atomic recipes** in `docs/skills/` rather than a blob here. The reusable lessons:
+
+- **[repin-via-3way-rebase]** — rebase the fork monolith onto new upstream (git 3-way merge),
+  verify headlessly with `cargo check`/`test` (crate is `libchat`), before any cross-build.
+- **[rehome-feature-on-upstream-rewrite]** — #184 deleted `http.rs`; #239 offline-card + the
+  GHSA-xxgx-7757-3qq6 binding re-homed onto `store.rs`. 490's group-layer check was **subsumed**
+  by upstream's now-authenticated `store::retrieve` (and mis-fired on de-mls credential ids);
+  491 kept for the offline path. Net: security surface shrank.
+- **[xwing-provider-single-suite]** (critical) — upstream #193 flipped `CIPHER_SUITE` to XWING,
+  but the provider advertises a single suite → adopting it breaks EXISTING conversations. **XWING
+  deferred**; kept MLS_128 for wire/storage compat with ≤0.9.8. Verified by in-place fleet update.
+- **[regen-patch-from-committed-branch]** — `git diff <commit>` omits untracked files; regen the
+  consolidated patch from a committed branch (7998 vs 6699 lines). Repeat of the §10f trap.
+- **[bisect-test-against-upstream-worktree]** — 2 group_v2 tests failed; a pure-upstream worktree
+  proved they assert GroupV2 semantics the fork's GroupV1-default (#103) doesn't have → `#[ignore]`d.
+- **[adb-input-url-autocap]** — the tester-announce URL autocapitalized to `Https://GitHub.com`
+  (functional but ugly). Verify the screencap before the irreversible send.
+
+Native core: `xAlisher/logos-libchat-mls-android@3c38687` (consolidated to ONE `patches/libchat-android-arm64.patch`;
+former 349/437/433 + 490/491 folded in). `.so` `e879a3e0` (26 symbols). Gate: 85 Rust + 37 provenance + 508 app tests.
