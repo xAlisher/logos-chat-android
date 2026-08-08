@@ -38,6 +38,19 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.9 — upstream engine repin (under-the-hood)
+We rebased the chat engine onto the latest upstream (9 commits of fixes + a new
+delivery-based way of publishing contact keys). No new buttons to press — the whole
+point of this test is that **everything you already do still works and nothing was lost**:
+
+- **Your existing chats survived the update** — open a conversation you had before
+  updating; the messages and history should all still be there.
+- **1:1 messaging** — send and receive with another tester on this version; it should arrive.
+- **Groups** — create a group, add a member, exchange a message; all as before.
+- **Contacts** — add someone (scan their QR / import a shared card) and start a chat.
+- **Talking to an old version** — if you message someone still on v0.9.8, it should STILL
+  work; we deliberately kept the engine wire-compatible. Report anything that breaks here.
+
 ### v0.9.8 — data-loss + duress-PIN hardening
 Mostly under-the-hood safety fixes — nothing to set up. If you use the app-lock PIN:
 - Try changing your **main PIN to the same value as your duress PIN** — it should now be
