@@ -10,7 +10,8 @@ import {Modal, Pressable, StyleSheet, Text, View} from 'react-native';
 import {colors, type, spacing, radii} from '../theme';
 import {PinPad} from './PinPad';
 import {useSecurityStore} from '../stores/securityStore';
-import {PIN_LENGTH, verifyPin} from '../security/pinSecurity';
+import {PIN_LENGTH} from '../security/pinSecurity';
+import {evaluateChangePin} from '../security/pinFlow';
 
 export type PinFlowMode = 'setMain' | 'setDuress' | 'removeMain';
 
@@ -96,23 +97,32 @@ export function PinFlowModal({
 
   const submitMain = async (o: string | null, n: string) => {
     setBusy(true);
-    // #489: a new main PIN that matches the duress PIN would make every ordinary
-    // unlock take the duress branch and wipe the account. setMainPin also refuses
-    // it, but returns a generic failure — check here so we can say why.
-    if (verifyPin(n, useSecurityStore.getState().duressVerifier)) {
+    // #GHSA-m82h: decide via the pure evaluator, which enforces the order the
+    // security depends on — the CURRENT PIN must verify before the duress
+    // collision is even probed. A wrong current PIN returns the generic
+    // "Incorrect current PIN" and never reveals the duress-PIN oracle to a
+    // holder who does not know the current PIN. (The #489 collision message is
+    // only reachable once the current PIN has verified.)
+    const {mainVerifier, duressVerifier} = useSecurityStore.getState();
+    const decision = evaluateChangePin({oldPin: o, newPin: n, mainVerifier, duressVerifier});
+    if (decision.kind !== 'accept') {
       setBusy(false);
       setIdx(0);
       setOldPin(null);
       setNewPin('');
-      fail("That's your duress PIN — choose a different one.");
+      fail(
+        decision.kind === 'duressCollision'
+          ? "That's your duress PIN — choose a different one."
+          : 'Incorrect current PIN',
+      );
       return;
     }
     const ok = await setMainPin(n, o);
     setBusy(false);
     if (ok) onClose(true);
     else {
-      // Only reachable when the OLD pin failed (new pin is pre-validated as 6
-      // digits by the pad). Restart from the old-PIN step.
+      // setMainPin re-validates the old PIN; unreachable now that the evaluator
+      // verified it above, but keep the generic message for any store refusal.
       setIdx(0);
       setOldPin(null);
       setNewPin('');
