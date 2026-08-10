@@ -298,6 +298,16 @@ object NodeRuntime {
     }
     val context = appContext ?: return "no app context"
     setStatus("initializing")
+    // #GHSA-jj3m: the delivery relay multiaddr is an in-process loopback that dies
+    // with the process — a value left in KV from a previous run is STALE and points
+    // at a dead port. Clear it on every cold open so torRelayReady() below can only
+    // see a relay THIS session's Tor bootstrap actually stood up; otherwise the
+    // fail-closed gate would be fooled by the stale value and open before Tor exists.
+    try {
+      ChatRepo.requireDb().kvSet(KV_DELIVERY_RELAY_NODE, "")
+    } catch (t: Throwable) {
+      Log.w(TAG, "could not clear stale relay KV (non-fatal): ${t.message}")
+    }
     // #GHSA-jj3m: fail CLOSED in Private mode. open_persistent publishes this
     // device's bundle to the registry as part of coming up; on a cold start the
     // (JS-driven) Tor bootstrap may not have written the relay multiaddr yet, so
