@@ -38,6 +38,17 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.10 — backup safety UX
+Two small safety touches around backup + reset — worth a quick poke:
+
+- **Backup status.** Side menu → About. Under "Back up identity + chats" you now see either
+  `Last backup: <date>` or a red `Never backed up` — a clear cue whether you're protected.
+- **Make a backup** (About → Back up identity + chats, choose a passphrase). Confirm the
+  status line flips to `Last backup: today`.
+- **Reset nudge.** Settings → Reset identity and data. The confirm dialog now nudges you to
+  back up first and shows a **Back up now** button — tap it to make a backup WITHOUT
+  resetting. Only the red **Reset** button wipes; **Back up now** and **Cancel** are safe.
+
 ### v0.9.9 — upstream engine repin (under-the-hood)
 We rebased the chat engine onto the latest upstream (9 commits of fixes + a new
 delivery-based way of publishing contact keys). No new buttons to press — the whole
