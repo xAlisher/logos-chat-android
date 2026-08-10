@@ -34,6 +34,15 @@ object NodeRuntime {
   // only after the relay is up. Takes precedence over the direct node so delivery
   // libp2p egresses via a Tor exit. Empty = route delivery directly.
   const val KV_DELIVERY_RELAY_NODE = "deliveryRelayNode"
+  // #GHSA-jj3m: the persisted Private-mode master flag (settingsStore.mediaOverTor).
+  // "true" means the user opted into routing over Tor — so the device-bundle publish
+  // inside open_persistent must NOT egress before the Tor relay exists.
+  const val KV_MEDIA_OVER_TOR = "mediaOverTor"
+  // #GHSA-jj3m: how long a cold start waits for the (JS-driven) Tor bootstrap to
+  // write the relay multiaddr before failing closed. The node executor has nothing
+  // else to do on a cold start, so a bounded block here is safe; on timeout we
+  // return without opening (no direct publish) and the next start retries.
+  private const val PRIVATE_MODE_TOR_WAIT_MS = 60_000L
   internal const val SECURE_PREFS = "logoschat_secure" // internal: NodeRuntimeDbKeyTest (#358)
   internal const val KEY_DB_KEY = "dbKey" // legacy plaintext (pre-#258); migrated below
   internal const val KEY_DB_KEY_ENC = "dbKeyEnc" // #258: Keystore-wrapped dbKey
@@ -238,6 +247,42 @@ object NodeRuntime {
     }
   }
 
+  /** #GHSA-jj3m: was Private mode (Tor) opted into? Persisted by settingsStore. */
+  private fun privateModeEnabled(): Boolean =
+      try {
+        ChatRepo.requireDb().kvGet(KV_MEDIA_OVER_TOR) == "true"
+      } catch (t: Throwable) {
+        false // DB not ready → treat as not-private; the caller only gates when true
+      }
+
+  /** #GHSA-jj3m: has the JS Tor bootstrap written the local relay multiaddr yet? */
+  private fun torRelayReady(): Boolean =
+      try {
+        !ChatRepo.requireDb().kvGet(KV_DELIVERY_RELAY_NODE).isNullOrEmpty()
+      } catch (t: Throwable) {
+        false
+      }
+
+  /**
+   * #GHSA-jj3m: block until the Tor relay multiaddr appears, up to [timeoutMs].
+   * Returns true if the relay is ready (safe to publish over Tor), false on timeout
+   * (caller must fail closed and NOT open — publishing now would leak the real IP).
+   * Runs on the node executor, so a bounded sleep-poll is acceptable.
+   */
+  private fun awaitTorRelay(timeoutMs: Long): Boolean {
+    val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+    while (System.nanoTime() < deadline) {
+      if (torRelayReady()) return true
+      try {
+        Thread.sleep(500)
+      } catch (ie: InterruptedException) {
+        Thread.currentThread().interrupt()
+        return torRelayReady()
+      }
+    }
+    return torRelayReady()
+  }
+
   private fun startBlocking(): String? {
     if (ctx != 0L) {
       // #237: the node is already open — "Logos on" is a RESUME of paused Waku
@@ -253,6 +298,20 @@ object NodeRuntime {
     }
     val context = appContext ?: return "no app context"
     setStatus("initializing")
+    // #GHSA-jj3m: fail CLOSED in Private mode. open_persistent publishes this
+    // device's bundle to the registry as part of coming up; on a cold start the
+    // (JS-driven) Tor bootstrap may not have written the relay multiaddr yet, so
+    // publishing now would join the real IP to a stable identity. When Private
+    // mode is on and the relay isn't ready, wait for it; if it never arrives, do
+    // NOT open — return so the node stays down (no direct publish) and the next
+    // start retries once Tor is up. When Private mode is off, this is a no-op.
+    if (privateModeEnabled() && !torRelayReady()) {
+      setStatus("initializing", "Private mode: waiting for Tor before connecting")
+      if (!awaitTorRelay(PRIVATE_MODE_TOR_WAIT_MS)) {
+        setStatus("error", "Private mode: waiting for Tor — not publishing over a direct connection")
+        return "waiting for Tor"
+      }
+    }
     // #219: pin the delivery client to our self-hosted node if configured. Set the
     // env vars the Rust delivery layer reads BEFORE opening the node (the node thread
     // inherits this process's env). Empty/unset KV → no-op → default fleet behaviour.
