@@ -1,7 +1,7 @@
 // #GHSA-m82h-8vj7-vp3p — the Change-PIN flow must not leak which PIN is the
 // duress PIN to someone who cannot prove the current PIN. These tests pin the
 // ORDER of checks in evaluateChangePin so the oracle can never regress back in.
-import {evaluateChangePin} from '../src/security/pinFlow';
+import {evaluateChangePin, pinFlowSteps} from '../src/security/pinFlow';
 import {makeVerifier, type PinVerifier} from '../src/security/pinSecurity';
 
 const SALT = '00112233445566778899aabbccddeeff'; // 16 bytes hex; salt isn't secret
@@ -63,5 +63,27 @@ describe('evaluateChangePin (#GHSA-m82h ordering)', () => {
       duressVerifier: null,
     });
     expect(d.kind).toBe('wrongCurrent');
+  });
+});
+
+describe('pinFlowSteps (#GHSA-w7j3 — duress flows require auth first)', () => {
+  it('changing/setting the duress PIN starts with a current-PIN step', () => {
+    // The duress rows are only shown when a main PIN exists (hasPin true), so the
+    // authenticated path is the one that actually runs.
+    expect(pinFlowSteps('setDuress', true)).toEqual(['current', 'new', 'confirm']);
+    expect(pinFlowSteps('setDuress', true)[0]).toBe('current');
+  });
+
+  it('removing the duress PIN requires a current-PIN step (not a bare tap)', () => {
+    expect(pinFlowSteps('removeDuress', true)).toEqual(['current']);
+  });
+
+  it('removing the main PIN still verifies the current PIN', () => {
+    expect(pinFlowSteps('removeMain', true)).toEqual(['current']);
+  });
+
+  it('the change-main flow keeps its old->new->confirm shape; first-time set has no old step', () => {
+    expect(pinFlowSteps('setMain', true)).toEqual(['old', 'new', 'confirm']);
+    expect(pinFlowSteps('setMain', false)).toEqual(['new', 'confirm']);
   });
 });
