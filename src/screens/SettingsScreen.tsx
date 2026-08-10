@@ -24,6 +24,8 @@ import {colors, type, spacing, radii} from '../theme';
 import {ActionButton} from '../components/ActionButton';
 import {PinFlowModal, type PinFlowMode} from '../components/PinFlowModal';
 import {TorBootstrapModal} from '../components/TorBootstrapModal';
+import {BackupPassphraseModal} from '../components/BackupPassphraseModal';
+import {exportEncryptedBackup} from '../lib/runBackup';
 import {useSecurityStore} from '../stores/securityStore';
 import {useChatStore} from '../stores/chatStore';
 import {useSettingsStore} from '../stores/settingsStore';
@@ -146,6 +148,9 @@ export function SettingsScreen() {
   const [flow, setFlow] = useState<PinFlowMode | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
+  // #494: "Back up now" from the reset modal — the export flow before a wipe.
+  const [askBackupPass, setAskBackupPass] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
 
   // #265: custom self-hosted delivery node. Stored in the KV NodeRuntime reads
   // at start (applyDeliveryPeerEnv → LOGOS_DELIVERY_SERVICE_NODE); shows the
@@ -192,6 +197,22 @@ export function SettingsScreen() {
     } finally {
       setResetting(false);
       setConfirmReset(false);
+    }
+  };
+
+  // #494: encrypted backup from the reset modal, so a user can save the current
+  // state before the irreversible wipe. Reuses the shared export helper (records
+  // the last-backup timestamp). The reset modal stays open underneath.
+  const onBackupConfirm = async (passphrase: string) => {
+    setBackingUp(true);
+    try {
+      await exportEncryptedBackup(passphrase);
+      setAskBackupPass(false);
+      ToastAndroid.show('Encrypted backup saved', ToastAndroid.SHORT);
+    } catch {
+      ToastAndroid.show('Backup failed', ToastAndroid.SHORT);
+    } finally {
+      setBackingUp(false);
     }
   };
 
@@ -411,30 +432,51 @@ export function SettingsScreen() {
               every chat, group, and mesh pairing. A new identity is created and
               your current address stops working. This cannot be undone.
             </Text>
+            {/* #494: nudge to back up the current state before the irreversible wipe. */}
+            <Text style={styles.warnBackupNudge}>
+              Create an encrypted identity + messages/contacts backup first if you'd like
+              to restore the current state of the app on this or another device.
+            </Text>
             {resetting ? (
               <View style={styles.busy}>
                 <ActivityIndicator color={colors.accent} />
                 <Text style={styles.warnBody}>Resetting…</Text>
               </View>
             ) : (
-              <View style={styles.warnActions}>
+              <>
                 <ActionButton
-                  label="Cancel"
-                  onPress={() => setConfirmReset(false)}
-                  style={styles.flex1}
-                  testID="reset-cancel"
+                  label={backingUp ? 'Backing up…' : 'Back up now'}
+                  onPress={() => !backingUp && setAskBackupPass(true)}
+                  style={styles.backupNowBtn}
+                  testID="reset-backup-now"
                 />
-                <ActionButton
-                  label="Reset"
-                  onPress={doReset}
-                  style={styles.dangerFlex}
-                  testID="reset-confirm"
-                />
-              </View>
+                <View style={styles.warnActions}>
+                  <ActionButton
+                    label="Cancel"
+                    onPress={() => setConfirmReset(false)}
+                    style={styles.flex1}
+                    testID="reset-cancel"
+                  />
+                  <ActionButton
+                    label="Reset"
+                    onPress={doReset}
+                    style={styles.dangerFlex}
+                    testID="reset-confirm"
+                  />
+                </View>
+              </>
             )}
           </View>
         </View>
       </Modal>
+
+      {/* #494: the export flow reachable from the reset modal. */}
+      <BackupPassphraseModal
+        visible={askBackupPass}
+        busy={backingUp}
+        onClose={() => !backingUp && setAskBackupPass(false)}
+        onConfirm={onBackupConfirm}
+      />
     </SafeAreaView>
   );
 }
@@ -532,5 +574,8 @@ const styles = StyleSheet.create({
   warnActions: {flexDirection: 'row', gap: spacing.md, marginTop: spacing.sm},
   flex1: {flex: 1},
   dangerFlex: {flex: 1, backgroundColor: colors.unread},
+  // #494: backup nudge + the "Back up now" button in the reset modal.
+  warnBackupNudge: {...type.label, color: colors.textDim, lineHeight: 18, marginTop: spacing.sm},
+  backupNowBtn: {marginTop: spacing.md, backgroundColor: colors.accent},
   busy: {alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm},
 });
