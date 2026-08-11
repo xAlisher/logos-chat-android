@@ -397,3 +397,43 @@ Lessons atomized into `docs/skills/` (first entries of the new library). Synthes
   `5cfce1b9`, 26 exports). Memory: `reference_libchat_repin_427`.
 - Released **v0.9.9** (GitHub + F-Droid + landing + fleet + tester announce + pinned). Native
   `logos-libchat-mls-android@3c38687`.
+
+## Week of 2026-08-11 — v0.9.11 security batch (x0net: GHSA-w7j3 + m82h + jj3m)
+
+### Wins
+- **[process] The Senti review loop caught a real P2 on already-on-device-verified code.** The
+  first jj3m fail-closed cut passed tsc/jest AND an on-device airplane test — then Senti (Codex
+  `*/5`) flagged the clobber race. Fixed, re-tested, Senti re-reviewed → APPROVED → merged. Proof
+  that review-before-merge earns its keep even when your own verification is green. → skill
+  `failclosed-gate-inmemory-not-kv`; loop = `reference_senti_loop`.
+- **[project] Pure-function extraction made the security ordering testable.** m82h's verify-before-
+  disclose order moved out of `PinFlowModal` into `src/security/pinFlow.ts` (`evaluateChangePin` +
+  `pinFlowSteps`), unit-tested (10 cases, incl. the wrong-current+new===duress oracle assertion).
+  The component became a dumb renderer of the decision. → skill `pure-fn-for-security-ordering`.
+- **[project] jj3m fail-closed proven end-to-end on-device, not just reasoned.** Airplane cold
+  start → `node_status: error (…not publishing over a direct connection)` + auto-retry; airplane
+  off → `node up → running`. logcat is the proof. → skill `failclosed-test-needs-usb-adb`.
+
+### Fails
+- **[process] First jj3m cut used a PERSISTED KV as a this-process readiness signal.** Moment:
+  designed the fail-closed gate to check `deliveryRelayNode` (KV) and added an "unconditional
+  clear on cold open" to defeat stale values. Wrong action: cleared the only readiness value —
+  which races enableTor's un-awaited one-shot write and can erase the LIVE relay, hanging the
+  node 60s with no rewrite coming. Root cause: a KV survives process death, so its presence
+  answers "was this ever true?" not "is it live in THIS process?"; you can't distinguish live
+  from stale by presence, and clearing to fake freshness just fights the writer. Caught by Senti
+  P2. Fix: in-memory `TorState.deliveryRelayLive`, nothing cleared. → skill `failclosed-gate-inmemory-not-kv`.
+- **[process] adb input text broke on semicolons in the tester announce.** Moment: typed the
+  multi-sentence v0.9.11 announce with `;` separators via `adb shell input text`. Wrong action:
+  only the text up to the first `;` landed; the rest errored (`/system/bin/sh: …: not found`) —
+  a half-posted announce to a real group. Root cause: `input text` runs on the phone's
+  `/system/bin/sh`, where `;` is a command separator. Fix: periods, no shell metachars. → skill
+  `adb-input-text-shell-metachars`.
+
+### Skills / doc updates
+- Extracted 4 recipes to `docs/skills/`: `failclosed-gate-inmemory-not-kv` (security/high),
+  `pure-fn-for-security-ordering` (security/high), `adb-input-text-shell-metachars` (gotcha/med),
+  `failclosed-test-needs-usb-adb` (verification/med). Indexes updated (by-phase + by-type).
+- Released **v0.9.11** (GitHub + F-Droid + landing + all-three-phones + announce + pinned) and
+  **published all 4 GHSA advisories** crediting @x0net. Memory: `reference_peers_releases`,
+  `feedback_peers_no_biometrics`.

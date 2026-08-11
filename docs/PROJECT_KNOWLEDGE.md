@@ -659,3 +659,31 @@ The engine repin (upstream libchat `d2124fd` → `462a4884`, +9 commits) is capt
 
 Native core: `xAlisher/logos-libchat-mls-android@3c38687` (consolidated to ONE `patches/libchat-android-arm64.patch`;
 former 349/437/433 + 490/491 folded in). `.so` `e879a3e0` (26 symbols). Gate: 85 Rust + 37 provenance + 508 app tests.
+
+## 10i. x0net security batch (2026-08-11, v0.9.11) — see docs/skills/
+
+Three findings from @x0net (GH private vuln reports), all fixed + on-device verified, advisories
+**published** crediting @x0net. App-side (no libchat/`.so` change). Reusable lessons as recipes:
+
+- **[pure-fn-for-security-ordering]** (high) — **GHSA-m82h**: the Change-PIN flow compared the NEW
+  pin to the duress verifier BEFORE verifying the current pin → a value oracle for which pin is
+  duress (a regression of the #489 fix, hidden inside `PinFlowModal`). Fix: extract the decision +
+  step-shape into pure `src/security/pinFlow.ts` (`evaluateChangePin`/`pinFlowSteps`), unit-tested
+  (`__tests__/pinFlow.test.ts`, 10 cases). Register new test files in `jest.logic.config.js` testMatch.
+- **GHSA-w7j3** (med) — duress/wipe-PIN set/change/remove ran with NO auth (one-tap removal). Routed
+  both duress flows through `PinFlowModal`'s step machine (new mode `removeDuress`; `setDuress`/
+  `removeDuress` start with a `current` step verifying the MAIN pin). **PIN-only, never biometrics**
+  (Alisher rule — `feedback_peers_no_biometrics`).
+- **[failclosed-gate-inmemory-not-kv]** (high) — **GHSA-jj3m**: private mode published the device
+  bundle to the registry before Tor existed on cold start (leaked real IP↔identity). `NodeRuntime.
+  startBlocking` now fails closed: waits for a LIVE this-process Tor relay before opening. **Senti P2
+  fix**: the first cut cleared the relay KV on every cold open → raced enableTor's one-shot write and
+  could clobber the live relay (60s hang). Fix: gate on in-memory `TorState.deliveryRelayLive` (set by
+  `TorModule.startDeliveryRelay`, reset on stop) + the KV multiaddr; nothing cleared. `docs/privacy.md`
+  coverage table gained the registry/directory row.
+- **[failclosed-test-needs-usb-adb]** + **[adb-input-text-shell-metachars]** — on-device method: run
+  network-down/airplane fail-closed tests over USB (WiFi adb dies with the radio); compose announces
+  with no shell metachars (`;` truncates on the device shell).
+
+Process: the **Senti review loop** (Codex `*/5`) caught the jj3m P2 AFTER tsc/jest + on-device were
+green — review-before-merge earned its keep. Gate: tsc + 524 app tests. All 4 advisories published.
