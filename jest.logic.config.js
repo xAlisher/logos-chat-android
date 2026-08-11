@@ -59,5 +59,6 @@ module.exports = {
     '<rootDir>/__tests__/mediaList.test.ts',
     '<rootDir>/__tests__/mediaGestures.test.ts',
     '<rootDir>/__tests__/buildOutputSymlink.test.ts',
+    '<rootDir>/__tests__/lintToolchain.test.ts',
   ],
 };
