@@ -525,7 +525,10 @@ object NodeRuntime {
         wipeOk = wipeOk && prefsOk
         // Chat images (#197) live outside the DB — clear them too.
         wipeOk = deleteRecursively(File(context.filesDir, "chat-images")) && wipeOk
-        ChatRepo.wipeAndReinit(context)
+        // #492 (Senti review): the databases/ sweep can fail too — a surviving
+        // `.migbak` is an UNENCRYPTED copy of the chat history. Fold its result in, or
+        // the reset reports clean success with the plaintext history still on disk.
+        wipeOk = ChatRepo.wipeAndReinit(context) && wipeOk
         Log.i(TAG, "identity + data wiped (complete=$wipeOk); reopening with a fresh identity")
         val err = startBlocking()
         // #490: the node still reopens above (a partial wipe must not brick the app),
