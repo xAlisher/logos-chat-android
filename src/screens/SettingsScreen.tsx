@@ -142,7 +142,6 @@ export function SettingsScreen() {
   // Security (#232)
   const hasPin = useSecurityStore(s => s.hasPin);
   const hasDuressPin = useSecurityStore(s => s.hasDuressPin);
-  const removeDuressPin = useSecurityStore(s => s.removeDuressPin);
   const wipeAndReset = useSecurityStore(s => s.wipeAndReset);
 
   const [flow, setFlow] = useState<PinFlowMode | null>(null);
@@ -179,11 +178,6 @@ export function SettingsScreen() {
   const closeFlow = (changed: boolean) => {
     setFlow(null);
     if (changed) ToastAndroid.show('Security updated', ToastAndroid.SHORT);
-  };
-
-  const onRemoveDuress = async () => {
-    await removeDuressPin();
-    ToastAndroid.show('Wipe PIN removed', ToastAndroid.SHORT);
   };
 
   const doReset = async () => {
@@ -381,7 +375,7 @@ export function SettingsScreen() {
                   <View style={styles.sep} />
                   <Row
                     label="Remove wipe PIN"
-                    onPress={onRemoveDuress}
+                    onPress={() => setFlow('removeDuress')}
                     testID="settings-remove-duress"
                   />
                 </>
