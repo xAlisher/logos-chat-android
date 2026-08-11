@@ -1,0 +1,23 @@
+# Peers skills taxonomy — the controlled vocabulary for docs/skills/ recipes.
+# Peers is a React Native app over a native libchat fork (liblogoschat.so) + a
+# Waku/nwaku delivery lib. NOT a Basecamp module — so recipes pin the NATIVE
+# stack (LIBCHAT_COMMIT + .so hash + app version), not basecamp_commit/DS.
+
+# phase = where in the stack / lifecycle the technique lives.
+phases:
+  - native-fork    # rebasing/patching the libchat fork, building liblogoschat.so, FFI/ABI
+  - crypto-mls     # MLS / de-mls, ciphersuites, key packages, the contact registry
+  - delivery       # Waku/nwaku, store catch-up, BLE mesh, reliability
+  - rn-ui          # React Native UI patterns + pitfalls (RN runtime, native modules, JS)
+  - release        # build, sign, F-Droid, landing, provenance/SBOM, versioning
+  - on-device      # adb, the phone fleet, on-device automation + verification
+
+# type = the kind of technique.
+types:
+  - gotcha         # a trap + how to avoid it
+  - pattern        # a reusable way to build/structure something
+  - verification   # how to prove a thing works (headless or on-device)
+  - security       # a security invariant, its threat, and how it's enforced
+  - process        # how to sequence / coordinate the work
+
+severities: [low, medium, high, critical]

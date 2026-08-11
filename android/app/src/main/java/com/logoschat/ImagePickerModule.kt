@@ -512,6 +512,34 @@ class ImagePickerModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * #423: downscale an EXISTING image file to a small JPEG (same {@link #decodeResizeEncode}
+   * output as pickImage). The composer keeps the high-quality original and defers the SQ/HQ
+   * choice to Send: SQ downscales the original here to the inline budget; HQ uploads the
+   * original as-is. Runs off the JS thread.
+   */
+  @ReactMethod
+  fun downscaleFileToBase64(
+      path: String,
+      maxDim: Int,
+      budgetBytes: Int,
+      promise: Promise
+  ) {
+    Thread {
+          try {
+            val uri = Uri.fromFile(File(path))
+            promise.resolve(
+                decodeResizeEncode(
+                    uri,
+                    if (maxDim > 0) maxDim else 1024,
+                    if (budgetBytes > 0) budgetBytes else 120_000))
+          } catch (t: Throwable) {
+            promise.reject("downscale_failed", t.message ?: "could not downscale")
+          }
+        }
+        .start()
+  }
+
+  /**
    * Persist a base64 JPEG to app storage and resolve its file path (#197) — used
    * for the sender's own local copy so the outgoing bubble renders from a file,
    * not a giant base64 string held in JS.

@@ -35,6 +35,7 @@ Each protection is scoped to a specific channel (media vs delivery) and a specif
 | **Media** | **Your IP when sending/viewing media** | **Closed (opt-in)** with **Private mode (Tor)** (#318): media routes through Tor so the storage node sees a Tor exit IP, not yours. When Private mode is **off**, media is direct. |
 | **Media** | **Exact file size** (a fingerprint, visible even over Tor) | **Closed** with **blob size padding** (#320): files are padded to size buckets, so many files look identical in size. |
 | **Delivery** | **Your IP on the messaging (delivery) path** | **Closed (opt-in)** with **Private mode (Tor)** (#319): when Private mode is on, delivery egresses via a local Tor relay so the delivery node sees a Tor exit, not your IP. When Private mode is **off**, delivery is direct (faster). Tor-selected traffic **fails rather than silently falling back to a direct connection**. |
+| **Registry / directory** | **Your IP when your device publishes its bundle on start** | **Closed (opt-in)** with **Private mode (Tor)**: bringing the node up publishes your device bundle to the registry, so in Private mode this is gated on Tor — the node **waits for the Tor route before it publishes**, and if Tor can't be established it does **not** publish over a direct connection (delivery stays down until Tor comes up, rather than leaking your IP once at start). When Private mode is **off**, this publish is direct. |
 | **Both** | **Conversation graph** (which content topics a session subscribes to = who talks to whom) | **Open**: Tor hides your IP but not the *shape* of subscriptions/traffic. Needs a mixnet (#335), not Tor. |
 | **Both** | **Fetch/publish timing correlation** (upload then download seconds later) | **Open**: doing this well needs decoy traffic / a mixnet (#335), not a quick in-app fix. |
 
@@ -79,3 +80,8 @@ Anonymity is a **pluggable transport pipe** under Logos messaging — never a re
   That's the proper fix for who-talks-to-whom.
 
 If you found a gap not listed here, please open an issue — honest threat-modeling is the point.
+
+**If the gap is exploitable, please use the private report form instead of a public issue:**
+[Report a vulnerability](https://github.com/xAlisher/peers/security/advisories/new). See
+[`SECURITY.md`](../SECURITY.md). Documentation gaps and anything without exploit potential are
+very welcome on the public tracker.

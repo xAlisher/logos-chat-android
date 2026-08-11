@@ -127,6 +127,19 @@ describe('restart-gate state machine', () => {
     expect(r.outcome).toBe('duress');
   });
 
+  it('#489: a PIN matching BOTH main and duress resolves to unlock, never wipe', () => {
+    // A mis-set collision — the same PIN configured as both main and duress
+    // (different salts, same secret). An ambiguous match must NOT take the
+    // duress branch and destroy data.
+    const collideMain = makeVerifier('555555', salt);
+    const collideDuress = makeVerifier('555555', 'cccccccccccccccccccccccccccccccc');
+    const r = evaluateGateAttempt(initialGateState(), '555555', {
+      main: collideMain,
+      duress: collideDuress,
+    });
+    expect(r.outcome).toBe('unlock');
+  });
+
   it('wrong PIN burns an attempt until lockout', () => {
     let state = initialGateState();
     let r = evaluateGateAttempt(state, '000000', {main, duress});
