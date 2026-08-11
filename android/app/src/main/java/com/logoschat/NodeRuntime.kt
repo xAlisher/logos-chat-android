@@ -255,13 +255,21 @@ object NodeRuntime {
         false // DB not ready → treat as not-private; the caller only gates when true
       }
 
-  /** #GHSA-jj3m: has the JS Tor bootstrap written the local relay multiaddr yet? */
+  /**
+   * #GHSA-jj3m: is a LIVE, current-process Tor delivery relay available? Requires
+   * both the in-memory [TorState.deliveryRelayLive] flag (true only once THIS
+   * process's relay is standing — false at process start, so a stale KV value can
+   * never satisfy it) AND the relay multiaddr in KV that applyDeliveryPeerEnv needs
+   * to point the delivery client at. Keying on the in-memory flag is why we no
+   * longer clear the KV (which raced enableTor's one-shot write — Senti P2 on #498).
+   */
   private fun torRelayReady(): Boolean =
-      try {
-        !ChatRepo.requireDb().kvGet(KV_DELIVERY_RELAY_NODE).isNullOrEmpty()
-      } catch (t: Throwable) {
-        false
-      }
+      TorState.deliveryRelayLive &&
+          try {
+            !ChatRepo.requireDb().kvGet(KV_DELIVERY_RELAY_NODE).isNullOrEmpty()
+          } catch (t: Throwable) {
+            false
+          }
 
   /**
    * #GHSA-jj3m: block until the Tor relay multiaddr appears, up to [timeoutMs].
@@ -298,16 +306,6 @@ object NodeRuntime {
     }
     val context = appContext ?: return "no app context"
     setStatus("initializing")
-    // #GHSA-jj3m: the delivery relay multiaddr is an in-process loopback that dies
-    // with the process — a value left in KV from a previous run is STALE and points
-    // at a dead port. Clear it on every cold open so torRelayReady() below can only
-    // see a relay THIS session's Tor bootstrap actually stood up; otherwise the
-    // fail-closed gate would be fooled by the stale value and open before Tor exists.
-    try {
-      ChatRepo.requireDb().kvSet(KV_DELIVERY_RELAY_NODE, "")
-    } catch (t: Throwable) {
-      Log.w(TAG, "could not clear stale relay KV (non-fatal): ${t.message}")
-    }
     // #GHSA-jj3m: fail CLOSED in Private mode. open_persistent publishes this
     // device's bundle to the registry as part of coming up; on a cold start the
     // (JS-driven) Tor bootstrap may not have written the relay multiaddr yet, so
