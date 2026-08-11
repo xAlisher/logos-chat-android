@@ -39,9 +39,17 @@ updates:
       # 911 to 1274 packages and from 1 to 16 copies of `@babel/core`. Tripling the build-time
       # supply-chain surface of a messenger for an unused devDep is the wrong trade.
       #
-      # Lift this when React Native itself moves to Babel 8; `__tests__/babelToolchain.test.ts`
+      # #506: the same break, entered from the other side. Ignoring only `@babel/core` left
+      # `@babel/preset-env` free to move to 8 on its own, and preset-env@8 peers on
+      # `@babel/core@^8.0.0` — so `npm ci` died with ERESOLVE exactly as in #470, both required
+      # jobs failing at install. Either half of the pair alone breaks the tree; the pair has to
+      # move together or not at all, and per the paragraph above it should not move at all yet.
+      #
+      # Lift both when React Native itself moves to Babel 8; `__tests__/babelToolchain.test.ts`
       # holds the same line from inside the repo.
       - dependency-name: "@babel/core"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@babel/preset-env"
         update-types: ["version-update:semver-major"]
     labels: [dependencies]
 

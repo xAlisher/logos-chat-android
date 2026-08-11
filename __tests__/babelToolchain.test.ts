@@ -22,6 +22,18 @@
 //      1274 packages / 1 to 16 copies of `@babel/core`. Unused devDep, tripled supply-chain
 //      surface. `.github/dependabot.yml` refuses the bump upstream; this refuses it downstream.
 //
+// PR #506 review (Senti, P1): the same break, entered from the other side. Dependabot left
+// `@babel/core` at 7.29.7 — that half was ignored after #470 — and moved `@babel/preset-env` to
+// 8.0.2 instead, whose peer range is `@babel/core@^8.0.0`. `npm ci` died with ERESOLVE again and
+// both required jobs failed at install again.
+//
+// Check (1) below already caught it: run against #506's lockfile it reports 108 violations, the
+// first being `node_modules/@babel/preset-env: peer @babel/core@^8.0.0 resolves to 7.29.7`. What
+// was missing was the *named* half — check (2) pinned only `@babel/core`, and `.github/
+// dependabot.yml` ignored only `@babel/core`, so nothing stopped the pair being split from the
+// preset-env end. Both are now pinned by name, in both places. The two packages move together or
+// not at all.
+//
 // NOTE on (1): it is deliberately STRICTER than `npm ci`. npm downgrades some conflicts to
 // "npm warn ERESOLVE overriding peer dependency" and installs anyway; those warnings scroll past
 // and a broken resolution ships. Here they are failures. If this test fires on an otherwise
@@ -129,6 +141,23 @@ describe('npm lockfile peer integrity (#470)', () => {
     ]);
   });
 
+  it('detects the #506 shape — a dependant moved past the root package it peers on', () => {
+    // The mirror image of the case above, and the one that actually shipped in #506: the root
+    // core held still on 7 while preset-env moved to 8 and started demanding an 8. Same walk,
+    // opposite direction — a check that only knows one direction would have passed this PR.
+    const broken: Record<string, LockEntry> = {
+      '': {},
+      'node_modules/@babel/core': {version: '7.29.7'},
+      'node_modules/@babel/preset-env': {
+        version: '8.0.2',
+        peerDependencies: {'@babel/core': '^8.0.0'},
+      },
+    };
+    expect(peerViolations(broken)).toEqual([
+      'node_modules/@babel/preset-env: peer @babel/core@^8.0.0 resolves to 7.29.7',
+    ]);
+  });
+
   it('resolves a peer from a nested copy in preference to the root one', () => {
     // The same walk must NOT report the arrangement React Native 0.86 actually ships, where the
     // preset carries its own core. Otherwise check (1) is unusable noise.
@@ -158,6 +187,17 @@ describe('Babel major line is pinned to what React Native 0.86 ships (#470)', ()
     expect(semver.major(installed as string)).toBe(BABEL_7);
   });
 
+  it('keeps the root @babel/preset-env devDep on the Babel 7 line too (#506)', () => {
+    // preset-env is the half #470's pin left loose, and #506 is what came through the gap. It is
+    // pinned for the same reason core is: it peers on core, so the two are one decision.
+    const declared = pkg.devDependencies['@babel/preset-env'];
+    expect(declared).toMatch(/^\^7\./);
+
+    const installed = lock.packages['node_modules/@babel/preset-env']?.version;
+    expect(installed).toBeDefined();
+    expect(semver.major(installed as string)).toBe(BABEL_7);
+  });
+
   it('keeps every installed copy of @babel/core on the Babel 7 line, not just the root one', () => {
     // The invariant that actually matters: a Babel 8 anywhere in the tree means some Babel 7
     // plugin is being handed a core it was not written against.
@@ -178,9 +218,17 @@ describe('Babel major line is pinned to what React Native 0.86 ships (#470)', ()
   });
 
   it('has Dependabot refuse the major bump upstream, so this stops recurring weekly', () => {
+    // Both names, because #470 ignored only `@babel/core` and #506 walked straight through the
+    // hole that left. Ignoring one half of a peer pair just changes which side the break enters
+    // from.
     const config = fs.readFileSync(path.join(ROOT, '.github/dependabot.yml'), 'utf8');
-    expect(config).toMatch(
-      /dependency-name:\s*"@babel\/core"\s*\n\s*update-types:\s*\["version-update:semver-major"\]/,
-    );
+    for (const name of ['@babel/core', '@babel/preset-env']) {
+      const escaped = name.replace(/[/\\^$*+?.()|[\]{}]/g, '\\$&');
+      expect(config).toMatch(
+        new RegExp(
+          `dependency-name:\\s*"${escaped}"\\s*\\n\\s*update-types:\\s*\\["version-update:semver-major"\\]`,
+        ),
+      );
+    }
   });
 });
