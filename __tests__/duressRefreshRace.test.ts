@@ -238,3 +238,75 @@ describe('duress wipe vs. an in-flight message load (#490 P1, same race)', () =>
     useChatStore.getState().resumeRefresh();
   });
 });
+
+// #490 P1 (Senti on #515): the generation gate can only invalidate reads that were
+// ALREADY in flight when the wipe fired. A read that STARTS inside the wipe window
+// captures the post-reset generation, so `isStale()` is false by construction and the
+// gate cannot help — it reads the not-yet-wiped DB and writes the previous identity's
+// bodies straight into the thread `reset()` just cleared. `refreshConversations` has
+// blocked that since #490 (`if (refreshSuppressed) return;`); the message paths did
+// not. If the native wipe then THROWS, LockScreen swallows it and never reaches the
+// `reset()` inside `wipeAndReset` — so there is no later invalidation at all and the
+// leaked bodies stay on the uncovered screen.
+describe('duress wipe vs. a message read STARTED while suppressed (#490 P1)', () => {
+  it('loadMessages started while SUPPRESSED never reads the not-yet-wiped DB', async () => {
+    // the duress PIN landed: suppress + reset, native wipe still in flight
+    useChatStore.getState().suppressRefresh();
+    useChatStore.getState().reset();
+
+    mockMsgQueue = [Promise.resolve(JSON.stringify(OLD_IDENTITY_MESSAGES))];
+    await useChatStore.getState().loadMessages(7);
+
+    expect(useChatStore.getState().messages).toEqual({});
+    expect(useChatStore.getState().reachedEnd).toEqual({});
+    // the native read was never issued — the queued result is still queued
+    expect(mockMsgQueue).toHaveLength(1);
+    useChatStore.getState().resumeRefresh();
+  });
+
+  it('loadMoreMessages started while SUPPRESSED never reads it either', async () => {
+    // Seed a FULL page BEFORE the wipe, so loadMoreMessages has a real cursor and
+    // reachedEnd is false — otherwise it early-returns and the test is vacuous.
+    const fullPage = Array.from({length: PAGE}, (_, i) => ({
+      msgPk: PAGE - i,
+      convoPk: 7,
+      direction: 'in',
+      text: `old secret ${i}`,
+      at: PAGE - i,
+    }));
+    mockMsgQueue = [Promise.resolve(JSON.stringify(fullPage))];
+    await useChatStore.getState().loadMessages(7);
+    expect(useChatStore.getState().reachedEnd[7]).toBe(false);
+
+    // duress: suppress, but do NOT reset — this pins the entry guard on its own,
+    // with a live cursor still in the store (the strongest form of the leak).
+    useChatStore.getState().suppressRefresh();
+
+    mockMsgQueue = [
+      Promise.resolve(
+        JSON.stringify([
+          {msgPk: 0, convoPk: 7, direction: 'in', text: 'older secret', at: 0},
+        ]),
+      ),
+    ];
+    await useChatStore.getState().loadMoreMessages(7);
+
+    expect(useChatStore.getState().messages[7]).toHaveLength(PAGE); // nothing merged
+    expect(useChatStore.getState().loadingMore).toEqual({}); // no key re-added
+    expect(mockMsgQueue).toHaveLength(1); // native never called
+    useChatStore.getState().resumeRefresh();
+  });
+
+  it('CONTROL: after resumeRefresh() both message reads work again', async () => {
+    useChatStore.getState().suppressRefresh();
+    useChatStore.getState().reset();
+    useChatStore.getState().resumeRefresh();
+
+    mockMsgQueue = [Promise.resolve(JSON.stringify(OLD_IDENTITY_MESSAGES))];
+    await useChatStore.getState().loadMessages(7);
+
+    // If this fails the guard is over-broad and the two tests above are vacuous.
+    expect(useChatStore.getState().messages[7]).toHaveLength(2);
+    expect(mockMsgQueue).toHaveLength(0);
+  });
+});

@@ -685,6 +685,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMessages: async (convoPk: number) => {
+    // #490 P1 (Senti on #515): the generation gate below only invalidates reads that
+    // were ALREADY in flight. A read that STARTS during the wipe captures the
+    // post-reset generation, so isStale() is false — it would read the not-yet-wiped
+    // DB and write the previous identity's bodies into the just-cleared thread, and
+    // if the native wipe throws there is no later reset() to undo it. Block newly
+    // started reads for exactly the window refreshConversations already blocks.
+    if (refreshSuppressed) return;
     // #490 P1 (the same race Senti flagged on refreshConversations, worse payload):
     // the lock screen covers a ChatScreen that may already be mounted, so a
     // loadMessages in flight when the duress PIN lands would write the PREVIOUS
@@ -704,6 +711,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMoreMessages: async (convoPk: number) => {
+    if (refreshSuppressed) return; // #490 P1: see loadMessages
     const s = get();
     if (s.loadingMore[convoPk] === true || s.reachedEnd[convoPk] === true) {
       return;
