@@ -14,13 +14,15 @@ Retrieval index for `docs/skills/`. Within each phase, sorted by severity then
 - **[xwing-provider-single-suite](../xwing-provider-single-suite.md)** — Check the provider's SUPPORTED suites before adopting a ciphersuite flip; single-suite breaks existing chats · critical · 2026-08-08
 
 ## delivery
-_(none yet)_
+- **[failclosed-gate-inmemory-not-kv](../failclosed-gate-inmemory-not-kv.md)** — A fail-closed readiness gate must key on an in-memory this-process signal, never a persisted KV · high · 2026-08-11
 
 ## rn-ui
-_(none yet)_
+- **[pure-fn-for-security-ordering](../pure-fn-for-security-ordering.md)** — Extract the ORDER of security checks into a pure, unit-tested function so it can't regress in a component · high · 2026-08-11
 
 ## release
 _(none yet)_
 
 ## on-device
+- **[adb-input-text-shell-metachars](../adb-input-text-shell-metachars.md)** — adb shell input text runs on the device shell; a semicolon truncates the message, strip shell metachars · medium · 2026-08-11
+- **[failclosed-test-needs-usb-adb](../failclosed-test-needs-usb-adb.md)** — Network-down / fail-closed tests need USB adb; airplane mode kills the WiFi control channel · medium · 2026-08-11
 - **[adb-input-url-autocap](../adb-input-url-autocap.md)** — The IME autocapitalizes URLs typed via `adb shell input text`; verify the screencap before sending · medium · 2026-08-08
