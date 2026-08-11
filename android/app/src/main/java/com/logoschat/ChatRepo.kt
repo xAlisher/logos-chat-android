@@ -108,6 +108,19 @@ object ChatRepo {
       db = null
       activeConvoPk = 0
       context.applicationContext.deleteDatabase(ChatDb.DB_NAME)
+      // #492: deleteDatabase() only removes the fixed suffix set (-wal/-shm/-journal/
+      // -mj*), NOT arbitrary siblings. A one-time SQLCipher migration leaves a
+      // PLAINTEXT `.migbak` (decrypted history) and a staged `.enc` beside the db — a
+      // duress/reset wipe must remove those too, or a plaintext copy of the history
+      // survives the wipe. Sweep every databases/ entry whose name starts with DB_NAME
+      // (covers `.migbak`, `.enc`, and any future sibling).
+      try {
+        context.applicationContext.getDatabasePath(ChatDb.DB_NAME).parentFile
+            ?.listFiles { f -> f.name.startsWith(ChatDb.DB_NAME) }
+            ?.forEach { if (it.exists() && !it.delete()) Log.w(TAG, "wipe: could not delete ${it.name}") }
+      } catch (t: Throwable) {
+        Log.w(TAG, "wipe: databases sweep failed: ${t.message}")
+      }
     }
     // init() early-returns if db != null; we just nulled it, so this re-opens fresh.
     init(context)
