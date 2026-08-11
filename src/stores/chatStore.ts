@@ -28,6 +28,7 @@ import {
   shouldAutoReadd,
 } from './readdRecovery';
 import type {ReaddDebts, ReaddRequest} from './readdRecovery';
+import {createRefreshGate} from './refreshGate';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -169,6 +170,9 @@ interface ChatState {
   meshMap: Record<string, {pubkey: string; name: string | null}>;
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
+  /** #490: pause/resume refreshConversations during a duress wipe (see the flag). */
+  suppressRefresh: () => void;
+  resumeRefresh: () => void;
   loadMessages: (convoPk: number) => Promise<void>;
   /**
    * #37: fetch the next OLDER page and PREPEND it to `messages[convoPk]`
@@ -427,6 +431,16 @@ const ackedGroups = new Set<number>();
  *  `at` throttles the re-broadcast so simultaneous joins don't storm. */
 const rebroadcast: Record<number, {seen: Set<string>; at: number}> = {};
 
+// #490: while a duress wipe is in flight, the conversation list is cleared and the
+// gate is dropped BEFORE the native wipe completes. A `node_status` "stopped" event
+// (fired mid-wipe, before the DB is deleted) would otherwise call refreshConversations
+// and repopulate the list from the not-yet-wiped DB — a visible tell. This flag makes
+// refreshConversations a no-op for that window; resumeRefresh() clears it after.
+let refreshSuppressed = false;
+// #490 (P1): invalidates a refresh already in flight (past its first await) so its
+// final set() can't repopulate the list reset() just cleared. See refreshGate.ts.
+const refreshGate = createRefreshGate();
+
 // #228: system notes (invited/joined/left/group-ended) persist per conversation in
 // the KV store so they survive an app restart. Bounded so KV never grows unbounded.
 const SYSLINE_CAP = 60;
@@ -597,6 +611,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeConvoPk: null,
 
   reset: () => {
+    // #490 P1: invalidate any refresh already in flight so it can't repopulate the
+    // maps we're about to clear (belt-and-braces with suppressRefresh, and covers a
+    // direct reset() — e.g. securityStore.wipeAndReset — with no suppress around it).
+    refreshGate.invalidate();
     // Module-level mutable caches (not in `set` state) — clear in place, and cancel
     // any outstanding invite timers so they don't fire against the new identity.
     for (const k of Object.keys(pendingJoins)) delete (pendingJoins as Record<string, unknown>)[k];
@@ -619,7 +637,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  suppressRefresh: () => {
+    refreshSuppressed = true;
+    refreshGate.invalidate(); // #490 P1: invalidate any refresh already in flight
+  },
+  resumeRefresh: () => {
+    refreshSuppressed = false;
+  },
+
   refreshConversations: async () => {
+    // #490: suppressed during a duress wipe so a mid-wipe node_status event can't
+    // repopulate the just-cleared list from the not-yet-wiped DB.
+    if (refreshSuppressed) return;
+    // #490 P1: capture the generation now; if reset()/suppress fires during our
+    // awaits below, the post-await check drops this (old-identity) result.
+    const token = refreshGate.enter();
     const rows: ConversationRow[] = JSON.parse(
       await LogosChat.listConversations(),
     );
@@ -645,6 +677,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch {
       // keep the previous map on a transient read failure
     }
+    // #490 P1: a reset()/suppressRefresh() that fired while we awaited above bumped
+    // the generation — this result is from the PREVIOUS identity; drop it rather than
+    // repopulate the just-cleared list behind the already-dropped gate.
+    if (refreshGate.isStale(token)) return;
     set({conversations, meshMap});
   },
 
