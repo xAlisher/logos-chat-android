@@ -25,8 +25,17 @@ export function StorageInfoModal({
       animationType="fade"
       onRequestClose={onClose}
       statusBarTranslucent>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.card} accessibilityViewIsModal onPress={() => {}} testID="storage-info-modal">
+      <View style={styles.root}>
+        {/* #353: the backdrop is a sibling BEHIND the card, not a wrapper. A
+            Pressable WRAPPING the card steals the ScrollView pan — a slow drag is
+            held by the press and only fast flings slip through (rn-modal-gesture). */}
+        <Pressable
+          style={styles.backdrop}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Close"
+        />
+        <View style={styles.card} accessibilityViewIsModal testID="storage-info-modal">
           <View style={styles.titleRow}>
             <Text style={styles.title}>Storage</Text>
             <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Close" testID="storage-info-close">
@@ -68,18 +77,27 @@ export function StorageInfoModal({
           <Pressable style={styles.okBtn} onPress={onClose} testID="storage-info-ok">
             <Text style={[type.title, {color: colors.onAccent}]}>Got it</Text>
           </Pressable>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
+  root: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     padding: spacing.xl,
+  },
+  // #353: absolute sibling behind the card — carries the dim + tap-to-close,
+  // without wrapping (and stealing the pan of) the scroll content.
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
   card: {
     backgroundColor: colors.panel,
