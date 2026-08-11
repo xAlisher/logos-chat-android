@@ -43,6 +43,32 @@ updates:
       # holds the same line from inside the repo.
       - dependency-name: "@babel/core"
         update-types: ["version-update:semver-major"]
+
+      # #507: VisionCamera 5 has no code scanning on Android, and Android is all we ship.
+      #
+      # v5 is a Nitro rewrite. It deletes `useCodeScanner` and the `<Camera codeScanner={...}>`
+      # prop; the replacement is `useObjectOutput` / `CameraObjectOutput`, annotated `@platform iOS`
+      # throughout the v5 sources — and on Android its factory is a stub that throws:
+      #
+      #     HybridCameraFactory.kt:113
+      #       override fun createObjectOutput(...): HybridCameraObjectOutputSpec {
+      #         throw Error("CameraObjectOutput is not available on Android!")
+      #       }
+      #
+      # src/screens/ScanScreen.tsx is *entirely* a QR scanner — it is how a peer's 64-hex address
+      # gets into the app without retyping it. Under v5 it would throw on mount, and there is no
+      # migration to write until upstream implements the Android side.
+      #
+      # #507 also failed the kotlin-unit job outright (VisionCamera 5's build.gradle needs
+      # `project(":react-native-nitro-modules")` and `project(":react-native-nitro-image")`, which
+      # autolinking never includes because npm installs those peers without declaring them). That
+      # part IS fixable by declaring both packages — which is exactly the trap: the fix turns CI
+      # green over a scan screen that no longer works.
+      #
+      # Lift this when VisionCamera ships an Android CameraObjectOutput.
+      # `__tests__/visionCameraContract.test.ts` holds the same line from inside the repo.
+      - dependency-name: "react-native-vision-camera"
+        update-types: ["version-update:semver-major"]
     labels: [dependencies]
 
   - package-ecosystem: gradle
