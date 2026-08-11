@@ -38,6 +38,9 @@ object NodeRuntime {
   // "true" means the user opted into routing over Tor — so the device-bundle publish
   // inside open_persistent must NOT egress before the Tor relay exists.
   const val KV_MEDIA_OVER_TOR = "mediaOverTor"
+  // #490: the reject reason when a wipe reopened the node but could not delete every
+  // file — the caller must be able to tell a partial wipe from a clean one.
+  const val WIPE_INCOMPLETE = "wipe_incomplete"
   // #GHSA-jj3m: how long a cold start waits for the (JS-driven) Tor bootstrap to
   // write the relay multiaddr before failing closed. The node executor has nothing
   // else to do on a cold start, so a bounded block here is safe; on timeout we
@@ -447,19 +450,37 @@ object NodeRuntime {
 
   // -- destructive wipe / identity reset (#232) ------------------------------
 
-  private fun deleteWithSiblings(base: File) {
+  // #490: return whether the delete FULLY succeeded. A wipe whose whole value is
+  // "the data is gone" must be able to tell success from partial failure — a
+  // swallowed delete used to let a partial wipe report clean success.
+  private fun deleteWithSiblings(base: File): Boolean {
     // SQLite/rusqlite leaves -wal/-shm (WAL mode) or -journal beside the db file;
     // delete them all so no fragment of the old encrypted store survives.
+    var ok = true
     for (suffix in listOf("", "-wal", "-shm", "-journal")) {
       val f = File(base.parentFile, base.name + suffix)
-      if (f.exists() && !f.delete()) Log.w(TAG, "wipe: could not delete ${f.name}")
+      if (f.exists() && !f.delete()) {
+        Log.w(TAG, "wipe: could not delete ${f.name}")
+        ok = false
+      }
     }
+    return ok
   }
 
-  private fun deleteRecursively(f: File) {
-    if (!f.exists()) return
-    if (f.isDirectory) f.listFiles()?.forEach { deleteRecursively(it) }
-    if (!f.delete()) Log.w(TAG, "wipe: could not delete ${f.absolutePath}")
+  private fun deleteRecursively(f: File): Boolean {
+    if (!f.exists()) return true
+    var ok = true
+    if (f.isDirectory) {
+      // #490: null = an I/O error listing the dir, NOT an empty dir — treat as failure
+      // (else `?.forEach` silently skips every child and the dir "wipe" is a no-op).
+      val kids = f.listFiles() ?: return false
+      kids.forEach { if (!deleteRecursively(it)) ok = false }
+    }
+    if (!f.delete()) {
+      Log.w(TAG, "wipe: could not delete ${f.absolutePath}")
+      ok = false
+    }
+    return ok
   }
 
   /**
@@ -486,22 +507,33 @@ object NodeRuntime {
           return@execute
         }
         stopBlocking()
-        deleteWithSiblings(File(context.filesDir, IDENTITY_FILE))
-        deleteWithSiblings(File(context.filesDir, IDENTITY_ENC_FILE)) // #258 sealed seed
-        deleteWithSiblings(File(context.filesDir, STORE_FILE))
+        // #490: accumulate every delete result — a partial wipe must NOT report clean
+        // success. `&&` order matters: keep calling all deletes (don't short-circuit),
+        // so we remove as much as possible even when one fails.
+        var wipeOk = true
+        wipeOk = deleteWithSiblings(File(context.filesDir, IDENTITY_FILE)) && wipeOk
+        wipeOk = deleteWithSiblings(File(context.filesDir, IDENTITY_ENC_FILE)) && wipeOk // #258 sealed seed
+        wipeOk = deleteWithSiblings(File(context.filesDir, STORE_FILE)) && wipeOk
         // #258: drop ALL wrapped crypto material (dbKey + dbKeyEnc + ChatDb key +
-        // migration flag) so the fresh identity starts with fresh keys.
-        context
+        // migration flag) so the fresh identity starts with fresh keys. #490: commit()
+        // returns whether it persisted — a discarded false left stale keys silently.
+        val prefsOk = context
             .getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
             .edit()
             .clear()
             .commit()
+        wipeOk = wipeOk && prefsOk
         // Chat images (#197) live outside the DB — clear them too.
-        deleteRecursively(File(context.filesDir, "chat-images"))
+        wipeOk = deleteRecursively(File(context.filesDir, "chat-images")) && wipeOk
         ChatRepo.wipeAndReinit(context)
-        Log.i(TAG, "identity + data wiped; reopening with a fresh identity")
+        Log.i(TAG, "identity + data wiped (complete=$wipeOk); reopening with a fresh identity")
         val err = startBlocking()
-        onDone(err)
+        // #490: the node still reopens above (a partial wipe must not brick the app),
+        // but surface the partial failure so the caller can react honestly — the
+        // user-initiated Reset shows "Reset failed"; the covert duress path swallows it
+        // but a real failure is no longer disguised as a clean wipe. A node-open error
+        // takes precedence (it's the more actionable one).
+        onDone(err ?: if (!wipeOk) WIPE_INCOMPLETE else null)
       } catch (t: Throwable) {
         setStatus("error", t.message)
         onDone(t.message ?: t.toString())

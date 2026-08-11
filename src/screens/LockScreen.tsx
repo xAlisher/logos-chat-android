@@ -14,6 +14,7 @@ import {PinPad} from '../components/PinPad';
 import {ActionButton} from '../components/ActionButton';
 import {useSecurityStore} from '../stores/securityStore';
 import {useChatStore} from '../stores/chatStore';
+import {useAvatarStore} from '../stores/avatarStore';
 import {useNodeStore} from '../stores/nodeStore';
 import {
   PIN_LENGTH,
@@ -72,13 +73,24 @@ export function LockScreen() {
       // unlock. A kill mid-wipe leaves a partial wipe, acceptable for a
       // destructive op. (The explicit "Create new identity" button still uses
       // doWipe, which shows progress — that path is not covert.)
+      // #490: clear the in-memory chat + avatar state and SUPPRESS refreshes BEFORE
+      // dropping the gate — so even if a frame paints the uncovered list it renders
+      // empty, never the previous identity's conversations (the gate uncovers a list
+      // already mounted from the in-memory chatStore). The suppress guard stops a
+      // mid-wipe node_status event from repopulating it. Resume + refresh once the
+      // wipe finishes (fresh, empty identity). Still covert: no spinner, no error.
+      useChatStore.getState().suppressRefresh();
+      useChatStore.getState().reset();
+      useAvatarStore.getState().reset();
       unlock();
       void (async () => {
         try {
           await wipeAndReset();
-          await useChatStore.getState().refreshConversations();
         } catch {
           // swallow — surfacing an error here would reveal the duress path
+        } finally {
+          useChatStore.getState().resumeRefresh();
+          void useChatStore.getState().refreshConversations();
         }
       })();
       return;

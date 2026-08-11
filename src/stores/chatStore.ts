@@ -169,6 +169,9 @@ interface ChatState {
   meshMap: Record<string, {pubkey: string; name: string | null}>;
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
+  /** #490: pause/resume refreshConversations during a duress wipe (see the flag). */
+  suppressRefresh: () => void;
+  resumeRefresh: () => void;
   loadMessages: (convoPk: number) => Promise<void>;
   /**
    * #37: fetch the next OLDER page and PREPEND it to `messages[convoPk]`
@@ -427,6 +430,13 @@ const ackedGroups = new Set<number>();
  *  `at` throttles the re-broadcast so simultaneous joins don't storm. */
 const rebroadcast: Record<number, {seen: Set<string>; at: number}> = {};
 
+// #490: while a duress wipe is in flight, the conversation list is cleared and the
+// gate is dropped BEFORE the native wipe completes. A `node_status` "stopped" event
+// (fired mid-wipe, before the DB is deleted) would otherwise call refreshConversations
+// and repopulate the list from the not-yet-wiped DB — a visible tell. This flag makes
+// refreshConversations a no-op for that window; resumeRefresh() clears it after.
+let refreshSuppressed = false;
+
 // #228: system notes (invited/joined/left/group-ended) persist per conversation in
 // the KV store so they survive an app restart. Bounded so KV never grows unbounded.
 const SYSLINE_CAP = 60;
@@ -619,7 +629,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  suppressRefresh: () => {
+    refreshSuppressed = true;
+  },
+  resumeRefresh: () => {
+    refreshSuppressed = false;
+  },
+
   refreshConversations: async () => {
+    // #490: suppressed during a duress wipe so a mid-wipe node_status event can't
+    // repopulate the just-cleared list from the not-yet-wiped DB.
+    if (refreshSuppressed) return;
     const rows: ConversationRow[] = JSON.parse(
       await LogosChat.listConversations(),
     );
