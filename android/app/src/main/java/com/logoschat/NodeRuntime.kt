@@ -231,16 +231,22 @@ object NodeRuntime {
       // #319: Private mode routes delivery through the local Tor relay — its loopback
       // multiaddr (set only once the relay is up) wins over the direct node so libp2p
       // egresses via a Tor exit. Falls back to the custom node, then the baked-in default.
-      val relay = db.kvGet(KV_DELIVERY_RELAY_NODE)?.takeIf { it.isNotEmpty() }
-      val direct = db.kvGet(KV_DELIVERY_SERVICE_NODE)?.takeIf { it.isNotEmpty() }
-      val node = relay ?: direct
+      // #GHSA-jj3m: the relay only wins when it is LIVE in this process. The multiaddr
+      // persists in KV but the loopback listener dies with the process, so exporting a
+      // stale value would point the delivery client at a dead port and silently break
+      // delivery. (Erasing the KV on open covered this, but raced enableTor's one-shot
+      // write — Senti P2 on #498. Checking liveness here needs no write at all.)
+      val relayAddr = db.kvGet(KV_DELIVERY_RELAY_NODE)
+      val direct = db.kvGet(KV_DELIVERY_SERVICE_NODE)
+      val viaRelay = TorRelayGate.relayUsable(TorState.deliveryRelayLive, relayAddr)
+      val node = TorRelayGate.deliveryNode(TorState.deliveryRelayLive, relayAddr, direct)
       if (node != null) {
         Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", node, true)
         // #360: the node multiaddr (host/IP + peerId) is network-metadata — only log it
         // in DEBUG; in release just note that a custom/relay node is in use.
         if (BuildConfig.DEBUG)
-            Log.i(TAG, "delivery service node: '${node}'${if (relay != null) " (Tor relay)" else ""}")
-        else Log.i(TAG, "delivery service node set${if (relay != null) " (Tor relay)" else ""}")
+            Log.i(TAG, "delivery service node: '${node}'${if (viaRelay) " (Tor relay)" else ""}")
+        else Log.i(TAG, "delivery service node set${if (viaRelay) " (Tor relay)" else ""}")
       }
     } catch (t: Throwable) {
       Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")
@@ -264,12 +270,15 @@ object NodeRuntime {
    * longer clear the KV (which raced enableTor's one-shot write — Senti P2 on #498).
    */
   private fun torRelayReady(): Boolean =
-      TorState.deliveryRelayLive &&
-          try {
-            !ChatRepo.requireDb().kvGet(KV_DELIVERY_RELAY_NODE).isNullOrEmpty()
-          } catch (t: Throwable) {
-            false
-          }
+      TorRelayGate.relayUsable(TorState.deliveryRelayLive, relayMultiaddr())
+
+  /** #GHSA-jj3m: the relay multiaddr the JS Tor bootstrap publishes, if any. */
+  private fun relayMultiaddr(): String? =
+      try {
+        ChatRepo.requireDb().kvGet(KV_DELIVERY_RELAY_NODE)
+      } catch (t: Throwable) {
+        null
+      }
 
   /**
    * #GHSA-jj3m: block until the Tor relay multiaddr appears, up to [timeoutMs].

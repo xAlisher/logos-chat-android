@@ -38,6 +38,21 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.12 — housekeeping (bug fixes + dependency hygiene)
+A tidy-up release: two visible bug fixes plus behind-the-scenes dependency updates. Worth a poke:
+
+- **Storage info scrolls now.** Open a group → Group info → tap the **(i)** next to Storage. On a
+  small screen / large font, **drag the text up** — the lower paragraphs should now scroll into view
+  (before, a slow drag was stuck).
+- **Ended group wakes up on its own.** If you're a member looking at an **ended** group (the "Ping
+  creator" footer) and the creator **re-creates** it while you're on that screen, the live composer
+  should now appear **automatically** — no need to leave and come back.
+- **Media in storage-off groups.** In a group with Storage turned off, opening a photo/video should
+  never try to fetch from the storage node. Everything else (send photo/camera, cancel a video mid-
+  upload) should behave as before.
+- **Under the hood:** embedded Tor, Gradle, and CI dependencies were updated. If Private mode still
+  turns **On — media routed over Tor** and messaging works, the update is clean.
+
 ### v0.9.11 — security hardening (PIN + private mode)
 Three security fixes from an external reviewer. Worth a quick check if you use a wipe PIN or Private mode:
 
