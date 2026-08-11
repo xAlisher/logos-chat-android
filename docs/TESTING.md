@@ -38,6 +38,19 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.11 — security hardening (PIN + private mode)
+Three security fixes from an external reviewer. Worth a quick check if you use a wipe PIN or Private mode:
+
+- **Wipe-PIN now needs your PIN.** Settings → set / change / **remove** the wipe PIN: each now asks for
+  your **current PIN** first (it used to remove in one tap). Confirm you can't change or remove the
+  wipe PIN without entering your unlock PIN.
+- **Change-PIN no longer leaks the wipe PIN.** Settings → Change PIN, type a **wrong** current PIN and
+  then your wipe PIN as the new one — you should see **"Incorrect current PIN"**, never a message that
+  reveals it was the wipe PIN.
+- **Private mode fails closed on cold start.** Turn Private mode on, then fully close + reopen the app:
+  the node waits for Tor before it connects (brief "waiting for Tor"), then comes online. With no
+  network it stays offline rather than connecting directly — it never leaks your IP to come up faster.
+
 ### v0.9.10 — backup safety UX
 Two small safety touches around backup + reset — worth a quick poke:
 
