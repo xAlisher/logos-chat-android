@@ -21,12 +21,16 @@ import ImagePicker from '../native/ImagePicker';
 import {BackupPassphraseModal} from '../components/BackupPassphraseModal';
 import {restoreFailed, restoreSucceeded} from '../lib/restoreOutcome';
 import {useAvatarStore} from '../stores/avatarStore';
+import {backupStatus, parseLastBackupAt, KV_LAST_BACKUP_AT} from '../lib/backupStatus';
+import {exportEncryptedBackup} from '../lib/runBackup';
 
 const REPO_URL = 'https://github.com/xAlisher/peers';
 
 export function AboutScreen() {
   const myAddress = useNodeStore(s => s.myAddress);
   const [exporting, setExporting] = useState(false);
+  // #493: ms-epoch of the last successful backup, or null → "Never backed up".
+  const [lastBackupAt, setLastBackupAt] = useState<number | null>(null);
   // #244: read the REAL installed version from the build (PackageManager) so it
   // can never drift from build.gradle the way the old hardcoded constants did.
   const [version, setVersion] = useState<{name: string; code: number} | null>(null);
@@ -36,6 +40,13 @@ export function AboutScreen() {
         const v = JSON.parse(j);
         setVersion({name: v.versionName, code: v.versionCode});
       })
+      .catch(() => {});
+  }, []);
+
+  // #493: read the last-backup timestamp from KV on mount (persists across restarts).
+  useEffect(() => {
+    LogosChat.getSetting(KV_LAST_BACKUP_AT)
+      .then(raw => setLastBackupAt(parseLastBackupAt(raw)))
       .catch(() => {});
   }, []);
 
@@ -54,7 +65,9 @@ export function AboutScreen() {
   const onExportConfirm = async (passphrase: string) => {
     setExporting(true);
     try {
-      await LogosChat.exportChatData(passphrase);
+      // #493: export + record when this device last backed up (reflect immediately).
+      const at = await exportEncryptedBackup(passphrase);
+      setLastBackupAt(at);
       setAskPass(false);
       ToastAndroid.show('Encrypted backup saved', ToastAndroid.SHORT);
     } catch {
@@ -204,6 +217,15 @@ export function AboutScreen() {
             to keep the same address. Your PIN is not included. Keep the passphrase safe —
             the backup can't be opened without it.
           </Text>
+          {/* #493: last-backup status — date, or a red "Never backed up". */}
+          <Text
+            style={[
+              styles.backupStatus,
+              backupStatus(lastBackupAt).danger && styles.backupNever,
+            ]}
+            testID="about-backup-status">
+            {backupStatus(lastBackupAt).text}
+          </Text>
         </Pressable>
 
         {/* #440: restore identity + history from a backup — pick the file, enter its
@@ -284,5 +306,8 @@ const styles = StyleSheet.create({
   linkText: {...type.title, color: colors.text},
   linkUrl: {...type.label, color: colors.accent},
   helper: {...type.label, color: colors.textDim, lineHeight: 18, marginTop: 2},
+  // #493: last-backup status line.
+  backupStatus: {...type.label, color: colors.textDim, marginTop: spacing.sm, fontWeight: '600'},
+  backupNever: {color: colors.unread}, // red — never backed up
   rowDisabled: {opacity: 0.6},
 });

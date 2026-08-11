@@ -827,11 +827,16 @@ export function ChatScreen() {
   // #479: open the full-screen viewer at a tapped media message. Build the ordered
   // media list from the live store (not the render `messages` closure) so a tap
   // always pages across every photo/gif/video currently in the thread.
+  // #344: in a storage-off group stored media is excluded — otherwise tapping an
+  // allowed inline photo (#422) would page historical store*: blobs into view and
+  // fetch+decrypt them, bypassing the bubble guard. Read storageOff live from the
+  // store for the same reason the rows are read there: no stale render closure.
   const openMediaViewer = useCallback(
     (msgPk: number) => {
-      const items = enumerateMedia(
-        useChatStore.getState().messages[convoPk] ?? [],
-      );
+      const st = useChatStore.getState();
+      const items = enumerateMedia(st.messages[convoPk] ?? [], {
+        storageOff: st.storageOff[convoPk] ?? false,
+      });
       const idx = mediaIndexOf(items, msgPk);
       if (idx >= 0) setViewer({items, index: idx});
     },
@@ -854,21 +859,38 @@ export function ChatScreen() {
     },
     [convoPk, isGroup, convo],
   );
-  const saveMediaFromViewer = useCallback((item: MediaItem, path: string) => {
-    if (isImageContent(item.content)) {
-      ImagePickerNative.saveImageToGallery(path).catch(() => {});
-    } else {
-      const ref = parseMedia(item.content);
-      if (ref != null) {
-        ImagePickerNative.saveMediaToGallery(path, ref.mime).catch(() => {});
+  // #483: the download silently no-op'd — the promise error was swallowed and
+  // there was no success feedback. Await it, confirm with a toast, surface errors.
+  const saveMediaFromViewer = useCallback(
+    async (item: MediaItem, path: string) => {
+      try {
+        if (isImageContent(item.content)) {
+          await ImagePickerNative.saveImageToGallery(path);
+        } else {
+          const ref = parseMedia(item.content);
+          if (ref == null) return;
+          await ImagePickerNative.saveMediaToGallery(path, ref.mime);
+        }
+        useNodeStore.setState({error: 'saved to gallery'});
+        // auto-clear the success note so it doesn't linger like a stuck error.
+        setTimeout(() => {
+          if (useNodeStore.getState().error === 'saved to gallery') {
+            useNodeStore.setState({error: null});
+          }
+        }, 2500);
+      } catch (e: any) {
+        useNodeStore.setState({error: `save failed: ${e?.message ?? e}`});
       }
-    }
-  }, []);
+    },
+    [],
+  );
   const shareMediaFromViewer = useCallback((item: MediaItem, path: string) => {
     const mime = isImageContent(item.content)
       ? parseImageLocal(item.content)?.meta.mime ?? 'image/*'
       : parseMedia(item.content)?.mime ?? '*/*';
-    MediaShare.shareFile(path, mime).catch(() => {});
+    MediaShare.shareFile(path, mime).catch((e: any) =>
+      useNodeStore.setState({error: `share failed: ${e?.message ?? e}`}),
+    );
   }, []);
   // #479: the media viewer is an in-tree overlay (not a Modal — a Modal teardown
   // ANR'd on unmount). An overlay can't paint over the NATIVE header, so hide it
@@ -2655,6 +2677,7 @@ export function ChatScreen() {
           }}
           onSave={saveMediaFromViewer}
           onShare={shareMediaFromViewer}
+          storageOff={storageOff}
         />
       )}
       <AddressModal

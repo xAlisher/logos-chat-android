@@ -124,6 +124,9 @@ describe('docs/SBOM.md quotes no unexplained native hash', () => {
     '58c766b9':
       "the delivery repo's own published liblogosdelivery.so — cited as the round-2 " +
       'evidence that the app shipped 944e1629 while upstream published something else',
+    '069cdb3d':
+      'the 0.9.7/0.9.8 GHSA-xxgx-7757-3qq6 build (@0b6c0ca, upstream libchat d2124fd), ' +
+      'superseded by the #427 repin build e879a3e0 (upstream libchat 462a4884)',
   };
 
   const shipped = new Set(

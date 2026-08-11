@@ -14,7 +14,6 @@ import {
   FlatList,
   Image,
   Pressable,
-  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -25,17 +24,14 @@ import Animated, {
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
-  withTiming,
 } from 'react-native-reanimated';
 import {HexAvatar, type AvatarKind} from './HexAvatar';
 import {MediaVideo} from './MediaVideo';
 import {XIcon} from './XIcon';
 import {DownloadIcon, ShareIcon, ForwardIcon} from './MediaViewerIcons';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
-import {parseMedia} from '../messages/media';
 import {useMediaBlob} from '../native/mediaCache';
-import type {MediaItem} from '../media/mediaList';
+import {viewerMediaRef, type MediaItem} from '../media/mediaList';
 import {
   clampScale,
   doubleTapScale,
@@ -61,6 +57,12 @@ export interface MediaViewerProps {
   onForward: (content: string) => void;
   onSave: (item: MediaItem, path: string) => void;
   onShare: (item: MediaItem, path: string) => void;
+  /**
+   * #344: storage-off group — the blob hooks must receive `null` so no Storage
+   * request ever fires. ChatScreen already keeps stored items out of `items`;
+   * this is the second line of defence at the only place that can fetch.
+   */
+  storageOff?: boolean;
 }
 
 // The Modal is full-bleed (statusBarTranslucent), so pages must fill the *screen*
@@ -70,16 +72,22 @@ const {width: SCREEN_W} = Dimensions.get('window');
 const SCREEN_H = Dimensions.get('screen').height;
 
 /** Resolve a viewable local path for one item (inline photo vs store blob). */
-function usePagePath(item: MediaItem): {path: string | null; loading: boolean} {
+function usePagePath(
+  item: MediaItem,
+  storageOff: boolean,
+): {path: string | null; loading: boolean} {
   const inline = isImageContent(item.content);
+  // #344: in a storage-off group this resolves to null, so useMediaBlob stays
+  // idle and no download/decrypt is ever requested.
   const ref = useMemo(
-    () => (inline ? null : parseMedia(item.content)),
-    [inline, item.content],
+    () => viewerMediaRef(item.content, storageOff),
+    [item.content, storageOff],
   );
   const blob = useMediaBlob(ref);
   if (inline) {
     return {path: parseImageLocal(item.content)?.path ?? null, loading: false};
   }
+  if (ref == null) return {path: null, loading: false}; // renders "unavailable"
   return {
     path: blob.status === 'ready' ? blob.path : null,
     loading: blob.status === 'loading' || blob.status === 'idle',
@@ -90,6 +98,7 @@ function usePagePath(item: MediaItem): {path: string | null; loading: boolean} {
 function MediaPage({
   item,
   active,
+  storageOff,
   onToggleControls,
   onHideControls,
   onZoomChange,
@@ -97,39 +106,25 @@ function MediaPage({
 }: {
   item: MediaItem;
   active: boolean;
+  storageOff: boolean;
   onToggleControls: () => void;
   onHideControls: () => void;
   onZoomChange: (zoomed: boolean) => void;
   onClose: () => void;
 }) {
-  const {path, loading} = usePagePath(item);
+  const {path, loading} = usePagePath(item, storageOff);
 
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
-  const tx = useSharedValue(0);
-  const ty = useSharedValue(0);
-  const savedTx = useSharedValue(0);
-  const savedTy = useSharedValue(0);
-  const dragY = useSharedValue(0);
-  const backdrop = useSharedValue(1);
 
   const setZoom = useCallback(
     (z: boolean) => onZoomChange(z),
     [onZoomChange],
   );
-  const reset = () => {
-    'worklet';
-    scale.value = withSpring(1);
-    savedScale.value = 1;
-    tx.value = withSpring(0);
-    ty.value = withSpring(0);
-    savedTx.value = 0;
-    savedTy.value = 0;
-    runOnJS(setZoom)(false);
-  };
-
   const isVideo = item.kind === 'video';
 
+  // #483: NO springs/timings anywhere — instant value sets only, so closing and
+  // zooming can't glitch. Pinch-zoom is a direct 1:1 transform (not an animation).
   const pinch = Gesture.Pinch()
     .enabled(!isVideo)
     .onStart(() => {
@@ -140,36 +135,21 @@ function MediaPage({
     })
     .onEnd(() => {
       savedScale.value = scale.value;
-      if (isAtFit(scale.value)) {
-        reset();
-      } else {
-        runOnJS(setZoom)(true);
-      }
+      runOnJS(setZoom)(!isAtFit(scale.value));
     });
 
-  // Swipe-DOWN to dismiss (only meaningful at fit; when zoomed a drag does
-  // nothing — pinch out to unzoom). Panning a zoomed image is a follow-up.
-  const pan = Gesture.Pan()
-    .onUpdate(e => {
-      if (isAtFit(scale.value) && e.translationY > 0) {
-        dragY.value = e.translationY;
-        backdrop.value = Math.max(0.15, 1 - e.translationY / 300);
-      }
-    })
-    .onEnd(e => {
-      if (
-        isAtFit(scale.value) &&
-        shouldDismiss(e.translationY, e.velocityY, scale.value)
-      ) {
-        runOnJS(onClose)();
-      } else {
-        dragY.value = withSpring(0);
-        backdrop.value = withTiming(1);
-      }
-    });
+  // Swipe-DOWN to dismiss (only at fit). No visual drag or backdrop fade — the
+  // close is instant on release (#483: remove all transitions).
+  const pan = Gesture.Pan().onEnd(e => {
+    if (
+      isAtFit(scale.value) &&
+      shouldDismiss(e.translationY, e.velocityY, scale.value)
+    ) {
+      runOnJS(onClose)();
+    }
+  });
   // Claim ONLY downward drags (dismiss); yield horizontal drags to the FlatList
-  // pager. failOffsetX makes the pan bail the instant the finger moves sideways,
-  // which prevents the pan<->ScrollView tug-of-war that hung the UI thread.
+  // pager. failOffsetX bails the pan the instant the finger moves sideways.
   pan.activeOffsetY(12).failOffsetX([-18, 18]);
 
   const singleTap = Gesture.Tap()
@@ -185,17 +165,9 @@ function MediaPage({
     .enabled(!isVideo)
     .onEnd(() => {
       const target = doubleTapScale(scale.value);
-      scale.value = withSpring(target);
+      scale.value = target;
       savedScale.value = target;
-      if (isAtFit(target)) {
-        tx.value = withSpring(0);
-        ty.value = withSpring(0);
-        savedTx.value = 0;
-        savedTy.value = 0;
-        runOnJS(setZoom)(false);
-      } else {
-        runOnJS(setZoom)(true);
-      }
+      runOnJS(setZoom)(!isAtFit(target));
     });
 
   const composed = Gesture.Simultaneous(
@@ -205,28 +177,28 @@ function MediaPage({
   );
 
   const mediaStyle = useAnimatedStyle(() => ({
-    transform: [
-      {translateX: tx.value},
-      {translateY: ty.value + dragY.value},
-      {scale: scale.value},
-    ],
+    transform: [{scale: scale.value}],
   }));
-  const backdropStyle = useAnimatedStyle(() => ({opacity: backdrop.value}));
 
   return (
     <View style={styles.page}>
-      <Animated.View style={[StyleSheet.absoluteFill, styles.black, backdropStyle]} />
+      <View style={[StyleSheet.absoluteFill, styles.black]} />
       <GestureDetector gesture={composed}>
         <Animated.View style={[styles.pageInner, mediaStyle]}>
           {path == null ? (
             <Text style={styles.loading}>{loading ? 'loading…' : 'unavailable'}</Text>
           ) : isVideo ? (
-            <MediaVideo
-              path={path}
-              muted={false}
-              paused={!active}
-              style={styles.media}
-            />
+            // #483: the native video view eats touches, so tap can't reveal the
+            // controls and the actions are unreachable. pointerEvents="none" lets
+            // gestures pass through to the detector; the video still plays.
+            <View style={styles.media} pointerEvents="none">
+              <MediaVideo
+                path={path}
+                muted={false}
+                paused={!active}
+                style={styles.media}
+              />
+            </View>
           ) : (
             <Image
               source={{uri: `file://${path}`}}
@@ -249,6 +221,7 @@ export function MediaViewer({
   onForward,
   onSave,
   onShare,
+  storageOff = false,
 }: MediaViewerProps) {
   const [active, setActive] = useState(index);
   const [controls, setControls] = useState(false);
@@ -270,7 +243,7 @@ export function MediaViewer({
   const activeItem = items[active];
   const author = activeItem ? authorFor(activeItem) : null;
   const caption = activeItem && captionFor ? captionFor(activeItem) : null;
-  const path = useActivePath(activeItem);
+  const path = useActivePath(activeItem, storageOff);
 
   const onMomentumEnd = useCallback(
     (e: {nativeEvent: {contentOffset: {x: number}}}) => {
@@ -290,7 +263,8 @@ export function MediaViewer({
     // and gestures already work here via the app-root GestureHandlerRootView.
     // ChatScreen hides its header while this is open so it's truly full-screen.
     <View style={styles.root} collapsable={false}>
-      <StatusBar hidden />
+      {/* #483: do NOT hide the status bar — restoring it on dismiss left a blank
+          bar above the header on GrapheneOS. Keep it visible over the black viewer. */}
       <FlatList
           ref={listRef}
           data={items}
@@ -311,6 +285,7 @@ export function MediaViewer({
             <MediaPage
               item={item}
               active={i === active}
+              storageOff={storageOff}
               onToggleControls={() => setControls(c => !c)}
               onHideControls={() => setControls(false)}
               onZoomChange={setZoomed}
@@ -319,14 +294,17 @@ export function MediaViewer({
           )}
         />
 
-        {/* top-right close circle — always available */}
-        <Pressable
-          style={[styles.closeCircle, {top: Math.max(16, insets.top) + 12}]}
-          onPress={onClose}
-          hitSlop={12}
-          testID="media-viewer-close">
-          <XIcon size={22} color="#fff" />
-        </Pressable>
+        {/* #483: the close circle appears only in mode 2 (after the second tap),
+            so the first tap gives a clean full-screen with no controls. */}
+        {controls && (
+          <Pressable
+            style={[styles.closeCircle, {top: Math.max(16, insets.top) + 12}]}
+            onPress={onClose}
+            hitSlop={16}
+            testID="media-viewer-close">
+            <XIcon size={22} color="#fff" />
+          </Pressable>
+        )}
 
         {/* mode-2 bottom bar */}
         {controls && (
@@ -353,34 +331,29 @@ export function MediaViewer({
                 {caption}
               </Text>
             )}
+            {/* #483: download / share / forward only — close is the top-right
+                circle (+ swipe-down / back). Bigger tap targets (#483). */}
             <View style={styles.actions}>
               <Pressable
                 style={styles.action}
                 onPress={() => path && activeItem && onSave(activeItem, path)}
-                hitSlop={10}
+                hitSlop={18}
                 testID="media-action-download">
-                <DownloadIcon size={24} color="#fff" />
+                <DownloadIcon size={26} color="#fff" />
               </Pressable>
               <Pressable
                 style={styles.action}
                 onPress={() => path && activeItem && onShare(activeItem, path)}
-                hitSlop={10}
+                hitSlop={18}
                 testID="media-action-share">
-                <ShareIcon size={24} color="#fff" />
+                <ShareIcon size={26} color="#fff" />
               </Pressable>
               <Pressable
                 style={styles.action}
                 onPress={() => activeItem && onForward(activeItem.content)}
-                hitSlop={10}
+                hitSlop={18}
                 testID="media-action-forward">
-                <ForwardIcon size={24} color="#fff" />
-              </Pressable>
-              <Pressable
-                style={styles.action}
-                onPress={onClose}
-                hitSlop={10}
-                testID="media-action-close">
-                <XIcon size={24} color="#fff" />
+                <ForwardIcon size={26} color="#fff" />
               </Pressable>
             </View>
           </View>
@@ -390,15 +363,20 @@ export function MediaViewer({
 }
 
 /** Resolve the active item's path for the action bar (save/share need it). */
-function useActivePath(item: MediaItem | undefined): string | null {
+function useActivePath(
+  item: MediaItem | undefined,
+  storageOff: boolean,
+): string | null {
   const inline = item != null && isImageContent(item.content);
+  // #344: null under storage-off — save/share stay inert, and nothing is fetched.
   const ref = useMemo(
-    () => (item == null || inline ? null : parseMedia(item.content)),
-    [inline, item],
+    () => (item == null ? null : viewerMediaRef(item.content, storageOff)),
+    [item, storageOff],
   );
   const blob = useMediaBlob(ref);
   if (item == null) return null;
   if (inline) return parseImageLocal(item.content)?.path ?? null;
+  if (ref == null) return null;
   return blob.status === 'ready' ? blob.path : null;
 }
 
@@ -453,5 +431,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 4,
   },
-  action: {padding: 8},
+  action: {padding: 14},
 });

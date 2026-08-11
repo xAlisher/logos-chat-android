@@ -347,3 +347,93 @@ the PR was green + Senti-approved the whole time while the monitor spun until I 
 Fix: in Monitor scripts never use standalone `jq` -- use gh's built-in `--jq`/`--template` or
 `python3`; and READ the monitor `.output` log when it "doesn't fire" (stderr lives there).
 Saved to the reference_harness_background_task_gotchas memory.
+
+## [retro] 2026-08-08 — #427 libchat upstream repin → v0.9.9
+
+Lessons atomized into `docs/skills/` (first entries of the new library). Synthesis:
+
+### Wins
+- **[process] 3-way rebase beat hand-merging the 5000-line fork patch.** Reconstructed the
+  fork as a temp commit on the old pin, `git rebase --onto <new>` → 9 real conflicts instead
+  of editing a monolith diff. Verified headlessly (`cargo check`/`test`, deps prebuilt) before
+  any cross-build. → skill `repin-via-3way-rebase`.
+- **[process] Worktree-bisect turned "is this my bug?" into a fact.** 2 group_v2 tests failed;
+  ran them on a pure-upstream `git worktree` — they PASSED there, proving the fork's
+  create→GroupV1 routing (#103), not my merge, was responsible. `#[ignore]`d with rationale
+  instead of chasing a non-bug or patching the engine. → skill `bisect-test-against-upstream-worktree`.
+- **[project] Caught a data-loss risk in upstream's XWING default before it shipped.** #193
+  flipped CIPHER_SUITE to XWING; grepping the provider showed `.ciphersuites(vec![CIPHER_SUITE])`
+  — single-suite → adopting it drops MLS_128 and breaks EXISTING conversations on update.
+  Deferred XWING; proved data-continuity via in-place `install -r` fleet update. → skill
+  `xwing-provider-single-suite` (critical). Root: check the provider's SUPPORTED suites, not
+  just the default const.
+- **[project] The re-home shrank the security surface.** #184 deleted http.rs; re-homed #239 +
+  491 onto store.rs and found 490's group-layer check subsumed by upstream's now-authenticated
+  retrieve (and mis-firing on de-mls credential ids) → dropped it. → skill `rehome-feature-on-upstream-rewrite`.
+
+### Fails
+- **[process] Hit the IME URL-autocapitalization trap on the tester announce.** Moment: typed
+  the what-to-test link on RedMe via `adb shell input text` into a fresh field. Wrong action:
+  didn't verify the screencap before sending → posted `Https://GitHub.com` to real testers.
+  Root cause: `input text` routes through the IME (sentence-case + brand autocorrect); the
+  fix — pre-clear + screencap-before-send — is documented but I skipped it for the URL.
+  Functional (HTTP 200, host case-insensitive) but a repeat miss. → skill `adb-input-url-autocap`.
+- **[process] git diff dropped untracked files → short patch (near-miss, CAUGHT).** Moment:
+  regenerated the consolidated patch from the applied build tree (`git diff <pin>`) → 6699 vs
+  7998 lines. Wrong action: almost shipped it. Root cause: `git diff <commit>` omits untracked
+  files the patch CREATED. Caught by the line-count check (the documented fix from §10f) +
+  regenerated from the committed branch. Same trap as the #348 build — the size-check held both
+  times. → skill `regen-patch-from-committed-branch`.
+- **[project] Folded the 490 binding into group_v2 and broke 2 tests.** Assumed group_v1's
+  "leaf signature_key == signer" binding held for group_v2, but a de-mls member id is the leaf
+  CREDENTIAL, not the signer-key hex → the check rejected valid members. Caught by the test
+  gate; removed it (subsumed anyway). Root: didn't verify the identity model before porting a
+  guard across group types.
+
+### Skills / doc updates
+- Stood up **`docs/skills/`** atomic-skills library (taxonomy + `_index/` + Peers-adapted
+  contribution-guide pinning LIBCHAT_COMMIT + `.so` hash). 6 recipes from #427. PROJECT_KNOWLEDGE
+  §10h now POINTS to them (not a blob); corrected stale pins (libchat `462a4884`, de-mls
+  `5cfce1b9`, 26 exports). Memory: `reference_libchat_repin_427`.
+- Released **v0.9.9** (GitHub + F-Droid + landing + fleet + tester announce + pinned). Native
+  `logos-libchat-mls-android@3c38687`.
+
+## Week of 2026-08-11 — v0.9.11 security batch (x0net: GHSA-w7j3 + m82h + jj3m)
+
+### Wins
+- **[process] The Senti review loop caught a real P2 on already-on-device-verified code.** The
+  first jj3m fail-closed cut passed tsc/jest AND an on-device airplane test — then Senti (Codex
+  `*/5`) flagged the clobber race. Fixed, re-tested, Senti re-reviewed → APPROVED → merged. Proof
+  that review-before-merge earns its keep even when your own verification is green. → skill
+  `failclosed-gate-inmemory-not-kv`; loop = `reference_senti_loop`.
+- **[project] Pure-function extraction made the security ordering testable.** m82h's verify-before-
+  disclose order moved out of `PinFlowModal` into `src/security/pinFlow.ts` (`evaluateChangePin` +
+  `pinFlowSteps`), unit-tested (10 cases, incl. the wrong-current+new===duress oracle assertion).
+  The component became a dumb renderer of the decision. → skill `pure-fn-for-security-ordering`.
+- **[project] jj3m fail-closed proven end-to-end on-device, not just reasoned.** Airplane cold
+  start → `node_status: error (…not publishing over a direct connection)` + auto-retry; airplane
+  off → `node up → running`. logcat is the proof. → skill `failclosed-test-needs-usb-adb`.
+
+### Fails
+- **[process] First jj3m cut used a PERSISTED KV as a this-process readiness signal.** Moment:
+  designed the fail-closed gate to check `deliveryRelayNode` (KV) and added an "unconditional
+  clear on cold open" to defeat stale values. Wrong action: cleared the only readiness value —
+  which races enableTor's un-awaited one-shot write and can erase the LIVE relay, hanging the
+  node 60s with no rewrite coming. Root cause: a KV survives process death, so its presence
+  answers "was this ever true?" not "is it live in THIS process?"; you can't distinguish live
+  from stale by presence, and clearing to fake freshness just fights the writer. Caught by Senti
+  P2. Fix: in-memory `TorState.deliveryRelayLive`, nothing cleared. → skill `failclosed-gate-inmemory-not-kv`.
+- **[process] adb input text broke on semicolons in the tester announce.** Moment: typed the
+  multi-sentence v0.9.11 announce with `;` separators via `adb shell input text`. Wrong action:
+  only the text up to the first `;` landed; the rest errored (`/system/bin/sh: …: not found`) —
+  a half-posted announce to a real group. Root cause: `input text` runs on the phone's
+  `/system/bin/sh`, where `;` is a command separator. Fix: periods, no shell metachars. → skill
+  `adb-input-text-shell-metachars`.
+
+### Skills / doc updates
+- Extracted 4 recipes to `docs/skills/`: `failclosed-gate-inmemory-not-kv` (security/high),
+  `pure-fn-for-security-ordering` (security/high), `adb-input-text-shell-metachars` (gotcha/med),
+  `failclosed-test-needs-usb-adb` (verification/med). Indexes updated (by-phase + by-type).
+- Released **v0.9.11** (GitHub + F-Droid + landing + all-three-phones + announce + pinned) and
+  **published all 4 GHSA advisories** crediting @x0net. Memory: `reference_peers_releases`,
+  `feedback_peers_no_biometrics`.

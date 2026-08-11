@@ -95,6 +95,9 @@ class TorModule(private val ctx: ReactApplicationContext) :
   fun stop() {
     runtime?.enqueue(Action.StopDaemon, {}, {})
     socksPort = 0
+    relay?.stop()
+    relay = null
+    TorState.deliveryRelayLive = false // #GHSA-jj3m: relay no longer live this process
   }
 
   @ReactMethod
@@ -118,6 +121,9 @@ class TorModule(private val ctx: ReactApplicationContext) :
       val r = TorSocksRelay(socksPort, host, port, localPort)
       val bound = r.start()
       relay = r
+      // #GHSA-jj3m: mark THIS process's delivery relay live so the node's
+      // fail-closed cold-start gate can tell it from a stale KV multiaddr.
+      TorState.deliveryRelayLive = true
       promise.resolve(bound)
     } catch (t: Throwable) {
       promise.reject("tor_relay", t.message, t)
@@ -128,5 +134,6 @@ class TorModule(private val ctx: ReactApplicationContext) :
   fun stopDeliveryRelay() {
     relay?.stop()
     relay = null
+    TorState.deliveryRelayLive = false // #GHSA-jj3m
   }
 }
