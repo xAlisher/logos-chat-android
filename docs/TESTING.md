@@ -38,6 +38,22 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.13 — security hardening round 2 (wipe + private mode)
+More fixes from an external reviewer, focused on the duress/reset wipe and Private mode. If you
+use a wipe PIN, the parts worth exercising:
+
+- **Reset is honest about failure.** Settings → Reset identity and data. On success it resets to a
+  fresh identity as before; if it somehow can't fully delete, it now says **"Reset failed"** rather
+  than claiming a clean wipe. (There's nothing you need to make fail — just confirm a normal reset
+  still comes back to a brand-new identity with empty chats.)
+- **Duress wipe leaves nothing behind.** If you set a wipe PIN and enter it at the lock screen, it
+  silently wipes to a fresh identity — and now also removes an old plaintext migration backup that
+  earlier builds could leave on disk. Behaves like a normal unlock; no spinner, no flash of your old
+  chat list. (Test only on a device whose identity you don't mind losing.)
+- **Private mode still fails closed.** Turn Private mode on, then fully close + reopen the app: the
+  node waits for Tor before connecting, then comes online. With no network it stays offline rather
+  than connecting directly.
+
 ### v0.9.12 — housekeeping (bug fixes + dependency hygiene)
 A tidy-up release: two visible bug fixes plus behind-the-scenes dependency updates. Worth a poke:
 
