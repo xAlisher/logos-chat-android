@@ -63,6 +63,8 @@ module.exports = {
     '<rootDir>/__tests__/babelToolchain.test.ts',
     '<rootDir>/__tests__/storageOffMedia.test.ts',
     '<rootDir>/__tests__/videoCancel.test.ts',
+    '<rootDir>/__tests__/gradleToolchain.test.ts',
     '<rootDir>/__tests__/qrScannerContract.test.ts',
+    '<rootDir>/__tests__/logicSuiteRegistry.test.ts',
   ],
 };
