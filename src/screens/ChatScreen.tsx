@@ -827,11 +827,16 @@ export function ChatScreen() {
   // #479: open the full-screen viewer at a tapped media message. Build the ordered
   // media list from the live store (not the render `messages` closure) so a tap
   // always pages across every photo/gif/video currently in the thread.
+  // #344: in a storage-off group stored media is excluded — otherwise tapping an
+  // allowed inline photo (#422) would page historical store*: blobs into view and
+  // fetch+decrypt them, bypassing the bubble guard. Read storageOff live from the
+  // store for the same reason the rows are read there: no stale render closure.
   const openMediaViewer = useCallback(
     (msgPk: number) => {
-      const items = enumerateMedia(
-        useChatStore.getState().messages[convoPk] ?? [],
-      );
+      const st = useChatStore.getState();
+      const items = enumerateMedia(st.messages[convoPk] ?? [], {
+        storageOff: st.storageOff[convoPk] ?? false,
+      });
       const idx = mediaIndexOf(items, msgPk);
       if (idx >= 0) setViewer({items, index: idx});
     },
@@ -1328,6 +1333,18 @@ export function ChatScreen() {
     bleReachable,
   });
   const {running, connecting, overMesh, meshLive, dead, canRevive} = cs;
+  // #281: an ended group can come back to life while this screen is STILL focused —
+  // the creator re-creates and a Welcome / members_changed / new message arrives. The
+  // liveness probe otherwise runs only on focus (useFocusEffect), so the footer stays
+  // stuck on "Ping creator" until you leave and return. Re-probe whenever a fresh
+  // inbound signal (roster / messages / system lines) lands while we still believe the
+  // group is dead; the probe flips liveness and the live composer appears. Gated on
+  // `dead` + primitive-length deps so a genuinely-dead group doesn't re-probe in a loop.
+  useEffect(() => {
+    if (!isGroup || overMesh || !dead) return;
+    probeGroup(convoPk).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convoPk, isGroup, overMesh, dead, groupMembers?.length, messages.length, systemLines?.length]);
   // #255/#261: a staged location OR image counts as sendable payload even with no text.
   const canSend =
     cs.canSendBase &&
@@ -2672,6 +2689,7 @@ export function ChatScreen() {
           }}
           onSave={saveMediaFromViewer}
           onShare={shareMediaFromViewer}
+          storageOff={storageOff}
         />
       )}
       <AddressModal

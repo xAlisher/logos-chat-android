@@ -98,8 +98,8 @@ android {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 123
-        versionName "0.9.10"
+        versionCode 125
+        versionName "0.9.12"
         // #300: Logos Storage (Codex) media endpoint + bearer token. The token is injected
         // at build time from the `storageToken` gradle property (kept OUT of git); empty by
         // default so the feature no-ops in a plain build.
@@ -191,19 +191,19 @@ dependencies {
     // animated-gif artifact must match RN's pinned Fresco (0.86 → 3.6.0).
     implementation("com.facebook.fresco:animated-gif:3.6.0")
 
-    implementation("net.zetetic:sqlcipher-android:4.6.1")
-    implementation("androidx.sqlite:sqlite:2.4.0")
-    implementation("androidx.sqlite:sqlite-framework:2.4.0")
+    implementation("net.zetetic:sqlcipher-android:4.17.0")
+    implementation("androidx.sqlite:sqlite:2.7.0")
+    implementation("androidx.sqlite:sqlite-framework:2.7.0")
 
     // #318 (metadata privacy): embedded Tor for "route media over Tor" (in-process runtime +
     // bundled arm64 tor binary). ~+6.6 MB on arm64. See TorModule.kt.
     implementation("io.matthewnelson.kmp-tor:runtime:2.6.0")
-    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:408.16.4")
+    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:409.5.0")
 
     // bundled tor binary (arm64). resource-exec-tor is versioned by the tor version it ships.
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.robolectric:robolectric:4.16.1")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
