@@ -20,6 +20,11 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      # #507: VisionCamera 5 deleted `useCodeScanner`, which ScanScreen calls. Both required
+      # checks stayed green — neither typechecks, and no logic test imports a screen — so a
+      # dependency bump that breaks the app at runtime looked mergeable. tsc caught it flat.
+      - name: Typecheck (#507) — a dependency dropping an API the app calls must fail here
+        run: npm run typecheck
       - name: JS logic tests (wire codec + store view helpers)
         run: npm run test:logic
       - name: Dependency audit (#366) — block on critical, report the rest
