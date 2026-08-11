@@ -685,9 +685,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMessages: async (convoPk: number) => {
+    // #490 P1 (the same race Senti flagged on refreshConversations, worse payload):
+    // the lock screen covers a ChatScreen that may already be mounted, so a
+    // loadMessages in flight when the duress PIN lands would write the PREVIOUS
+    // identity's message BODIES into the thread reset() just cleared — behind the
+    // already-dropped gate. Capture the generation, re-check it before set().
+    const token = refreshGate.enter();
     const rows: MessageRow[] = JSON.parse(
       await LogosChat.listMessages(convoPk, 0, PAGE),
     );
+    if (refreshGate.isStale(token)) return;
     // #37: this is the newest-page (re)load — it replaces the window, so reset
     // the paging cursor state. A short first page means there's nothing older.
     set(s => ({
@@ -707,11 +714,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Nothing durable loaded yet — no cursor to page before.
       return;
     }
+    const token = refreshGate.enter(); // #490 P1: see loadMessages
     set(st => ({loadingMore: {...st.loadingMore, [convoPk]: true}}));
     try {
       const older: MessageRow[] = JSON.parse(
         await LogosChat.listMessages(convoPk, before, PAGE),
       );
+      if (refreshGate.isStale(token)) return;
       set(st => ({
         messages: {
           ...st.messages,
@@ -721,7 +730,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         reachedEnd: {...st.reachedEnd, [convoPk]: older.length < PAGE},
       }));
     } finally {
-      set(st => ({loadingMore: {...st.loadingMore, [convoPk]: false}}));
+      // don't re-add a key to the map reset() just cleared
+      if (!refreshGate.isStale(token)) {
+        set(st => ({loadingMore: {...st.loadingMore, [convoPk]: false}}));
+      }
     }
   },
 
