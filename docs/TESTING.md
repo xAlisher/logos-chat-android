@@ -38,6 +38,91 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.11 — security hardening (PIN + private mode)
+Three security fixes from an external reviewer. Worth a quick check if you use a wipe PIN or Private mode:
+
+- **Wipe-PIN now needs your PIN.** Settings → set / change / **remove** the wipe PIN: each now asks for
+  your **current PIN** first (it used to remove in one tap). Confirm you can't change or remove the
+  wipe PIN without entering your unlock PIN.
+- **Change-PIN no longer leaks the wipe PIN.** Settings → Change PIN, type a **wrong** current PIN and
+  then your wipe PIN as the new one — you should see **"Incorrect current PIN"**, never a message that
+  reveals it was the wipe PIN.
+- **Private mode fails closed on cold start.** Turn Private mode on, then fully close + reopen the app:
+  the node waits for Tor before it connects (brief "waiting for Tor"), then comes online. With no
+  network it stays offline rather than connecting directly — it never leaks your IP to come up faster.
+
+### v0.9.10 — backup safety UX
+Two small safety touches around backup + reset — worth a quick poke:
+
+- **Backup status.** Side menu → About. Under "Back up identity + chats" you now see either
+  `Last backup: <date>` or a red `Never backed up` — a clear cue whether you're protected.
+- **Make a backup** (About → Back up identity + chats, choose a passphrase). Confirm the
+  status line flips to `Last backup: today`.
+- **Reset nudge.** Settings → Reset identity and data. The confirm dialog now nudges you to
+  back up first and shows a **Back up now** button — tap it to make a backup WITHOUT
+  resetting. Only the red **Reset** button wipes; **Back up now** and **Cancel** are safe.
+
+### v0.9.9 — upstream engine repin (under-the-hood)
+We rebased the chat engine onto the latest upstream (9 commits of fixes + a new
+delivery-based way of publishing contact keys). No new buttons to press — the whole
+point of this test is that **everything you already do still works and nothing was lost**:
+
+- **Your existing chats survived the update** — open a conversation you had before
+  updating; the messages and history should all still be there.
+- **1:1 messaging** — send and receive with another tester on this version; it should arrive.
+- **Groups** — create a group, add a member, exchange a message; all as before.
+- **Contacts** — add someone (scan their QR / import a shared card) and start a chat.
+- **Talking to an old version** — if you message someone still on v0.9.8, it should STILL
+  work; we deliberately kept the engine wire-compatible. Report anything that breaks here.
+
+### v0.9.8 — data-loss + duress-PIN hardening
+Mostly under-the-hood safety fixes — nothing to set up. If you use the app-lock PIN:
+- Try changing your **main PIN to the same value as your duress PIN** — it should now be
+  **refused with a clear message** (previously that collision could silently wipe on the next
+  unlock). Normal unlock and an ordinary PIN change work exactly as before.
+- (If you test the duress PIN itself: the wipe now looks like a normal unlock — no spinner.)
+No action needed for the encrypted-DB fix — it just closes a rare window where a crash during
+the at-rest encryption migration could delete the chat database.
+
+### v0.9.7 — security hardening (group membership + offline contacts)
+Seamless update from 0.9.x. This release hardens the native crypto core under the hood, so
+the main thing to confirm is that **nothing regressed**:
+- **Add a contact OFFLINE over Bluetooth mesh**: on two phones, open Discovery, turn on
+  Bluetooth mesh on both, let them find each other, start a chat and send a message. It should
+  work exactly as before.
+- **Existing chats keep working**: your groups and 1:1s still send/receive text, media, and
+  reactions after updating.
+- No new errors on send or receive right after the update.
+
+### v0.9.6-media — media viewer polish
+Seamless update from 0.9.x. Fixes to the new viewer:
+- **First tap is clean.** Open a photo/video → it's full-screen with **no buttons**. **Tap again**
+  to show the close (top-right) + the bottom bar. Tap once more to hide them.
+- **Download works.** Open a photo/GIF/video → tap it → **download** → it saves to your gallery
+  (Pictures/Peers or Movies/Peers) and you get a "saved to gallery" confirmation.
+- **Video actions work.** Open a video, tap to show the bar — **download / share / forward** now
+  work for video too (before, only close worked).
+- **Smoother close.** No more glitchy animation when closing; the bottom bar no longer has a
+  redundant close button (use the top-right X, swipe down, or back).
+- **GrapheneOS:** no more empty bar above the chat header after closing a photo.
+
+### v0.9.5-media — new full-screen media viewer + HQ photos
+Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
+- **Tap any photo, GIF, or video.** It opens **full-screen, edge-to-edge** (no more sitting under
+  the title bar). **Tap again** to show a bottom bar (who sent it + download / share / forward /
+  close) and a close button top-right; tap once more to hide it.
+- **Gestures in the viewer:** **pinch to zoom** a photo; **swipe down** to close; **swipe left/right**
+  to flip through *all* the photos/GIFs/videos in that chat. Try each — it should feel smooth and
+  never crash.
+- **Share out of the app:** open a photo/video → tap the **share** icon → your Android share sheet
+  should appear (send to another app).
+- **HQ photos.** When you attach a photo, a small **`HQ`** label appears to the right of the
+  thumbnail — **gray = off, orange = on**. Tap it on, then send: the photo goes out in **high
+  quality** (via storage) instead of the compressed inline version. Toggling works before *or* after
+  attaching. In a storage-off group the `HQ` label is gray and disabled (no high-quality path there).
+- **Storage-off groups:** the **photo and camera** buttons are now always available (they never used
+  storage anyway); only GIF/video stay hidden when storage is off.
+
 ### v0.9.4 — fewer false error banners + tidier group recovery
 Seamless update from 0.9.x (same signing key) — just refresh F-Droid.
 - **The "welcome not addressed to this member" banner should be gone.** In earlier builds, when

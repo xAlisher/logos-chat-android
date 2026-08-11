@@ -29,5 +29,6 @@ class LogosChatPackage : ReactPackage {
           StorageModule(reactContext),
           VideoTranscoder(reactContext),
           TorModule(reactContext),
+          MediaShareModule(reactContext),
       )
 }

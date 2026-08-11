@@ -90,7 +90,8 @@ type Row =
   | {kind: 'media'; send: MediaSend}; // #308 in-flight video compress/upload
 import LogosChat, {shortAddress} from '../native/LogosChat';
 import {parseRelay} from '../native/relay';
-import {parseImageLocal} from '../native/imageMsg';
+import {parseImageLocal, isImageContent} from '../native/imageMsg';
+import MediaShare from '../native/MediaShare';
 import {parseVoiceLocal} from '../native/voiceMsg';
 import {parseLocation, formatLatLng, geoUri, type LatLng} from '../native/locMsg';
 import {VoiceBubble} from '../components/VoiceBubble';
@@ -121,8 +122,12 @@ import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
 import {isAddrContent, parseAddr, encodeAddr} from '../messages/address';
 import {useMediaBlob} from '../native/mediaCache';
 import {MediaVideo} from '../components/MediaVideo';
-import {VideoFullscreen} from '../components/VideoFullscreen';
-import {ImageFullscreen} from '../components/ImageFullscreen';
+import {MediaViewer, type MediaAuthor} from '../components/MediaViewer';
+import {
+  enumerateMedia,
+  mediaIndexOf,
+  type MediaItem,
+} from '../media/mediaList';
 import {MediaSendBubble} from '../components/MediaSendBubble';
 import Storage from '../native/Storage';
 import {useNodeStore} from '../stores/nodeStore';
@@ -328,9 +333,8 @@ function Bubble({
   avatarKind,
   onRetry,
   onLongPress,
-  onOpenImage,
+  onOpenMedia,
   onOpenLocation,
-  onOpenVideo,
   reactions,
   onReact,
   onShowReactors,
@@ -349,9 +353,10 @@ function Bubble({
   storageOff?: boolean;
   onRetry: () => void;
   onLongPress: (pageY: number) => void;
-  onOpenImage: (path: string) => void;
+  // #479: open the unified media viewer at this message; it builds the ordered
+  // media list from the conversation and pages across photos/gifs/videos.
+  onOpenMedia?: (msgPk: number) => void;
   onOpenLocation: (loc: {lat: number; lng: number}) => void;
-  onOpenVideo?: (path: string, aspectRatio: number) => void; // #300 fullscreen video
   // #264: folded reaction aggregates for this message + a toggle callback.
   reactions?: ReactionState[];
   onReact?: (emoji: string, mine: boolean) => void;
@@ -443,11 +448,9 @@ function Bubble({
           failed
             ? onRetry
             : image != null
-            ? () => onOpenImage(image.path)
-            : mediaRef != null && media.status === 'ready' && !mediaRef.mime.startsWith('video/')
-            ? () => onOpenImage(media.path)
-            : mediaRef != null && media.status === 'ready' && mediaRef.mime.startsWith('video/')
-            ? () => onOpenVideo?.(media.path, mediaRef.width / mediaRef.height)
+            ? () => onOpenMedia?.(msg.msgPk)
+            : mediaRef != null && media.status === 'ready'
+            ? () => onOpenMedia?.(msg.msgPk)
             : location != null
             ? () => onOpenLocation(location)
             : undefined
@@ -714,6 +717,10 @@ export function ChatScreen() {
   const [pendingImages, setPendingImages] = useState<PickedImage[]>(
     initialDraft?.pendingImages ?? [],
   );
+  // #423: HQ photos (high quality via Storage) vs standard inline. HQ needs
+  // Storage, so it's unavailable — and forced off — in a storage-off group.
+  const [hqPhotos, setHqPhotos] = useState(false);
+  const hqActive = hqPhotos && !storageOff;
   // #307: a single video staged in the composer (poster thumbnail + play badge), sent on Send.
   const [pendingVideo, setPendingVideo] = useState<PickedRawMedia | null>(null);
   // #308: in-flight video sends for this convo (compress→upload), rendered as progress bubbles.
@@ -762,8 +769,11 @@ export function ChatScreen() {
   const [bubbleY, setBubbleY] = useState(0); // #157: anchor the bubble menu near the tap
   const [forwardContent, setForwardContent] = useState<string | null>(null); // #201
   const [emojiPickerTarget, setEmojiPickerTarget] = useState<BubbleTarget | null>(null); // #298
-  const [fullscreen, setFullscreen] = useState<string | null>(null); // #200 image path
-  const [videoFs, setVideoFs] = useState<{path: string; ar: number} | null>(null); // #300 fullscreen video
+  // #479: one full-screen media viewer for photos/gifs/videos, opened at a tapped
+  // message and paging across all the conversation's media.
+  const [viewer, setViewer] = useState<{items: MediaItem[]; index: number} | null>(
+    null,
+  );
   const forwardMessage = useChatStore(s => s.forwardMessage);
   // #210: map-to-mesh from the bubble menu (local, works offline).
   const [mapTarget, setMapTarget] = useState<{address: string; label: string | null} | null>(null);
@@ -813,6 +823,84 @@ export function ChatScreen() {
   );
 
   const isGroup = convo?.isGroup ?? route.params.isGroup ?? false;
+
+  // #479: open the full-screen viewer at a tapped media message. Build the ordered
+  // media list from the live store (not the render `messages` closure) so a tap
+  // always pages across every photo/gif/video currently in the thread.
+  // #344: in a storage-off group stored media is excluded — otherwise tapping an
+  // allowed inline photo (#422) would page historical store*: blobs into view and
+  // fetch+decrypt them, bypassing the bubble guard. Read storageOff live from the
+  // store for the same reason the rows are read there: no stale render closure.
+  const openMediaViewer = useCallback(
+    (msgPk: number) => {
+      const st = useChatStore.getState();
+      const items = enumerateMedia(st.messages[convoPk] ?? [], {
+        storageOff: st.storageOff[convoPk] ?? false,
+      });
+      const idx = mediaIndexOf(items, msgPk);
+      if (idx >= 0) setViewer({items, index: idx});
+    },
+    [convoPk],
+  );
+  // Author block for the viewer's bar — mirrors the in-bubble sender line. Own
+  // (outgoing) media has no author block.
+  const mediaAuthorFor = useCallback(
+    (item: MediaItem): MediaAuthor | null => {
+      const m = (useChatStore.getState().messages[convoPk] ?? []).find(
+        r => r.msgPk === item.msgPk,
+      );
+      if (m == null) return null;
+      const attr = resolveAttribution(m, isGroup, convo);
+      if (attr == null) return null;
+      const kind: AvatarKind = convo
+        ? convoKind({transport: convo.transport, isGroup})
+        : 'contact';
+      return {address: attr.address, label: attr.label, hex: attr.hex, kind};
+    },
+    [convoPk, isGroup, convo],
+  );
+  // #483: the download silently no-op'd — the promise error was swallowed and
+  // there was no success feedback. Await it, confirm with a toast, surface errors.
+  const saveMediaFromViewer = useCallback(
+    async (item: MediaItem, path: string) => {
+      try {
+        if (isImageContent(item.content)) {
+          await ImagePickerNative.saveImageToGallery(path);
+        } else {
+          const ref = parseMedia(item.content);
+          if (ref == null) return;
+          await ImagePickerNative.saveMediaToGallery(path, ref.mime);
+        }
+        useNodeStore.setState({error: 'saved to gallery'});
+        // auto-clear the success note so it doesn't linger like a stuck error.
+        setTimeout(() => {
+          if (useNodeStore.getState().error === 'saved to gallery') {
+            useNodeStore.setState({error: null});
+          }
+        }, 2500);
+      } catch (e: any) {
+        useNodeStore.setState({error: `save failed: ${e?.message ?? e}`});
+      }
+    },
+    [],
+  );
+  const shareMediaFromViewer = useCallback((item: MediaItem, path: string) => {
+    const mime = isImageContent(item.content)
+      ? parseImageLocal(item.content)?.meta.mime ?? 'image/*'
+      : parseMedia(item.content)?.mime ?? '*/*';
+    MediaShare.shareFile(path, mime).catch((e: any) =>
+      useNodeStore.setState({error: `share failed: ${e?.message ?? e}`}),
+    );
+  }, []);
+  // #479: the media viewer is an in-tree overlay (not a Modal — a Modal teardown
+  // ANR'd on unmount). An overlay can't paint over the NATIVE header, so hide it
+  // while the viewer is open; restore it on close.
+  useEffect(() => {
+    // (options built separately so this simple visibility toggle isn't mistaken
+    // for the header-closure effect below — see chatHeaderDeps.test.ts)
+    const opts = {headerShown: viewer == null};
+    navigation.setOptions(opts);
+  }, [navigation, viewer]);
   // #167: a MeshCore channel (transport='mesh') sends over the radio, not the node.
   const isMesh = convo?.transport === 'mesh';
 
@@ -1421,7 +1509,7 @@ export function ChatScreen() {
       }
       // #261: send the staged images (each its own message), after any text.
       if (imgs.length > 0) {
-        await sendStagedImages(convoPk, imgs);
+        await sendStagedImages(convoPk, imgs, hqActive);
       }
       // #305/#307: send the staged video — compress→upload→send with an in-chat ring.
       // Fire-and-forget: the mediaSends bubble tracks progress, so Send returns at once.
@@ -2029,8 +2117,7 @@ export function ChatScreen() {
                 convo ? convoKind({transport: convo.transport, isGroup: false}) : 'contact'
               }
               onRetry={() => retry(convoPk, m.msgPk)}
-              onOpenImage={path => setFullscreen(path)}
-              onOpenVideo={(path, ar) => setVideoFs({path, ar})}
+              onOpenMedia={openMediaViewer}
               onOpenLocation={loc =>
                 Linking.openURL(geoUri(loc)).catch(() =>
                   ToastAndroid.show('No maps app', ToastAndroid.SHORT),
@@ -2255,30 +2342,51 @@ export function ChatScreen() {
           {/* #261: staged image thumbnails — a removable row above the input, sent
               on Send (mirrors the staged-location chip). */}
           {pendingImages.length > 0 && (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.pendingImages}
-              testID="pending-images"
-              keyboardShouldPersistTaps="handled">
-              {pendingImages.map((img, i) => (
-                <View key={i} style={styles.pendingImageWrap}>
-                  <Image
-                    source={{uri: `data:${img.mime};base64,${img.base64}`}}
-                    style={styles.pendingImage}
-                  />
-                  <Pressable
-                    style={styles.pendingImageX}
-                    onPress={() =>
-                      setPendingImages(prev => prev.filter((_, j) => j !== i))
-                    }
-                    hitSlop={8}
-                    testID={`pending-image-clear-${i}`}>
-                    <Text style={styles.pendingImageXText}>✕</Text>
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
+            <View style={styles.pendingRow}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.pendingImages}
+                style={styles.pendingScroll}
+                testID="pending-images"
+                keyboardShouldPersistTaps="handled">
+                {pendingImages.map((img, i) => (
+                  <View key={i} style={styles.pendingImageWrap}>
+                    <Image
+                      source={{uri: `data:${img.mime};base64,${img.base64}`}}
+                      style={styles.pendingImage}
+                    />
+                    <Pressable
+                      style={styles.pendingImageX}
+                      onPress={() =>
+                        setPendingImages(prev => prev.filter((_, j) => j !== i))
+                      }
+                      hitSlop={8}
+                      testID={`pending-image-clear-${i}`}>
+                      <Text style={styles.pendingImageXText}>✕</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+              {/* #423: borderless HQ toggle — dark gray = off (send standard),
+                  orange = on (send high quality via Storage). Disabled + stays
+                  gray in a storage-off group (no Storage → no HQ). */}
+              <Pressable
+                style={styles.qualityToggle}
+                onPress={() => {
+                  if (!storageOff) setHqPhotos(v => !v);
+                }}
+                disabled={storageOff}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityState={{selected: hqActive, disabled: storageOff}}
+                accessibilityLabel="Send photos in high quality"
+                testID="composer-quality">
+                <Text style={[styles.qualityText, hqActive && styles.qualityTextOn]}>
+                  HQ
+                </Text>
+              </Pressable>
+            </View>
           )}
           {/* #307: staged video — a poster thumbnail with a play badge, removable, sent on Send. */}
           {pendingVideo != null && (
@@ -2352,16 +2460,15 @@ export function ChatScreen() {
             {/* #344: storage off → hide the media affordances (image/camera/GIF/video);
                 text/location/mic/reactions/reply stay. No blob is ever sent, so the
                 Storage node sees nothing for this group (docs/adr/0002). */}
-            {!storageOff && (
-              <>
-                <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Attach photo" accessibilityState={{disabled: attaching}} testID="composer-image">
-                  <ImageIcon size={22} color={colors.textDim} />
-                </Pressable>
-                <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Take photo" accessibilityState={{disabled: attaching}} testID="composer-camera">
-                  <CameraIcon size={22} color={colors.textDim} />
-                </Pressable>
-              </>
-            )}
+            {/* #422: photo + camera are ALWAYS available — inline photos ride the
+                img1v: base64 path and never touch Storage, so a storage-off group
+                must not hide them (only GIF/video below gate on Storage). */}
+            <Pressable style={styles.actionBtn} onPress={onPickImages} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Attach photo" accessibilityState={{disabled: attaching}} testID="composer-image">
+              <ImageIcon size={22} color={colors.textDim} />
+            </Pressable>
+            <Pressable style={styles.actionBtn} onPress={onCamera} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Take photo" accessibilityState={{disabled: attaching}} testID="composer-camera">
+              <CameraIcon size={22} color={colors.textDim} />
+            </Pressable>
             <Pressable style={styles.actionBtn} onPress={onLocation} disabled={attaching} hitSlop={6} accessibilityRole="button" accessibilityLabel="Share location" accessibilityState={{disabled: attaching}} testID="composer-location">
               <LocationIcon size={22} color={colors.textDim} />
             </Pressable>
@@ -2556,14 +2663,23 @@ export function ChatScreen() {
           setMapTarget(null);
         }}
       />
-      {/* #200/#315: full-screen image viewer — pinch-zoom + pan, tap to dismiss. */}
-      <ImageFullscreen path={fullscreen} onClose={() => setFullscreen(null)} />
-      {/* #300: fullscreen video player (sound + native controls). */}
-      <VideoFullscreen
-        path={videoFs?.path ?? null}
-        aspectRatio={videoFs?.ar ?? 1}
-        onClose={() => setVideoFs(null)}
-      />
+      {/* #479: one full-screen viewer for photos/gifs/videos — pinch-zoom,
+          two-tap controls, swipe-down dismiss, swipe left/right across all media. */}
+      {viewer != null && (
+        <MediaViewer
+          items={viewer.items}
+          index={viewer.index}
+          onClose={() => setViewer(null)}
+          authorFor={mediaAuthorFor}
+          onForward={content => {
+            setViewer(null);
+            setForwardContent(content);
+          }}
+          onSave={saveMediaFromViewer}
+          onShare={shareMediaFromViewer}
+          storageOff={storageOff}
+        />
+      )}
       <AddressModal
         visible={addressTarget != null}
         address={addressTarget?.address ?? null}
@@ -2868,6 +2984,12 @@ const styles = StyleSheet.create({
   pendingLocClear: {...type.label, color: colors.textDim, paddingHorizontal: spacing.xs},
   // #261 staged-image thumbnails
   pendingImages: {gap: spacing.sm, paddingBottom: spacing.xs},
+  pendingRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  pendingScroll: {flexShrink: 1},
+  // #423: borderless HQ toggle right of the thumbnails — dark gray off, orange on.
+  qualityToggle: {paddingHorizontal: 8, paddingVertical: 6},
+  qualityText: {color: colors.textFaint, fontSize: 14, fontWeight: '700', letterSpacing: 0.5},
+  qualityTextOn: {color: colors.accent},
   pendingImageWrap: {width: 64, height: 64},
   pendingImage: {
     width: 64,

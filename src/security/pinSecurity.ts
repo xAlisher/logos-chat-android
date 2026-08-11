@@ -348,6 +348,14 @@ export function evaluateGateAttempt(
 ): GateResult {
   const max = inputs.maxAttempts ?? MAX_PIN_ATTEMPTS;
   if (inputs.duress != null && verifyPin(pin, inputs.duress)) {
+    // #489: a PIN that ALSO matches the main verifier is a mis-set collision, not
+    // a duress entry — resolve the ambiguity to unlock so an ambiguous match can
+    // never destroy data. Duress fires only when it is unambiguously the duress
+    // PIN. (setMainPin/setDuressPin also reject a collision at set time; this is
+    // the belt-and-braces so a pre-existing collision can't wipe either.)
+    if (verifyPin(pin, inputs.main)) {
+      return {outcome: 'unlock', state: initialGateState()};
+    }
     return {outcome: 'duress', state};
   }
   if (verifyPin(pin, inputs.main)) {

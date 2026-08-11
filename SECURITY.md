@@ -33,7 +33,10 @@ backported — the remedy for a security issue is always to update.
 
 **In scope** — the app in this repository: the Android client, the release build and signing
 path (see [docs/SIGNING.md](docs/SIGNING.md)), and the way the app uses the native messaging
-cores.
+cores. The pinned native library repositories
+[`xAlisher/logos-libchat-mls-android`](https://github.com/xAlisher/logos-libchat-mls-android) and
+[`xAlisher/logos-libdelivery-android`](https://github.com/xAlisher/logos-libdelivery-android) are
+in scope too — they are mine, and the binaries they publish are what ships.
 
 **Known and already documented — not new vulnerabilities.** Please read these before
 reporting; they are limits this project states openly rather than gaps it is unaware of:
@@ -49,6 +52,11 @@ reporting; they are limits this project states openly rather than gaps it is una
 A report that these are true is not a vulnerability report. A report that one of them is
 *worse than documented* — or that a stated protection does not actually hold — very much is.
 
+**Out of scope — and please do not send traffic at it.** The Logos infrastructure the app
+talks to, including `msg.logos.live` and `devnet.chat-kc.logos.co`, is operated by other people
+and is not mine to authorize testing against. Findings about how *this app* uses it are welcome;
+testing the infrastructure itself is not mine to permit.
+
 **Out of this repository's control, but still worth telling us.** `liblogoschat.so` is built
 from a patched fork of [logos-messaging/libchat](https://github.com/logos-messaging/libchat),
 and its Rust dependency tree has no advisory feed reaching this repo — so nothing here will
@@ -56,3 +64,29 @@ notice a vulnerability in it (this gap is also stated in
 [.github/dependabot.yml](.github/dependabot.yml)). If you find one, report it here anyway: we
 ship the binary, so it is our users' problem regardless of where the fix has to land. What we
 do publish about those binaries is [docs/SBOM.md](docs/SBOM.md).
+
+## Verifying a build
+
+Releases from **versionCode 113 (`v0.9.0-signed`)** onward are signed with the production key:
+
+```
+CN=Peers, O=Peers, C=US
+SHA-256: 67083eb88d7efaa792687af739bfa98f2a14041a61652a81a0441f68698e68bf
+```
+
+Check a downloaded APK with:
+
+```sh
+apksigner verify --print-certs Peers-<version>.apk
+```
+
+[docs/SIGNING.md](docs/SIGNING.md) covers the *producing* side; this is the value to check a
+download against.
+
+**Builds before versionCode 113 were signed with a publicly-known debug key** and cannot be
+authenticated. If you are still on one, back up your identity, then uninstall and reinstall from a
+current release — the signing-key change means it is not an in-place update.
+
+The **F-Droid repository index** fingerprint
+(`9283c4e3dab31e68675b643ae38222358541431ad07295b6df4a4c6d2acccf32`) is a *different* key from the
+APK signing key above and serves a different purpose. Do not compare one against the other.

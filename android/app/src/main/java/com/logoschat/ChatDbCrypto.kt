@@ -134,7 +134,11 @@ object ChatDbCrypto {
     return try {
       val blob = KeystoreCrypto.wrap(hex)
       if (KeystoreCrypto.unwrap(blob) == hex) {
-        prefs.edit().putString(KEY_CHATDB_KEY_ENC, blob).commit()
+        // #488: fail loud if the wrapped key doesn't persist — otherwise the next
+        // launch derives a DIFFERENT key, the keyed-open fails, and the DB is lost.
+        check(prefs.edit().putString(KEY_CHATDB_KEY_ENC, blob).commit()) {
+          "ChatDb: failed to persist wrapped key"
+        }
         hex
       } else {
         Log.e(TAG, "ChatDb key Keystore round-trip mismatch; staying plaintext")
@@ -165,9 +169,25 @@ object ChatDbCrypto {
     // missing/invalid db, and failed CLOSED, which blocked restore after the v0.9.0
     // signing-key reinstall (ChatRepo.init could never open the db).
     if (!dbFile.exists() || dbFile.length() == 0L || !isReadablePlaintextDb(dbFile)) {
+      // #488: "not a readable plaintext db" is NOT the same as "nothing real on
+      // disk" — a valid SQLCipher db also fails a plaintext open (its header is
+      // encrypted). Before deleting, try a KEYED open with the key we already hold.
+      // If it opens, this IS the user's real encrypted database — e.g. a crash
+      // between the migration rename (db already encrypted) and the flag commit
+      // left it encrypted with KEY_CHATDB_ENCRYPTED still false. Keep it; just set
+      // the flag. Only a file that fails BOTH a plaintext and a keyed open is a
+      // genuine #445 phantom, which we still delete.
+      if (dbFile.exists() && dbFile.length() > 0L && isReadableEncryptedDb(dbFile, keyHex)) {
+        check(prefs.edit().putBoolean(KEY_CHATDB_ENCRYPTED, true).commit()) {
+          "ChatDb: failed to persist encrypted flag for an existing encrypted db"
+        }
+        return true
+      }
       listOf(dbFile, File("${dbFile.path}-wal"), File("${dbFile.path}-shm"), File("${dbFile.path}-journal"))
           .forEach { if (it.exists()) runCatching { it.delete() } }
-      prefs.edit().putBoolean(KEY_CHATDB_ENCRYPTED, true).commit()
+      check(prefs.edit().putBoolean(KEY_CHATDB_ENCRYPTED, true).commit()) {
+        "ChatDb: failed to persist encrypted flag after phantom cleanup"
+      }
       return true
     }
 
@@ -257,6 +277,36 @@ object ChatDbCrypto {
           true
         } finally {
           p.close()
+        }
+      } catch (t: Throwable) {
+        false
+      }
+
+  /**
+   * #488: true only if [dbFile] opens as a real SQLCipher Peers db under [keyHex]
+   * (its `conversations` table is queryable). This distinguishes the user's actual
+   * encrypted database — which fails [isReadablePlaintextDb] because its header is
+   * encrypted — from a #445 phantom (wrong key / not a db), which throws. Read-only
+   * + fully guarded: any failure means "not our encrypted db under this key", so a
+   * genuine phantom is still deleted.
+   */
+  private fun isReadableEncryptedDb(dbFile: File, keyHex: String): Boolean =
+      try {
+        // Guarded by the caller to exist() && length > 0, so this opens the
+        // existing file (it never creates/overwrites a non-empty db); a wrong key
+        // or a non-db file throws.
+        val c =
+            CipherDb.openOrCreateDatabase(
+                dbFile.path,
+                keyHex.toByteArray(Charsets.UTF_8),
+                null,
+                null,
+            )
+        try {
+          c.rawQuery("SELECT count(*) FROM conversations", null).use { it.moveToFirst() }
+          true
+        } finally {
+          c.close()
         }
       } catch (t: Throwable) {
         false
