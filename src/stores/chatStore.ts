@@ -2324,41 +2324,54 @@ addLogosChatListener(e => {
         }
       }
     }
-    // #344: an inbound gcfg1: marker announces the group's storage on/off choice.
-    // Honor the newest (this event IS the newest for its convo). MVP caveat: for a
-    // trusted community we do NOT hard-verify sender==creator here — no creator
-    // ADDRESS is stored, only a local createdByMe flag — so any member's gcfg1:
-    // marker is honored. Residual: a malicious member could flip the flag (a
-    // usability regression, not a storage leak — it can only make the group MORE
-    // restrictive; media a member declines to send is never uploaded). Folded
-    // control message, never a bubble (native + timeline suppression).
+    // #344/#518: an inbound gcfg1: marker announces the group's storage on/off choice.
+    // ONLY the AUTHENTICATED group creator may change it — verified against native group
+    // state (groupCreator), not a self-asserted field. Without this, any member could paste
+    // `gcfg1:storage:on` from the stock composer and force everyone to re-fetch stored media
+    // from the Storage node against the creator's off-choice — a privacy leak, not just the
+    // usability regression #344 assumed. Fail closed: if the creator can't be verified, do
+    // NOT apply. Folded control message, never a bubble (native + timeline suppression).
     if (
       e.kind === 'message' &&
       e.direction === 'in' &&
       e.convoPk != null &&
+      e.sender != null &&
       e.detail != null &&
       isGroupCfgContent(e.detail)
     ) {
       const cfg = parseGroupCfg(e.detail);
       if (cfg != null) {
         const convoPk = e.convoPk;
-        // #344: a live inbound marker is a real transition (a member sees the
-        // creator's flip) — announce it once, guarded on an actual change.
-        const wasOff = useChatStore.getState().storageOff[convoPk] ?? false;
-        useChatStore.setState(st => ({
-          storageOff: {...st.storageOff, [convoPk]: cfg.storageOff},
-        }));
-        persistGroupStorage(convoPk, cfg.storageOff);
-        if (wasOff !== cfg.storageOff) {
-          useChatStore
-            .getState()
-            .pushSystemLine(
-              convoPk,
-              cfg.storageOff
-                ? 'Storage turned off — text & voice only'
-                : 'Storage turned on — media enabled',
-            );
-        }
+        const sender = e.sender.toLowerCase();
+        // The sync listener can't await; gate the apply on the creator's promise.
+        LogosChat.groupCreator(convoPk)
+          .then(creator => {
+            // e.sender is the delivery/MLS-authenticated sender (GroupV1 always; GroupV2
+            // since #497), so sender==creator is a cryptographic check, not self-asserted.
+            if (creator == null || creator.toLowerCase() !== sender) return;
+            const wasOff = useChatStore.getState().storageOff[convoPk] ?? false;
+            useChatStore.setState(st => ({
+              storageOff: {...st.storageOff, [convoPk]: cfg.storageOff},
+            }));
+            persistGroupStorage(convoPk, cfg.storageOff);
+            if (wasOff !== cfg.storageOff) {
+              useChatStore
+                .getState()
+                .pushSystemLine(
+                  convoPk,
+                  cfg.storageOff
+                    ? 'Storage turned off — text & voice only'
+                    : 'Storage turned on — media enabled',
+                  // #518: attribute the flip to the creator who made it.
+                  describePeer(creator),
+                  creator,
+                );
+            }
+          })
+          .catch(() => {
+            // Unsupported build / native error → cannot verify the creator → do NOT apply
+            // (fail closed). The creator's own device already applied it via setGroupStorage.
+          });
       }
     }
     // #350: an inbound readd1: marker (over a 1:1) is a stuck member asking to be

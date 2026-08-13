@@ -597,13 +597,21 @@ object NodeRuntime {
           }
         }
         stopBlocking()
-        // Clean slate — identical to the wipe flow so no stale identity/store/keys survive.
-        deleteWithSiblings(File(context.filesDir, IDENTITY_FILE))
-        deleteWithSiblings(File(context.filesDir, IDENTITY_ENC_FILE))
-        deleteWithSiblings(File(context.filesDir, STORE_FILE))
-        context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE).edit().clear().commit()
-        deleteRecursively(File(context.filesDir, "chat-images"))
-        ChatRepo.wipeAndReinit(context)
+        // Clean slate — identical to the wipe flow, and its COMPLETENESS matters: a failed
+        // deletion can leave stale identity/store/keys — or a PLAINTEXT `.migbak` of the old
+        // history — sitting beside the restored identity. #514: account for it exactly like
+        // wipeAndRestart's `wipeOk`, so a partial clean surfaces as WIPE_INCOMPLETE below
+        // instead of being reported as a clean success.
+        var wipeOk = true
+        wipeOk = deleteWithSiblings(File(context.filesDir, IDENTITY_FILE)) && wipeOk
+        wipeOk = deleteWithSiblings(File(context.filesDir, IDENTITY_ENC_FILE)) && wipeOk
+        wipeOk = deleteWithSiblings(File(context.filesDir, STORE_FILE)) && wipeOk
+        val prefsOk = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
+          .edit().clear().commit()
+        wipeOk = wipeOk && prefsOk
+        wipeOk = deleteRecursively(File(context.filesDir, "chat-images")) && wipeOk
+        // wipeAndReinit sweeps the `.migbak`/`.enc` siblings of the old db — fold its result in.
+        wipeOk = ChatRepo.wipeAndReinit(context) && wipeOk
         // INSTALL the backup's identity: write the plaintext seed the wrapper reads at
         // open (no .enc present → prepareIdentity no-ops → open_persistent uses this →
         // same address → sealIdentity re-seals it right after).
@@ -623,8 +631,11 @@ object NodeRuntime {
         }
         Log.i(TAG, "identity restored from backup; reopening")
         val err = startBlocking()
-        // A node-open failure outranks the partial-history report — it's the harder stop.
-        onDone(err ?: partial)
+        // Precedence: a node-open failure is the hardest stop; then #514's incomplete wipe
+        // (old plaintext data may survive — the user must know their prior data wasn't
+        // cleared); then a partial history restore. Never report a clean success when the
+        // pre-restore wipe did not complete.
+        onDone(err ?: if (!wipeOk) WIPE_INCOMPLETE else partial)
       } catch (t: Throwable) {
         setStatus("error", t.message)
         onDone(t.message ?: t.toString())

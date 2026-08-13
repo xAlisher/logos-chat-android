@@ -119,8 +119,11 @@ describe('native restore path (source gate)', () => {
       nodeRuntime.indexOf('fun autoRestartIfWanted'),
     );
     expect(body).toContain('PARTIAL_RESTORE_PREFIX');
-    // The final callback must be able to carry the partial error, not a bare `err`.
-    expect(body).toMatch(/onDone\(err\s*\?:\s*partial\)/);
+    // The final callback must carry the partial error (not a bare `err`), AND #514: it must
+    // surface an incomplete pre-restore wipe (WIPE_INCOMPLETE) rather than reporting success
+    // — a failed clean can leave stale plaintext (e.g. a .migbak) beside the restored identity.
+    expect(body).toMatch(/onDone\(err\s*\?:.*\bpartial\b/);
+    expect(body).toMatch(/WIPE_INCOMPLETE/);
   });
 
   // The bridge has to keep the three outcomes distinct all the way to JS.

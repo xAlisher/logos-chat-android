@@ -65,3 +65,20 @@ export function foldGroupCfgs(
   }
   return out;
 }
+
+/**
+ * #518: fold gcfg markers to the group's storage state, but ONLY from markers authored by
+ * the authenticated group `creator`. History hydration MUST be creator-gated exactly like
+ * the live listener — otherwise a PERSISTED non-creator `gcfg1:storage:on` re-applies when
+ * the conversation is reopened, flipping storage back on and re-fetching media against the
+ * creator's off-choice (the live gate alone left this history path open). Fails closed:
+ * a null/unknown creator folds nothing, so the current state stands.
+ */
+export function foldGroupCfgsFromCreator(
+  msgs: Array<{body: string; at: number; seq?: number; author: string}>,
+  creator: string | null,
+): boolean | null {
+  if (creator == null) return null;
+  const c = creator.toLowerCase();
+  return foldGroupCfgs(msgs.filter(m => m.author.toLowerCase() === c));
+}
