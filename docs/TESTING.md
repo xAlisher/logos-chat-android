@@ -38,6 +38,23 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.15 — close the residuals (security round 4)
+A tidy-up security round: no new features, just closing the last gaps around **Private mode
+(Tor)** and the **PIN lock**, plus honest docs. Worth poking:
+
+- **Private mode on/off round-trip.** Settings → turn **Private mode** on and wait for Tor to
+  finish. Send a text and a photo. Then turn Private mode **off** and send again. Working = both
+  states send fine, and turning Private mode **off does not strand delivery** — messages keep
+  going through afterwards without restarting the app.
+- **Delivery pauses while Tor comes up (not before, not leaking).** When you enable Private mode,
+  Logos should briefly drop to **Offline** (delivery is paused so nothing goes out on the direct
+  route while Tor bootstraps), then return **Online** once the relay is up. Disabling brings it
+  back **Online** on the normal route. Working = the status pill matches what Private mode is
+  actually doing at each step.
+- **PIN lock still arms on cold launch.** If you use an app-lock PIN, fully close the app (swipe
+  it away) and reopen it — you should be asked for your PIN before you can see any chats. Working
+  = the lock always shows on a cold start; a set PIN is never skipped.
+
 ### v0.9.14 — authenticated attribution + storage authorization (security round 3)
 Another external-review round. The theme: control markers and attribution can no longer be
 forged from the wire. Worth poking:
