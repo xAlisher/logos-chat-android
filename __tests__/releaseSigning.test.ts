@@ -123,3 +123,21 @@ describe('release signing credential resolution (#356)', () => {
     }
   });
 });
+
+// #522: the SBOM previously claimed the release "currently uses the debug keystore" and that a
+// real signing config "land[s] with #356" — untrue since versionCode 113 (production CN=Peers).
+// Guard the doc against drifting back to that understatement.
+describe('docs/SBOM.md states the true (production) release-signing posture', () => {
+  const sbom = fs.readFileSync(path.join(repoRoot, 'docs/SBOM.md'), 'utf8');
+
+  it('does not claim the release is debug-signed', () => {
+    expect(sbom).not.toMatch(/release currently uses the debug\s+keystore/i);
+  });
+
+  it('names the production CN=Peers key and its fingerprint', () => {
+    expect(sbom).toMatch(/Release signing[^]*production `CN=Peers`/);
+    expect(sbom).toContain(
+      '67083eb88d7efaa792687af739bfa98f2a14041a61652a81a0441f68698e68bf',
+    );
+  });
+});

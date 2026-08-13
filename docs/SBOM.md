@@ -207,9 +207,15 @@ The `kotlin-unit` job runs `processReleaseManifest` and asserts the merged **rel
 - `allowBackup="false"` (#366) — no ADB/cloud backup extraction of app data.
 - Exported components reviewed: only `MainActivity` is `exported="true"` (the launcher, required);
   services/providers are `exported="false"`.
-- **Release signing correctness** is NOT yet asserted — the release currently uses the debug
-  keystore (#356). A real signing-config + a CI signature assertion land with #356 (keystore
-  custody is a human handoff).
+- **Release signing** uses the production `CN=Peers` key (SHA-256
+  `67083eb88d7efaa792687af739bfa98f2a14041a61652a81a0441f68698e68bf`), in place since versionCode
+  113 (every versionCode in the F-Droid index verifies to it). The release build passes
+  `-PassertReleaseSigned`, which **hard-fails** rather than fall back to the debug keystore unless
+  the production credentials are configured (`RELEASE_STORE_FILE` et al., maintainer-held — see
+  `docs/SIGNING.md`); `__tests__/releaseSigning.test.ts` lints the credential wiring + the assert
+  guard. **Still outstanding (#522):** the signature is enforced at *release-cut* time (the
+  `/release-peers` flow verifies `apksigner` prints the `CN=Peers` SHA-256 above), NOT yet by a CI step — inspecting a
+  *produced* APK's signer in CI needs the keystore in CI, a human credential handoff.
 
 ## Assurance plan — remaining (external / infra)
 - **Device-level regression harness** (#366): encrypted storage, notification redaction, export
