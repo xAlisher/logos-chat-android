@@ -38,6 +38,26 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.14 — authenticated attribution + storage authorization (security round 3)
+Another external-review round. The theme: control markers and attribution can no longer be
+forged from the wire. Worth poking:
+
+- **Group messages show the real sender.** Open a group, read a few messages, then close and
+  reopen the chat. Each message should show the correct sender name/avatar with the blue
+  **verified check** — attribution is now taken from the cryptographic MLS sender, not a field
+  the sending client can set. Working = who-sent-what is always right, including after reopening.
+- **Only the creator changes group storage.** As the group **creator**, toggle media storage
+  off then on (group menu). It applies for everyone. As a **non-creator**, you can't change it —
+  and a member can't flip it back on by any means, even after you reopen the chat. Working = only
+  the creator's choice sticks; the on/off system line names who changed it.
+- **Backup can't smuggle a PIN, and restore is honest.** Make a backup, then restore it
+  (About → Backup/Restore). Working = it restores your identity + history; a restored backup
+  cannot silently plant a lock/duress PIN; and if a restore can't fully clear old data it says so
+  (**"wipe incomplete"**) instead of claiming success.
+- **Duress PIN unchanged in normal use.** If you use a duress/wipe PIN, confirm normal unlock is
+  unaffected; the duress wipe still fires as designed. (Test only on a spare device — 3 wrong
+  PINs also wipe.)
+
 ### v0.9.13 — security hardening round 2 (wipe + private mode)
 More fixes from an external reviewer, focused on the duress/reset wipe and Private mode. If you
 use a wipe PIN, the parts worth exercising:
