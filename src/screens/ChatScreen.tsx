@@ -1807,33 +1807,61 @@ export function ChatScreen() {
   // also lands via chatStore's inbound ingestion; this covers history already in the
   // DB (e.g. a marker sent before this session). Only when there IS a gcfg in
   // history do we set it — else hydrateGroupStorage / the KV default stands.
+  //
+  // #518 (review): this fold is the SECOND path into storageOff, so it carries the
+  // same creator gate as the live listener — otherwise the gate is only a delay. A
+  // non-creator's `gcfg1:storage:on` is rejected on arrival but stays on the
+  // timeline, and an unguarded re-fold on open/reopen would apply it anyway,
+  // re-enabling Storage-node media fetches against the creator's off-choice. So:
+  // resolve the creator from authenticated native group state and fold ONLY that
+  // author's markers, attributed by the authenticated sender (authorOf). Fails
+  // closed — an unverifiable creator changes nothing.
   useEffect(() => {
-    const folded = foldGroupCfgs(
-      messages.map(m => ({body: m.text, at: m.at, seq: m.msgPk})),
-    );
-    if (folded == null) return;
-    const prev = useChatStore.getState().storageOff[convoPk];
-    if (prev !== folded) {
-      useChatStore.setState(s => ({
-        storageOff: {...s.storageOff, [convoPk]: folded},
-      }));
-      // #344: announce a transition, but only when there was a KNOWN prior value —
-      // an undefined→value fold is initial hydration from history (opening the
-      // chat), not a change to report. Real live flips are announced at their
-      // source (setGroupStorage / the inbound db_changed fold), and pushSystemLine
-      // dedups consecutive dupes, so this only covers a history re-fold.
-      if (prev !== undefined) {
-        useChatStore
-          .getState()
-          .pushSystemLine(
-            convoPk,
-            folded
-              ? 'Storage turned off — text & voice only'
-              : 'Storage turned on — media enabled',
-          );
+    let cancelled = false;
+    (async () => {
+      let creator: string | null = null;
+      try {
+        creator = await LogosChat.groupCreator(convoPk);
+      } catch {
+        return; // unsupported build / native error → cannot verify → do NOT apply
       }
-    }
-  }, [messages, convoPk]);
+      if (cancelled) return;
+      const folded = foldGroupCfgs(
+        messages.map(m => ({
+          author: authorOf(m),
+          body: m.text,
+          at: m.at,
+          seq: m.msgPk,
+        })),
+        creator,
+      );
+      if (folded == null) return;
+      const prev = useChatStore.getState().storageOff[convoPk];
+      if (prev !== folded) {
+        useChatStore.setState(s => ({
+          storageOff: {...s.storageOff, [convoPk]: folded},
+        }));
+        // #344: announce a transition, but only when there was a KNOWN prior value —
+        // an undefined→value fold is initial hydration from history (opening the
+        // chat), not a change to report. Real live flips are announced at their
+        // source (setGroupStorage / the inbound db_changed fold), and pushSystemLine
+        // dedups consecutive dupes, so this only covers a history re-fold.
+        if (prev !== undefined) {
+          useChatStore
+            .getState()
+            .pushSystemLine(
+              convoPk,
+              folded
+                ? 'Storage turned off — text & voice only'
+                : 'Storage turned on — media enabled',
+            );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, convoPk, authorOf]);
 
   const rows = useMemo(() => {
     const merged: Array<{at: number; row: Row}> = [

@@ -46,14 +46,32 @@ export function parseGroupCfg(s: string): GroupCfg | null {
  * (newest wins). Accepts timeline messages in ANY order — it sorts by `at`
  * (tie-broken by a monotonic `seq`, e.g. msgPk) so the most recent gcfg1: is the
  * one kept. Returns `storageOff` (true/false) or null if the group has no gcfg
- * marker at all. Mirrors foldPfps's sort-by-(at,seq) newest-wins shape, but folds
- * group-wide (not per-author) since storage is a single per-group setting.
+ * marker from its creator. Mirrors foldPfps's sort-by-(at,seq) newest-wins shape,
+ * but folds group-wide (not per-author) since storage is a single per-group setting.
+ *
+ * #518 (review): the fold is CREATOR-ONLY, exactly like the live inbound handler.
+ * A history fold that trusted every marker was a way around the live gate: a
+ * non-creator's `gcfg1:storage:on` is rejected on arrival but still PERSISTS on the
+ * timeline, so re-opening the conversation would re-apply it and turn media fetches
+ * back on against the creator's off-choice. `creator` must be the address from
+ * authenticated native group state (LogosChat.groupCreator), and each message's
+ * `author` the authenticated sender — never a wire-asserted field. Fails CLOSED:
+ * an unknown creator folds to null (leave the hydrated/KV value alone).
  */
 export function foldGroupCfgs(
-  msgs: Array<{body: string; at: number; seq?: number}>,
+  msgs: Array<{author?: string | null; body: string; at: number; seq?: number}>,
+  creator: string | null | undefined,
 ): boolean | null {
+  const creatorAddr = (creator ?? '').trim().toLowerCase();
+  // No verified creator (pre-#349 group, native error, 1:1) ⇒ no marker in history
+  // can be attributed, so none may be honored.
+  if (creatorAddr === '') return null;
   const sorted = msgs
-    .filter(m => isGroupCfgContent(m.body))
+    .filter(
+      m =>
+        isGroupCfgContent(m.body) &&
+        (m.author ?? '').trim().toLowerCase() === creatorAddr,
+    )
     .slice()
     .sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0));
   let out: boolean | null = null;
