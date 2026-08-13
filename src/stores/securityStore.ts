@@ -47,6 +47,12 @@ interface SecurityState {
    * while false so the conversation list can never flash before the gate arms.
    */
   loaded: boolean;
+  /**
+   * #516: the verifier READ threw (DB/storage fault), so the lock state is UNKNOWN — as
+   * opposed to a clean empty read, which means "no PIN". App.tsx shows a distinct retry
+   * screen (no PIN entry, no attempt burn, no auto-wipe) rather than failing OPEN.
+   */
+  loadError: boolean;
   /** True once the main PIN verifier is set — the restart gate is armed. */
   hasPin: boolean;
   /** True once a duress/wipe PIN is set. */
@@ -92,6 +98,7 @@ interface SecurityState {
 
 export const useSecurityStore = create<SecurityState>((set, get) => ({
   loaded: false,
+  loadError: false,
   hasPin: false,
   hasDuressPin: false,
   unlocked: true,
@@ -101,24 +108,33 @@ export const useSecurityStore = create<SecurityState>((set, get) => ({
   load: async () => {
     let main: PinVerifier | null = null;
     let duress: PinVerifier | null = null;
+    let readError = false;
     try {
+      // parseVerifier returns null on an EMPTY/malformed value (a legitimate "no PIN"); only a
+      // getSetting THROW reaches this catch — a storage read fault, i.e. UNKNOWN lock state.
       main = parseVerifier(await LogosChat.getSetting(KV_PIN_VERIFIER));
     } catch {
-      // no verifier / db not ready — treat as no PIN
+      // #516: a read error is NOT "no PIN". Fail closed.
+      readError = true;
     }
     try {
       duress = parseVerifier(await LogosChat.getSetting(KV_DURESS_VERIFIER));
     } catch {
-      // optional
+      // #516: a duress read error must not silently DISARM the duress PIN either — treat the
+      // whole lock state as unknown until a clean read succeeds.
+      readError = true;
     }
     set({
       loaded: true,
+      loadError: readError,
       mainVerifier: main,
       duressVerifier: duress,
       hasPin: main != null,
       hasDuressPin: duress != null,
-      // A cold launch with a PIN set is LOCKED; no PIN means open.
-      unlocked: main == null,
+      // #516: fail CLOSED on a read error — an unknown lock state is NOT "unlocked". App.tsx
+      // shows the retry screen instead of opening. Otherwise: cold launch with a PIN is LOCKED,
+      // no PIN means open.
+      unlocked: readError ? false : main == null,
     });
   },
 
