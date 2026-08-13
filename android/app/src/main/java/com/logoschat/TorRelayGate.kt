@@ -118,4 +118,30 @@ object TorRelayGate {
   fun deliveryNode(relayLive: Boolean, relayMultiaddr: String?, directNode: String?): String? =
       relayMultiaddr?.takeIf { relayUsable(relayLive, it) }
           ?: directNode?.takeIf { it.isNotEmpty() }
+
+  /**
+   * Senti P1 (4th follow-up) on #525: what this open must leave in the process-wide
+   * `LOGOS_DELIVERY_SERVICE_NODE`.
+   *
+   * Deliberately NOT the same thing as [deliveryNode] returning null. "No override chosen"
+   * only means "the baked-in fleet" if the env is a fresh slate — and it is not: routing is
+   * re-applied by a same-process reopen (`reopenNodeForRouting`), so a previous open in THIS
+   * process may already have exported the Tor relay's loopback multiaddr. `disableTor()` stops
+   * that relay, clears the `deliveryRelayNode` KV and reopens; with no custom node configured
+   * the decision here is "no override", and merely skipping the export would leave the dead
+   * loopback address in place — the new delivery client would keep dialing a stopped relay and
+   * filter/lightpush would stay stranded until the process restarted. So "no override" is an
+   * explicit [Clear], and NodeRuntime must handle both arms.
+   */
+  sealed class DeliveryEnv {
+    /** Export this multiaddr (relay loopback, or the user's own node). */
+    data class Set(val node: String) : DeliveryEnv()
+
+    /** Unexport the override entirely — the built-in fleet, with nothing stale left behind. */
+    object Clear : DeliveryEnv()
+  }
+
+  fun deliveryEnv(relayLive: Boolean, relayMultiaddr: String?, directNode: String?): DeliveryEnv =
+      deliveryNode(relayLive, relayMultiaddr, directNode)?.let { DeliveryEnv.Set(it) }
+          ?: DeliveryEnv.Clear
 }

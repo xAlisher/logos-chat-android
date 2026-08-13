@@ -316,4 +316,82 @@ class TorRelayGateTest {
               privateMode = false, privateModePending = false, openedOverRelay = relay))
     }
   }
+
+  // -- deliveryEnv (the process env is not a fresh slate) ---------------------
+
+  /**
+   * Senti P1 (4th follow-up) on #525: a stand-in for the process-wide environment, since
+   * `applyDeliveryPeerEnv` mutates the SAME env on every same-process reopen. Mirrors
+   * NodeRuntime's two arms exactly — the arm choice itself is production code.
+   */
+  private class ProcessEnv {
+    private val vars = HashMap<String, String>()
+
+    fun open(relayLive: Boolean, relayMultiaddr: String?, directNode: String?) {
+      when (val env = TorRelayGate.deliveryEnv(relayLive, relayMultiaddr, directNode)) {
+        is TorRelayGate.DeliveryEnv.Set -> vars["LOGOS_DELIVERY_SERVICE_NODE"] = env.node
+        TorRelayGate.DeliveryEnv.Clear -> vars.remove("LOGOS_DELIVERY_SERVICE_NODE")
+      }
+    }
+
+    fun deliveryNodeVar(): String? = vars["LOGOS_DELIVERY_SERVICE_NODE"]
+  }
+
+  @Test
+  fun disablingPrivateModeClearsTheRelayOverrideInTheSameProcess() {
+    // THE ORACLE. enable-over-relay → disable-to-default, both opens in one process:
+    // disableTor() stops the loopback relay, clears the deliveryRelayNode KV and calls
+    // reopenNodeForRouting(). With no custom node the reopen picks "no override" — and if
+    // that only means "skip the export", the dead relay address from the FIRST open survives
+    // and the new delivery client dials a stopped port. Filter/lightpush stay stranded until
+    // the process restarts.
+    val env = ProcessEnv()
+    env.open(relayLive = true, relayMultiaddr = RELAY, directNode = null)
+    assertEquals("Private mode routes delivery over the relay", RELAY, env.deliveryNodeVar())
+
+    env.open(relayLive = false, relayMultiaddr = "", directNode = null)
+    assertNull(
+        "disabling Private mode must UNSET the override, not leave the dead relay behind",
+        env.deliveryNodeVar())
+  }
+
+  @Test
+  fun disablingPrivateModeFallsBackToTheCustomNodeNotTheDeadRelay() {
+    // Same transition with a self-hosted node configured: the override must be REPLACED,
+    // never left pointing at the stopped relay.
+    val env = ProcessEnv()
+    env.open(relayLive = true, relayMultiaddr = RELAY, directNode = DIRECT)
+    assertEquals(RELAY, env.deliveryNodeVar())
+
+    env.open(relayLive = false, relayMultiaddr = "", directNode = DIRECT)
+    assertEquals(DIRECT, env.deliveryNodeVar())
+  }
+
+  @Test
+  fun noNodeAnywhereIsAClearNotASkip() {
+    assertEquals(
+        TorRelayGate.DeliveryEnv.Clear,
+        TorRelayGate.deliveryEnv(relayLive = false, relayMultiaddr = null, directNode = null))
+    assertEquals(
+        "an empty custom node is no node at all",
+        TorRelayGate.DeliveryEnv.Clear,
+        TorRelayGate.deliveryEnv(relayLive = false, relayMultiaddr = "", directNode = ""))
+    // A stale multiaddr with no live relay behind it is also a clear, never an export.
+    assertEquals(
+        TorRelayGate.DeliveryEnv.Clear,
+        TorRelayGate.deliveryEnv(relayLive = false, relayMultiaddr = RELAY, directNode = null))
+  }
+
+  @Test
+  fun deliveryEnvAgreesWithDeliveryNode() {
+    for (live in listOf(true, false)) for (relay in listOf(RELAY, "", null)) for (direct in
+        listOf(DIRECT, "", null)) {
+      val node = TorRelayGate.deliveryNode(live, relay, direct)
+      val env = TorRelayGate.deliveryEnv(live, relay, direct)
+      if (node == null) assertEquals("live=$live relay=$relay direct=$direct",
+          TorRelayGate.DeliveryEnv.Clear, env)
+      else assertEquals("live=$live relay=$relay direct=$direct",
+          TorRelayGate.DeliveryEnv.Set(node), env)
+    }
+  }
 }

@@ -263,14 +263,24 @@ object NodeRuntime {
       // Senti P1 on #525: remember HOW this ctx was opened. A later resume cannot change
       // it (routing is only read here, on a cold open), so the resume gate needs to know.
       openedOverRelay = viaRelay
-      val node = TorRelayGate.deliveryNode(TorState.deliveryRelayLive, relayAddr, direct)
-      if (node != null) {
-        Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", node, true)
-        // #360: the node multiaddr (host/IP + peerId) is network-metadata — only log it
-        // in DEBUG; in release just note that a custom/relay node is in use.
-        if (BuildConfig.DEBUG)
-            Log.i(TAG, "delivery service node: '${node}'${if (viaRelay) " (Tor relay)" else ""}")
-        else Log.i(TAG, "delivery service node set${if (viaRelay) " (Tor relay)" else ""}")
+      // Senti P1 (4th follow-up) on #525: the env is process-wide and this runs again on every
+      // same-process reopen, so "no override" must UNSET it, not skip the write. Leaving the
+      // previous open's relay loopback address behind would point the fresh delivery client at
+      // the relay disableTor() just stopped. Exhaustive `when` so the clear arm cannot be
+      // dropped again. See [TorRelayGate.DeliveryEnv].
+      when (val env = TorRelayGate.deliveryEnv(TorState.deliveryRelayLive, relayAddr, direct)) {
+        is TorRelayGate.DeliveryEnv.Set -> {
+          Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", env.node, true)
+          // #360: the node multiaddr (host/IP + peerId) is network-metadata — only log it
+          // in DEBUG; in release just note that a custom/relay node is in use.
+          if (BuildConfig.DEBUG)
+              Log.i(TAG, "delivery service node: '${env.node}'${if (viaRelay) " (Tor relay)" else ""}")
+          else Log.i(TAG, "delivery service node set${if (viaRelay) " (Tor relay)" else ""}")
+        }
+        TorRelayGate.DeliveryEnv.Clear -> {
+          Os.unsetenv("LOGOS_DELIVERY_SERVICE_NODE")
+          Log.i(TAG, "delivery service node cleared (built-in fleet)")
+        }
       }
       return true
     } catch (t: Throwable) {
