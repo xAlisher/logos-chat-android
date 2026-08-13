@@ -405,16 +405,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       Storage.setTorRouting(true, port);
       set({mediaOverTor: true, torBusy: false});
-      // Senti P1 follow-up on #525: whether this write LANDED decides who holds the
-      // delivery gate after the latch drops. The KV is what NodeRuntime.privateModeEnabled()
-      // reads; a swallowed failure here means the native side does not know Private mode
-      // is on at all. Media is unaffected (setTorRouting above is in-process).
-      let privateModePersisted = false;
+      // Persist Private mode so a future cold start re-gates. This is what
+      // NodeRuntime.privateModeEnabled() reads; but note it is NOT what releases the intent
+      // latch below — only a confirmed-usable relay does (Senti P1 3rd follow-up on #525),
+      // because this read can fault open at reopen time. Media is unaffected (setTorRouting
+      // above is in-process).
       try {
         await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'true');
-        privateModePersisted = true;
       } catch {
-        // best-effort — the latch below stays armed to cover it
+        // best-effort — the latch below stays armed unless the RELAY is confirmed usable
       }
       // #319: stand up the delivery relay to the CURRENT delivery node's host:port, then
       // point the node at the loopback relay (KV). Only set the KV AFTER the relay is up,
@@ -439,16 +438,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // Private-mode toggle otherwise only takes effect on the next node start, leaving a
       // running node's delivery egress direct. No-op if the node isn't up.
       //
-      // Senti P1 follow-up on #525: releasing the intent latch hands the gate to native
-      // state, so only release it once native state can actually HOLD the gate — either
-      // the persisted `mediaOverTor` (privateModeEnabled() → mustWaitForTor fails the
-      // reopen closed) or a usable relay (the reopen routes over Tor). Both are
-      // best-effort above, and if BOTH fell through, dropping the latch unconditionally
-      // left the reopen with nothing to gate on: it cold-opened on the DIRECT route while
-      // the UI (mediaOverTor: true) said Private mode was on. Keep the latch armed in that
-      // case — delivery stays down, which is the failure this whole path is meant to pick.
-      // disableTor/cancelTor still clear it, so this can never strand delivery for good.
-      if (privateModePersisted || relayUsable) {
+      // Senti P1 (3rd follow-up) on #525: release the intent latch ONLY when the relay is
+      // confirmed usable — the single condition under which the reopen actually routes
+      // delivery over Tor (it keys on TorState.deliveryRelayLive + the published multiaddr,
+      // never on a KV read). A LANDED `mediaOverTor` write is NOT sufficient: the reopen's
+      // gate reads that KV back through privateModeEnabled(), which catches any transient
+      // read fault and returns false (NodeRuntime.kt:274-279) — so releasing the latch on
+      // "the write succeeded" hands the gate to a faultable native read that can fail OPEN,
+      // cold-opening delivery on the DIRECT route while the UI (mediaOverTor: true) shows
+      // Private mode on. Keeping the in-memory latch armed whenever the relay is not usable
+      // makes the reopen fail CLOSED (delivery down) regardless of what that read returns —
+      // the in-memory latch, not the native read, stays the authoritative gate through the
+      // reopen. disableTor/cancelTor still clear it, so nothing is stranded for good.
+      if (relayUsable) {
         LogosChat.setNodePrivateModePending(false);
       }
       LogosChat.reopenNodeForRouting().catch(() => {});

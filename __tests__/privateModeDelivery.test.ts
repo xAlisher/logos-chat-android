@@ -226,16 +226,21 @@ describe('the Tor-bootstrap window (delivery must not stay direct through it)', 
   });
 });
 
-// Senti P1 follow-up on #525 — releasing the intent latch hands the delivery gate to
-// NATIVE state. Native has exactly two ways to hold it: the persisted `mediaOverTor` KV
-// (NodeRuntime.privateModeEnabled → mustWaitForTor fails the reopen closed) and a usable
-// relay (relayLive AND the multiaddr in KV → the reopen routes over Tor). Both writes are
-// best-effort, so the latch must not drop until at least one of them is CONFIRMED.
+// Senti P1 follow-ups on #525 — releasing the intent latch hands the delivery gate to
+// NATIVE state, so the latch must not drop until native can actually HOLD the gate. There
+// is exactly ONE condition the reopen can rely on: a usable relay (relayLive AND the
+// multiaddr in KV → the reopen routes over Tor via TorState, not a KV read). The persisted
+// `mediaOverTor` KV looks like a second holder, but it is NOT reliable: the reopen reads it
+// back through `privateModeEnabled()`, which returns false on any transient read fault
+// (NodeRuntime.kt:274-279) — a landed write does not make the later read infallible. So
+// only a confirmed-usable relay releases the latch; otherwise the in-memory latch stays
+// armed and the reopen fails closed (delivery down, never direct).
 //
-// The hole these pin: on the success path the latch was released unconditionally. With a
-// transient DB fault taking out both KV writes, `privateModeEnabled()` read false and no
-// relay was usable, so the reopen sailed past every gate and cold-opened on the DIRECT
-// route — while zustand already said `mediaOverTor: true` and the user saw Private mode on.
+// The holes these pin, over three review rounds: (1) the latch was released
+// unconditionally, so with both KV writes lost the reopen cold-opened DIRECT; (2) gating on
+// `privateModePersisted || relayUsable` still released on a landed write whose native read
+// could then fault open. Both while zustand said `mediaOverTor: true` and the user saw
+// Private mode on.
 describe('the latch is only handed over to a gate that can actually hold it', () => {
   it('THE ORACLE: both KV writes fail → the latch STAYS armed, so the reopen fails closed', async () => {
     // A DB fault kills the mediaOverTor persist AND the relay multiaddr publish. The relay
@@ -272,7 +277,16 @@ describe('the latch is only handed over to a gate that can actually hold it', ()
     expect(at('Tor.startDeliveryRelay')).toBeLessThan(at('reopenNodeForRouting'));
   });
 
-  it('relay setup failing is fine — the persisted gate holds it, and fails the reopen closed', async () => {
+  it('THE P1 #4 ORACLE: persist succeeds but relay fails → the latch STAYS armed', async () => {
+    // The subtlety a landed KV write hides: privateModeEnabled() reads that KV back during
+    // the cold reopen and returns false on ANY transient read fault (NodeRuntime.kt:274-279).
+    // So "the mediaOverTor write succeeded" is NOT a gate the reopen can lean on — releasing
+    // the latch on it hands delivery to a faultable native read that can fail OPEN (cold-open
+    // on the DIRECT route while the UI shows Private mode on). Only a confirmed-usable relay
+    // releases the latch; a failed relay keeps the IN-MEMORY latch armed so the reopen fails
+    // CLOSED (delivery down) regardless of what the native read returns. Against the pre-fix
+    // guard (privateModePersisted || relayUsable) this asserted [true, false]; the fix
+    // (relayUsable alone) makes it [true].
     (natives().Tor.startDeliveryRelay as jest.Mock).mockImplementation((...args: any[]) => {
       calls.push({fn: 'Tor.startDeliveryRelay', args});
       return Promise.reject(new Error('no socks'));
@@ -280,9 +294,10 @@ describe('the latch is only handed over to a gate that can actually hold it', ()
 
     await bootstrapToSuccess();
 
-    // mediaOverTor persisted, so privateModeEnabled() is true natively: the reopen waits for
-    // a relay that never comes and leaves delivery down, not direct. Releasing is safe.
-    expect(latchCalls()).toEqual([true, false]);
+    // Latch never released — the armed in-memory latch, not the persisted-but-re-readable KV,
+    // is what holds the gate through the reopen.
+    expect(latchCalls()).toEqual([true]);
+    // The reopen still runs: armed + no usable relay → mustWaitForTor holds delivery DOWN.
     expect(order()).toContain('reopenNodeForRouting');
   });
 
