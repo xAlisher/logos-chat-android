@@ -434,6 +434,28 @@ object NodeRuntime {
     }
   }
 
+  /**
+   * #517 path 2: re-open the node so the Private-mode delivery gate in [startBlocking]
+   * re-applies. Toggling Private mode on an ALREADY-RUNNING node otherwise never re-routes
+   * ongoing delivery egress — startBlocking's resume branch (`ctx != 0`) returns before the
+   * gate, so only a cold open applies the routing. A full teardown + cold reopen is the only
+   * path that runs the gate; the identity/address are unchanged (same seed on disk), and if
+   * Private mode is on but Tor isn't ready the reopen fails CLOSED (delivery down, not direct).
+   * No-op when the node isn't open — the next open applies the gate itself.
+   */
+  fun reopenForRouting(onDone: (String?) -> Unit) {
+    executor.execute {
+      try {
+        if (ctx == 0L) { onDone(null); return@execute } // not open → nothing to re-route
+        stopBlocking()
+        onDone(startBlocking())
+      } catch (t: Throwable) {
+        setStatus("error", t.message)
+        onDone(t.message ?: t.toString())
+      }
+    }
+  }
+
   fun stop(onDone: (String?) -> Unit) {
     executor.execute {
       try {

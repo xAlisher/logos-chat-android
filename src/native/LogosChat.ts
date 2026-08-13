@@ -104,6 +104,12 @@ export interface GroupMember {
 interface LogosChatNative {
   startNode(): Promise<null>;
   stopNode(): Promise<null>;
+  /**
+   * #517 path 2: re-open a running node so the Private-mode delivery gate re-applies its
+   * routing. Call after toggling Private mode on/off so ongoing delivery egress is re-routed
+   * (a running node is otherwise only re-routed on a full restart). No-op when not running.
+   */
+  reopenNodeForRouting(): Promise<null>;
   getNodeStatus(): Promise<NodeStatus>;
   /** #244: the real installed version — JSON {"versionName","versionCode"}. */
   getAppVersion(): Promise<string>;

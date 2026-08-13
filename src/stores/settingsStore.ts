@@ -365,6 +365,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // routing live — "green" per the UX = the network is actually reachable, not just
     // the process spawned. The SOCKS listener binds early; we read its port at the end.
     set({torBusy: true, torBootstrapPercent: 0});
+    // #517 path 4: mark Private mode intended NOW, before bootstrap completes, so media
+    // requests during the Tor-bootstrap window fail closed instead of egressing directly.
+    // setTorRouting(true) below clears it once routing is live; cancel/disable clear it too.
+    Storage.setPrivateModePending(true);
     torCancelled = false;
     torUnsub?.();
     try {
@@ -408,6 +412,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       } catch {
         // relay failed → leave delivery direct (don't point the node at a dead relay)
       }
+      // #517 path 2: apply the new Tor delivery routing to an ALREADY-RUNNING node — a
+      // Private-mode toggle otherwise only takes effect on the next node start, leaving a
+      // running node's delivery egress direct. No-op if the node isn't up.
+      LogosChat.reopenNodeForRouting().catch(() => {});
     } catch {
       // start/bootstrap failed — leave the toggle off and tear the daemon down.
       try {
@@ -416,6 +424,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         // best-effort
       }
       set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
+      Storage.setPrivateModePending(false); // #517: bootstrap failed → release the media gate
     } finally {
       torUnsub?.();
       torUnsub = null;
@@ -424,6 +433,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   disableTor: async () => {
     set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
+    Storage.setPrivateModePending(false); // #517: Private mode off → media may go direct again
     try {
       Tor.stopDeliveryRelay(); // #319
     } catch {
@@ -446,12 +456,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch {
       // best-effort
     }
+    // #517 path 2: re-route the running node back to direct delivery now, not just next start.
+    LogosChat.reopenNodeForRouting().catch(() => {});
   },
 
   cancelTor: () => {
     // User pressed Cancel mid-bootstrap: abort the pending enableTor, stop the daemon,
     // stay off. Don't touch the persisted pref (it was never turned on).
     torCancelled = true;
+    Storage.setPrivateModePending(false); // #517: cancelled before Tor came up → release the gate
     torUnsub?.();
     torUnsub = null;
     try {
