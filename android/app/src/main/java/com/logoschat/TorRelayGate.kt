@@ -31,6 +31,28 @@ object TorRelayGate {
       relayLive && !relayMultiaddr.isNullOrEmpty()
 
   /**
+   * Senti P1 follow-up on #525: resolve the PERSISTED half of the gate from a KV read that
+   * may have faulted. A read fault is not a "no".
+   *
+   * `privateModeEnabled()` used to collapse "the DB said not-private" and "the DB could not
+   * be read" into the same `false`. That failed OPEN in the one window it mattered: once
+   * `enableTor` confirms the `mediaOverTor` write it hands the gate over and drops the
+   * in-memory intent latch, so the persisted value is the ONLY thing left holding delivery.
+   * If the very next read of it faulted (SQLite I/O error, or the brief `db == null` window
+   * a concurrent wipe opens), the cold reopen saw no persisted mode, no latch and no relay,
+   * sailed past [mustWaitForTor] and published over the DIRECT route — while the UI said
+   * Private mode was on. A write landing only proves the write landed; it cannot make the
+   * read infallible, so the read fails CLOSED instead. Same stance as #516 took for the lock
+   * state: a storage FAULT is unknown, and unknown is not permission to egress.
+   *
+   * Costs nothing when Private mode is off and the DB is healthy, and a transient fault
+   * self-heals — `awaitTorRelay` re-evaluates the gate every 500ms, so the next good read
+   * releases the wait rather than burning the whole timeout.
+   */
+  fun privateModeFromRead(readValue: String?, readFaulted: Boolean): Boolean =
+      readFaulted || readValue == "true"
+
+  /**
    * Senti P1 on #525: is Private mode ARMED — either already persisted (`mediaOverTor`)
    * or merely INTENDED and still bootstrapping? The KV only flips at 100% bootstrap, so
    * for the whole (tens-of-seconds) bootstrap window `privateMode` is still false while
@@ -69,6 +91,20 @@ object TorRelayGate {
       privateModePending: Boolean,
       openedOverRelay: Boolean,
   ): Boolean = !privateModeArmed(privateMode, privateModePending) || openedOverRelay
+
+  /**
+   * Senti P1 follow-up on #525 (sibling site): may the cold open PROCEED when applying the
+   * delivery routing failed?
+   *
+   * `applyDeliveryPeerEnv` runs AFTER [mustWaitForTor] has already let the open through, and
+   * used to swallow its own faults as "non-fatal". Outside Private mode that is right —
+   * failing to pin a custom node just means the baked-in fleet. Under Private mode it is the
+   * same fail-open the persisted-gate read had: the fleet default IS the direct route, so the
+   * bundle gets published over the real IP while the user is told they are on Tor. Deciding
+   * routing and applying it are two different things, and only the second one counts.
+   */
+  fun mayOpenWithoutRouting(privateMode: Boolean, privateModePending: Boolean): Boolean =
+      !privateModeArmed(privateMode, privateModePending)
 
   /**
    * Which multiaddr `LOGOS_DELIVERY_SERVICE_NODE` should carry: the Tor relay when it

@@ -307,3 +307,53 @@ describe('the latch is only handed over to a gate that can actually hold it', ()
     expect(at('setNodePrivateModePending')).toBeLessThan(at('reopenNodeForRouting'));
   });
 });
+
+// Senti P1 follow-up on #525 (round 2) — the NATIVE half of the same guarantee.
+//
+// The latch above is process-scoped by design, so it covers the enable window and nothing
+// else. Every routing decision taken WITHOUT a latch — most importantly the cold open after
+// a process restart, where `mediaOverTor` is persisted and `privateModePending` is false by
+// construction — rests entirely on native re-reading that KV. `privateModeEnabled()` used to
+// answer a read FAULT with `false`, indistinguishable from an honest "not private". With no
+// latch to fall back on, that cold open saw no persisted mode and no relay, sailed past
+// mustWaitForTor, and published the device bundle on the DIRECT route while zustand showed
+// Private mode on. Holding the latch longer cannot help there — by then there is no latch.
+//
+// The behavioural test for that lives in TorRelayGateTest (privateModeFromRead + the
+// write-lands / relay-fails / read-faults composite), because the fault is a Kotlin one. What
+// the js-logic run CAN pin is that the native read still routes through the fail-closed gate:
+// a `catch { false }` there silently re-opens the hole while every test on both sides is green.
+describe('the native gate the latch release hands over to', () => {
+  const {readFileSync} = require('fs');
+  const path = require('path');
+  const native = (f: string) =>
+    readFileSync(path.join(__dirname, '..', 'android/app/src/main/java/com/logoschat', f), 'utf8');
+
+  it('THE ORACLE: a faulted private-mode read arms the gate instead of disarming it', () => {
+    // The pure decision, read as source: fault => armed.
+    expect(native('TorRelayGate.kt')).toMatch(
+      /fun privateModeFromRead\([^)]*\)\s*:\s*Boolean\s*=\s*\n?\s*readFaulted \|\|/,
+    );
+  });
+
+  it('privateModeEnabled routes its read through that gate, and never swallows a fault as false', () => {
+    const src = native('NodeRuntime.kt');
+    const fn = src.slice(src.indexOf('private fun privateModeEnabled'));
+    const body = fn.slice(0, fn.indexOf('\n  /**', 1));
+    expect(body).toContain('TorRelayGate.privateModeFromRead');
+    // the pre-fix shape: `catch (t: Throwable) { false }` — a fault read as "not private"
+    expect(body).not.toMatch(/catch\s*\([^)]*\)\s*\{\s*false/);
+  });
+
+  it('a failed routing APPLY does not open either — deciding a route is not applying it', () => {
+    // The sibling site: applyDeliveryPeerEnv runs after the wait-for-Tor gate has already
+    // passed, so if its own reads fault and it is swallowed as "non-fatal", the delivery
+    // client falls back to the baked-in fleet (the direct route) and the open publishes.
+    const src = native('NodeRuntime.kt');
+    expect(src).toMatch(
+      /if \(!applyDeliveryPeerEnv\(\) &&\s*\n?\s*!TorRelayGate\.mayOpenWithoutRouting\(/,
+    );
+    // and the apply must actually be able to report failure
+    expect(src).toMatch(/private fun applyDeliveryPeerEnv\(\)\s*:\s*Boolean/);
+  });
+});

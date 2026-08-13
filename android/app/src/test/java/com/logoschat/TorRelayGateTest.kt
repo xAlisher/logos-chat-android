@@ -182,6 +182,105 @@ class TorRelayGateTest {
     }
   }
 
+  // -- privateModeFromRead (a read FAULT is not a "no") -----------------------
+  //
+  // Senti P1 follow-up on #525. `enableTor` drops the in-memory intent latch as soon as the
+  // `mediaOverTor` write is confirmed, which hands the whole delivery gate to this persisted
+  // value. A confirmed write only proves the WRITE landed; the next READ of it can still
+  // fault (SQLite I/O error, or the `db == null` window `ChatRepo.wipeAndReinit` opens).
+  // Answering that fault with `false` — as the old `catch { false }` did — left the reopen
+  // with no persisted mode, no latch and no relay, so it cold-opened on the DIRECT route
+  // while the UI said Private mode was on.
+
+  @Test
+  fun anUnreadablePrivateModeGateCountsAsArmed() {
+    // THE ORACLE: unknown is not permission to egress.
+    assertTrue(
+        "a faulted read must arm the gate, not disarm it",
+        TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true))
+  }
+
+  @Test
+  fun aFaultedReadArmsTheGateWhateverItManagedToReturn() {
+    // The value is meaningless once the read faulted — a partial/garbage return must not
+    // talk the gate back down.
+    for (v in listOf(null, "", "false", "true", "1")) {
+      assertTrue(
+          "faulted read (value=$v) must arm the gate",
+          TorRelayGate.privateModeFromRead(readValue = v, readFaulted = true))
+    }
+  }
+
+  @Test
+  fun aCleanReadIsStillTakenAtItsWord() {
+    // Fail-closed must not become always-closed: a healthy DB that says "not private" is a
+    // real answer, and Private mode being off may never gate anything.
+    assertFalse(TorRelayGate.privateModeFromRead(readValue = null, readFaulted = false))
+    assertFalse(TorRelayGate.privateModeFromRead(readValue = "", readFaulted = false))
+    assertFalse(TorRelayGate.privateModeFromRead(readValue = "false", readFaulted = false))
+    assertTrue(TorRelayGate.privateModeFromRead(readValue = "true", readFaulted = false))
+  }
+
+  @Test
+  fun writeLandsRelayFailsThenTheReadFaults_deliveryStaysDownNotDirect() {
+    // The exact sequence from the review: `setSetting(mediaOverTor, 'true')` SUCCEEDS, relay
+    // setup FAILS, so the latch is released on the strength of the persisted gate alone —
+    // and then the reopen's read of that gate faults.
+    val privateMode = TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true)
+    assertTrue(
+        "the reopen must still block: no relay, and the gate could not be read",
+        TorRelayGate.mustWaitForTor(
+            privateMode = privateMode,
+            relayLive = false, // relay setup failed
+            relayMultiaddr = null, // …so no multiaddr was ever published
+            privateModePending = false, // latch released after the confirmed write
+        ))
+    // and the paused node must not resume onto the direct ctx it already holds either
+    assertFalse(
+        TorRelayGate.mayResumeDelivery(
+            privateMode = privateMode, privateModePending = false, openedOverRelay = false))
+  }
+
+  @Test
+  fun aFaultedReadDoesNotStrandDeliveryOnceTheRelayIsUp() {
+    // Fail-closed, not stuck: with a live relay the reopen routes over Tor and proceeds even
+    // though the gate read faulted. This is what keeps `awaitTorRelay`'s poll self-healing.
+    assertFalse(
+        TorRelayGate.mustWaitForTor(
+            privateMode = TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true),
+            relayLive = true,
+            relayMultiaddr = RELAY,
+            privateModePending = false))
+  }
+
+  // -- mayOpenWithoutRouting (deciding a route is not applying it) ------------
+  //
+  // The sibling of the above, found while fixing it. `applyDeliveryPeerEnv` runs AFTER
+  // mustWaitForTor has let the open through, and swallowed every fault as "non-fatal".
+  // A kvGet (or Os.setenv) throw there leaves LOGOS_DELIVERY_SERVICE_NODE unexported, the
+  // delivery client falls back to the baked-in fleet — the DIRECT route — and the open
+  // publishes the device bundle anyway, with Private mode armed and the UI saying Tor.
+
+  @Test
+  fun aFailedRoutingApplyMustNotOpenUnderPrivateMode() {
+    // THE ORACLE: passing the gate is not the same as being routed. The last step that can
+    // still put this open on the direct route is applying the env, so it has to fail closed.
+    assertFalse(
+        "a routing apply that failed must not open while Private mode is persisted",
+        TorRelayGate.mayOpenWithoutRouting(privateMode = true, privateModePending = false))
+    assertFalse(
+        "…nor during the bootstrap window, where the latch is the only signal",
+        TorRelayGate.mayOpenWithoutRouting(privateMode = false, privateModePending = true))
+  }
+
+  @Test
+  fun aFailedRoutingApplyIsStillNonFatalOutsidePrivateMode() {
+    // #219's original contract: not being able to pin a custom delivery node just means the
+    // baked-in fleet. That is only a leak when the user asked for Tor.
+    assertTrue(
+        TorRelayGate.mayOpenWithoutRouting(privateMode = false, privateModePending = false))
+  }
+
   // -- mayResumeDelivery (resume does NOT re-apply routing) -------------------
 
   @Test

@@ -237,9 +237,16 @@ object NodeRuntime {
   /**
    * #219: if a self-hosted delivery node is configured (KV), export its multiaddr as
    * the static filter + lightpush service peer so the Edge client uses it instead of
-   * the public fleet. No-op when unset. Best-effort — never blocks node start.
+   * the public fleet. No-op when unset. Never blocks node start outside Private mode.
+   *
+   * Senti P1 follow-up on #525 (sibling site): returns whether the routing was actually
+   * APPLIED. The whole body used to be swallowed as "non-fatal", which is only true outside
+   * Private mode — a fault here after [startBlocking]'s gate has already passed leaves
+   * `LOGOS_DELIVERY_SERVICE_NODE` unexported, so the delivery client silently falls back to
+   * the baked-in fleet (the DIRECT route) and the open publishes anyway. The caller fails
+   * closed on `false` while Private mode is armed. See [TorRelayGate.mayOpenWithoutRouting].
    */
-  private fun applyDeliveryPeerEnv() {
+  private fun applyDeliveryPeerEnv(): Boolean {
     try {
       val db = ChatRepo.requireDb()
       // #319: Private mode routes delivery through the local Tor relay — its loopback
@@ -265,18 +272,40 @@ object NodeRuntime {
             Log.i(TAG, "delivery service node: '${node}'${if (viaRelay) " (Tor relay)" else ""}")
         else Log.i(TAG, "delivery service node set${if (viaRelay) " (Tor relay)" else ""}")
       }
+      return true
     } catch (t: Throwable) {
-      Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")
+      // A throw anywhere above (either kvGet, or Os.setenv) means the delivery route this
+      // open will actually use is NOT the one we decided on. `openedOverRelay` may already
+      // have been set from a decision we then failed to apply, so retract it too — the
+      // resume gate must not believe this ctx came up over the relay.
+      openedOverRelay = false
+      Log.w(TAG, "applyDeliveryPeerEnv failed: ${t.message}")
+      return false
     }
   }
 
-  /** #GHSA-jj3m: was Private mode (Tor) opted into? Persisted by settingsStore. */
-  private fun privateModeEnabled(): Boolean =
-      try {
-        ChatRepo.requireDb().kvGet(KV_MEDIA_OVER_TOR) == "true"
-      } catch (t: Throwable) {
-        false // DB not ready → treat as not-private; the caller only gates when true
-      }
+  /**
+   * #GHSA-jj3m: was Private mode (Tor) opted into? Persisted by settingsStore.
+   *
+   * Senti P1 follow-up on #525: fails CLOSED. A read fault is UNKNOWN, not "not private" —
+   * once `enableTor` confirms the KV write it drops the in-memory intent latch and this read
+   * becomes the only thing holding delivery, so answering a fault with `false` reopened the
+   * node on the direct route while the UI showed Private mode on. See
+   * [TorRelayGate.privateModeFromRead] for the full argument.
+   */
+  private fun privateModeEnabled(): Boolean {
+    var faulted = false
+    val value =
+        try {
+          ChatRepo.requireDb().kvGet(KV_MEDIA_OVER_TOR)
+        } catch (t: Throwable) {
+          faulted = true
+          // #360: no value, no key — just that the gate could not be read.
+          Log.w(TAG, "private-mode gate unreadable (${t.message}); treating it as armed")
+          null
+        }
+    return TorRelayGate.privateModeFromRead(value, faulted)
+  }
 
   /**
    * #GHSA-jj3m: is a LIVE, current-process Tor delivery relay available? Requires
@@ -369,7 +398,16 @@ object NodeRuntime {
     // #219: pin the delivery client to our self-hosted node if configured. Set the
     // env vars the Rust delivery layer reads BEFORE opening the node (the node thread
     // inherits this process's env). Empty/unset KV → no-op → default fleet behaviour.
-    applyDeliveryPeerEnv()
+    //
+    // Senti P1 follow-up on #525 (sibling site): "default fleet behaviour" IS the direct
+    // route, so a swallowed fault here is only harmless outside Private mode. The gate above
+    // has already passed by this point, so nothing else would stop the publish.
+    if (!applyDeliveryPeerEnv() &&
+        !TorRelayGate.mayOpenWithoutRouting(privateModeEnabled(), privateModePending)) {
+      val why = "Private mode: could not apply Tor delivery routing — not connecting"
+      setStatus("error", why)
+      return why
+    }
     if (!setupDone) {
       // #360: in release, cap the Rust lib's log level so info-level lines (which can
       // carry message content / addresses) don't reach logcat. overwrite=false respects
