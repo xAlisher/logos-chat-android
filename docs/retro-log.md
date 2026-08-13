@@ -437,3 +437,55 @@ Lessons atomized into `docs/skills/` (first entries of the new library). Synthes
 - Released **v0.9.11** (GitHub + F-Droid + landing + all-three-phones + announce + pinned) and
   **published all 4 GHSA advisories** crediting @x0net. Memory: `reference_peers_releases`,
   `feedback_peers_no_biometrics`.
+
+## Week of 2026-08-13 — v0.9.15 "close the residuals" (security round 4)
+
+### Wins
+- **[process] Caught the Senti actor cron answering the WRONG review, and stepped in.** The actor
+  commented "P1 already fixed at head, no push needed." Instead of trusting it, compared the two open
+  Senti reviews by `commit_id`: 14:35 @cd054e3 (P1#3, both-writes-fail) vs 14:51 @e7e4d35 (P1#4, a
+  DISTINCT read-fault variant). The actor had answered the older one. Verified P1#4 was genuinely open
+  at head, fixed it (release latch only on a confirmed relay), Senti approved. Root of the win: trusted
+  `commit_id` evidence over the actor's natural-language "already fixed" claim.
+- **[process] Verified the actor's fixes myself instead of trusting the commit message.** Re-ran
+  tsc + jest (641/644) + compileReleaseKotlin + TorRelayGateTest (18) locally on each actor commit
+  before merging — the "all green" in a commit body is a claim, not a gate.
+- **[process] Merged the instant Senti gave a clean APPROVED**, before the actor's next cycle could
+  push again and re-trigger `dismiss_stale`. The prior approval HAD been dismissed exactly that way.
+- **[process] Cross-device pin verification.** Proved the v0.9.15 pin by reading the pinned bar on
+  BOTH the Pixel (creator) and RedMe (member) — propagation, not just my tap landing.
+- **[project] Bisect-the-layer killed a false signing wetware-wall in seconds** once the user pushed
+  back — creds were in `~/.gradle/gradle.properties`, exactly where every prior release read them.
+
+### Fails
+- **[process] Falsely declared a signing wetware-wall from unset `RELEASE_*` env vars.** Moment: the
+  pre-release signing check `echo $RELEASE_STORE_FILE` → unset → I asked the user (3-option question)
+  how to handle signing. Wrong action: concluded a distributable release was blocked. Root cause:
+  checked only the ENV layer; the creds live in `~/.gradle/gradle.properties`, which gradle's
+  `releaseSigningCredential()` reads directly and every prior release used. A `grep RELEASE_ ~/.gradle/
+  gradle.properties` (or just running the build) would have shown it. Fix: memory
+  `reference_peers_signing_creds_location`; applies `feedback_bisect_layer_before_theorizing`.
+- **[process] Review monitor self-matched on my OWN PR comment.** Moment: my Senti-review monitor
+  fired a "Senti review" event that was actually my own PR comment (it contained the word "Senti").
+  Wrong action: briefly read it as a verdict. Root cause: the filter matched any review/comment body
+  containing "Senti". Fix: watch REVIEWS only (all authored by the `senti-reviewer[bot]`), never issue
+  comments — the review verdict is the authoritative signal anyway.
+- **[process] Accidental ❤️ on the tester announce during the pin long-press.** Moment: `input swipe
+  X Y X Y 700` to long-press the announce on the Pixel; the gesture ended on the reaction bar's heart
+  that popped up mid-press. Wrong action: added a creator reaction I didn't intend (harmless). Root
+  cause: long-press-via-swipe can terminate on the anchored reaction bar. Mitigation: long-press lower
+  on the bubble / away from where the reaction bar spawns.
+- **[project] Re-hit the known `adb-input-url-autocap` (URL → `Https://`) on the tester announce, and
+  Peers has NO delete-for-everyone to fix it.** Wrong action: sent the announce link with the composer's
+  auto-capitalized scheme. Root cause: a KNOWN issue (already a recipe) not pre-empted — the colon
+  before the URL triggers sentence-autocaps. Functional (case-insensitive scheme + linkified) but ugly
+  and unretractable. Next time phrase the URL so it doesn't follow sentence-ending punctuation.
+
+### Skills / doc updates
+- android-skills: **[adb-wireless-debug-pair-vs-connect-port]** (pair-port ≠ connect-port; try `:5555`
+  first) — committed + pushed + indexed (INDEX + by-type + triggers).
+- PROJECT_KNOWLEDGE.md §10j — corrupt-verifier fail-closed, latch-on-confirmed-relay, no-delete-for-
+  everyone, SBOM hash-scanner-catches-signing-cert.
+- Memory: `reference_peers_signing_creds_location` (new), `reference_peers_releases` (v0.9.15 + gotchas),
+  `reference_senti_loop` (actor-conflation + two-writer race).
+- v0.9.15 shipped: GitHub + F-Droid 200 + peers.tech + apps.alisher.xyz + all 3 phones + announce/pinned.
