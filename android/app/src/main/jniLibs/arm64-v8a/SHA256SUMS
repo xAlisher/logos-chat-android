@@ -80,6 +80,18 @@
 # creator's id into a credential can no longer pass). The markers below separate
 # gated from ungated; only this hash separates the two gated builds.
 #
+# SIXTH ROUND — a deliberate, correctly-recorded bump (not a defect). peers#497:
+# GroupV2 attributes from the MLS-authenticated `sender_credential` (proto field 4)
+# instead of the sender-asserted `cm.sender` (field 2), closing a spoof where a
+# member could attribute a message to another identity. Kept as an ADDITIVE patch
+# on top of the monolith (native `patches/497-groupv2-authenticated-attribution.patch`).
+# Value-only: same 26 exported logoschat_* symbols, same log lines — the two builds
+# differ ONLY in which proto field GroupV2 reads, so no ABI or string signal tells
+# them apart; only this hash does. Following the round-3/4 lesson, all three edits
+# landed together: the artifact published upstream @8791276, `published=` + the
+# recorded hash moved here to 0ca5d637…, and docs/SBOM.md updated in the same PR.
+# Supersedes e879a3e0… (the pre-#497 #427 build) — do not restore it.
+#
 # LIMIT, stated plainly: the CI logic job is offline, so the gate proves the three
 # local facts agree, not that the remote still publishes that hash. Checking the
 # remote is a network step — `scripts/verify-native-provenance.sh` does exactly that
@@ -88,7 +100,7 @@
 # Format (parsed by the gate — keep it exact):
 #   # provenance: <file> <origin> published=<sha256>
 #
-# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@3c38687 published=e879a3e0d4af31d4d6d81b4c1a305f4747eebba008ab28976d7f818372e6916b
+# provenance: liblogoschat.so xAlisher/logos-libchat-mls-android@8791276 published=0ca5d637d1e6d505f5f37e7de4f2aaf4269aceb0a92e5b11b1b8ff5925ef54f9
 # @0b6c0ca adds the GHSA-xxgx-7757-3qq6 security hardening (KeyPackage<->device
 # binding on the group add path + #239 offline-contact-card signature gate);
 # 26 exported symbols (unchanged). Native branch security/ghsa-xxgx-keypackage-binding.
@@ -138,6 +150,6 @@
 # reproducibility and is not. Only a full clean rebuild answers the question.
 e69496a4aeb51ebe61d0775ae9fefc76eee640f12317aa5174da67e5d4ec8fd6  libc++_shared.so
 3890d4eabbd769555aa02bea4a231a855d162778cebf8c60ee0bebc7f8e23600  liblogoschat_bridge.so
-e879a3e0d4af31d4d6d81b4c1a305f4747eebba008ab28976d7f818372e6916b  liblogoschat.so
+0ca5d637d1e6d505f5f37e7de4f2aaf4269aceb0a92e5b11b1b8ff5925ef54f9  liblogoschat.so
 944e16299552d5a137081b44296d77aeeda3e662e642bef61a27821cf3f7b29f  liblogosdelivery.so
 766bd58a36f9233a4647bcba16f9192a6cb691a211950401b8e0d6c826478e45  librln.so
