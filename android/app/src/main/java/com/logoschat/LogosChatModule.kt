@@ -277,6 +277,40 @@ class LogosChatModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * #517 path 2: re-open a running node so the Private-mode delivery gate re-applies its
+   * routing (a running node is otherwise never re-routed by a Private-mode toggle). No-op
+   * when the node isn't open. Never rejects fatally — a re-route failure leaves delivery
+   * down (fail-closed), which the node status already reflects.
+   */
+  @ReactMethod
+  fun reopenNodeForRouting(promise: Promise) {
+    NodeRuntime.reopenForRouting { err ->
+      if (err == null) promise.resolve(null) else promise.reject("reopen_node", err)
+    }
+  }
+
+  /**
+   * Senti P1 on #525: mark Private mode INTENDED (or no longer intended) for the delivery
+   * side. Enqueued before the pause below, so the latch is up before anything can reopen.
+   */
+  @ReactMethod
+  fun setNodePrivateModePending(pending: Boolean) {
+    NodeRuntime.setPrivateModePending(pending)
+  }
+
+  /**
+   * Senti P1 on #525: pause a running node's delivery at Private-mode enable intent, so it
+   * stops egressing on the direct route while Tor bootstraps. The node stays open (BLE and
+   * the MLS engine keep working); reopenNodeForRouting brings delivery back.
+   */
+  @ReactMethod
+  fun pauseNodeForRouting(promise: Promise) {
+    NodeRuntime.pauseForRouting { err ->
+      if (err == null) promise.resolve(null) else promise.reject("pause_node", err)
+    }
+  }
+
+  /**
    * #247: pin a home-screen shortcut whose icon is the user's OWN identity
    * sigil (the same identicon as the in-app avatar + the launcher icon), opening
    * the app. The launcher-drawer icon can't be a runtime bitmap, but a pinned

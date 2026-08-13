@@ -13,6 +13,7 @@ import {paperTheme, colors} from './src/theme';
 import {Logo} from './src/components/Logo';
 import {RootNavigator} from './src/navigation/RootNavigator';
 import {LockScreen} from './src/screens/LockScreen';
+import {LockUnknownScreen} from './src/screens/LockUnknownScreen';
 import {useSettingsStore} from './src/stores/settingsStore';
 import {useSecurityStore} from './src/stores/securityStore';
 import {useNodeStore} from './src/stores/nodeStore';
@@ -85,6 +86,9 @@ function App() {
   const loaded = useSecurityStore(s => s.loaded);
   const hasPin = useSecurityStore(s => s.hasPin);
   const unlocked = useSecurityStore(s => s.unlocked);
+  // #516: a verifier READ error is an UNKNOWN lock state, not "no PIN" — fail closed to a
+  // retry screen (no PIN entry, no attempt burn, no wipe), independent of hasPin.
+  const loadError = useSecurityStore(s => s.loadError);
   const locked = hasPin && !unlocked;
 
   // #236: auto-lock when the app goes to the background. On leaving 'active' we
@@ -165,7 +169,10 @@ function App() {
           {/* The navigator stays mounted (node/listeners keep running); the lock is
               an opaque overlay on top of it until the correct PIN is entered. */}
           <RootNavigator />
-          {locked && <LockScreen />}
+          {/* #516: an unknown lock state (read error) shows the retry screen — NOT the
+              LockScreen, whose PIN pad would burn attempts against a verifier we couldn't
+              read and drop to the wipe offer. */}
+          {loadError ? <LockUnknownScreen /> : locked && <LockScreen />}
           {/* #232: cover the UI until the PIN verifiers are read, so the
               conversation list can never flash before the gate arms. */}
           {!loaded && (

@@ -69,6 +69,17 @@ object NodeRuntime {
   @Volatile var installationName: String? = null; private set
   private var setupDone = false
   @Volatile private var appContext: Context? = null
+  // Senti P1 on #525: Private mode is INTENDED but the (JS-driven) Tor bootstrap has not
+  // finished, so KV_MEDIA_OVER_TOR is still false. JS sets this at enable INTENT — before it
+  // awaits the bootstrap — so the whole bootstrap window counts as Private mode here instead
+  // of leaving a running node delivering over its direct route for the duration.
+  // Process-scoped by design (an intent does not survive process death), exactly like
+  // StorageModule.privateModePending on the media side.
+  @Volatile private var privateModePending = false
+  // Senti P1 on #525: was the currently-open ctx opened with a usable Tor relay? Set on the
+  // cold open (the only place routing is applied) and cleared on teardown. The resume path
+  // needs it because resuming does NOT re-apply routing.
+  @Volatile private var openedOverRelay = false
 
   val executor = Executors.newSingleThreadExecutor { r ->
     Thread(r, "logoschat-node").apply { isDaemon = true }
@@ -226,9 +237,16 @@ object NodeRuntime {
   /**
    * #219: if a self-hosted delivery node is configured (KV), export its multiaddr as
    * the static filter + lightpush service peer so the Edge client uses it instead of
-   * the public fleet. No-op when unset. Best-effort — never blocks node start.
+   * the public fleet. No-op when unset. Never blocks node start outside Private mode.
+   *
+   * Senti P1 follow-up on #525 (sibling site): returns whether the routing was actually
+   * APPLIED. The whole body used to be swallowed as "non-fatal", which is only true outside
+   * Private mode — a fault here after [startBlocking]'s gate has already passed leaves
+   * `LOGOS_DELIVERY_SERVICE_NODE` unexported, so the delivery client silently falls back to
+   * the baked-in fleet (the DIRECT route) and the open publishes anyway. The caller fails
+   * closed on `false` while Private mode is armed. See [TorRelayGate.mayOpenWithoutRouting].
    */
-  private fun applyDeliveryPeerEnv() {
+  private fun applyDeliveryPeerEnv(): Boolean {
     try {
       val db = ChatRepo.requireDb()
       // #319: Private mode routes delivery through the local Tor relay — its loopback
@@ -242,27 +260,62 @@ object NodeRuntime {
       val relayAddr = db.kvGet(KV_DELIVERY_RELAY_NODE)
       val direct = db.kvGet(KV_DELIVERY_SERVICE_NODE)
       val viaRelay = TorRelayGate.relayUsable(TorState.deliveryRelayLive, relayAddr)
-      val node = TorRelayGate.deliveryNode(TorState.deliveryRelayLive, relayAddr, direct)
-      if (node != null) {
-        Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", node, true)
-        // #360: the node multiaddr (host/IP + peerId) is network-metadata — only log it
-        // in DEBUG; in release just note that a custom/relay node is in use.
-        if (BuildConfig.DEBUG)
-            Log.i(TAG, "delivery service node: '${node}'${if (viaRelay) " (Tor relay)" else ""}")
-        else Log.i(TAG, "delivery service node set${if (viaRelay) " (Tor relay)" else ""}")
+      // Senti P1 on #525: remember HOW this ctx was opened. A later resume cannot change
+      // it (routing is only read here, on a cold open), so the resume gate needs to know.
+      openedOverRelay = viaRelay
+      // Senti P1 (4th follow-up) on #525: the env is process-wide and this runs again on every
+      // same-process reopen, so "no override" must UNSET it, not skip the write. Leaving the
+      // previous open's relay loopback address behind would point the fresh delivery client at
+      // the relay disableTor() just stopped. Exhaustive `when` so the clear arm cannot be
+      // dropped again. See [TorRelayGate.DeliveryEnv].
+      when (val env = TorRelayGate.deliveryEnv(TorState.deliveryRelayLive, relayAddr, direct)) {
+        is TorRelayGate.DeliveryEnv.Set -> {
+          Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", env.node, true)
+          // #360: the node multiaddr (host/IP + peerId) is network-metadata — only log it
+          // in DEBUG; in release just note that a custom/relay node is in use.
+          if (BuildConfig.DEBUG)
+              Log.i(TAG, "delivery service node: '${env.node}'${if (viaRelay) " (Tor relay)" else ""}")
+          else Log.i(TAG, "delivery service node set${if (viaRelay) " (Tor relay)" else ""}")
+        }
+        TorRelayGate.DeliveryEnv.Clear -> {
+          Os.unsetenv("LOGOS_DELIVERY_SERVICE_NODE")
+          Log.i(TAG, "delivery service node cleared (built-in fleet)")
+        }
       }
+      return true
     } catch (t: Throwable) {
-      Log.w(TAG, "applyDeliveryPeerEnv failed (non-fatal): ${t.message}")
+      // A throw anywhere above (either kvGet, or Os.setenv) means the delivery route this
+      // open will actually use is NOT the one we decided on. `openedOverRelay` may already
+      // have been set from a decision we then failed to apply, so retract it too — the
+      // resume gate must not believe this ctx came up over the relay.
+      openedOverRelay = false
+      Log.w(TAG, "applyDeliveryPeerEnv failed: ${t.message}")
+      return false
     }
   }
 
-  /** #GHSA-jj3m: was Private mode (Tor) opted into? Persisted by settingsStore. */
-  private fun privateModeEnabled(): Boolean =
-      try {
-        ChatRepo.requireDb().kvGet(KV_MEDIA_OVER_TOR) == "true"
-      } catch (t: Throwable) {
-        false // DB not ready → treat as not-private; the caller only gates when true
-      }
+  /**
+   * #GHSA-jj3m: was Private mode (Tor) opted into? Persisted by settingsStore.
+   *
+   * Senti P1 follow-up on #525: fails CLOSED. A read fault is UNKNOWN, not "not private" —
+   * once `enableTor` confirms the KV write it drops the in-memory intent latch and this read
+   * becomes the only thing holding delivery, so answering a fault with `false` reopened the
+   * node on the direct route while the UI showed Private mode on. See
+   * [TorRelayGate.privateModeFromRead] for the full argument.
+   */
+  private fun privateModeEnabled(): Boolean {
+    var faulted = false
+    val value =
+        try {
+          ChatRepo.requireDb().kvGet(KV_MEDIA_OVER_TOR)
+        } catch (t: Throwable) {
+          faulted = true
+          // #360: no value, no key — just that the gate could not be read.
+          Log.w(TAG, "private-mode gate unreadable (${t.message}); treating it as armed")
+          null
+        }
+    return TorRelayGate.privateModeFromRead(value, faulted)
+  }
 
   /**
    * #GHSA-jj3m: is a LIVE, current-process Tor delivery relay available? Requires
@@ -284,15 +337,21 @@ object NodeRuntime {
       }
 
   /**
-   * #GHSA-jj3m: block until the Tor relay multiaddr appears, up to [timeoutMs].
-   * Returns true if the relay is ready (safe to publish over Tor), false on timeout
-   * (caller must fail closed and NOT open — publishing now would leak the real IP).
+   * #GHSA-jj3m: block until it is safe to publish, up to [timeoutMs]. Returns true when
+   * the relay is ready (safe to publish over Tor) OR the gate stopped applying at all
+   * (Senti P1 on #525: the user cancelled/disabled Private mode while we waited — no
+   * reason to stall the node executor for the rest of the timeout). False on timeout: the
+   * caller must fail closed and NOT open, since publishing now would leak the real IP.
    * Runs on the node executor, so a bounded sleep-poll is acceptable.
    */
   private fun awaitTorRelay(timeoutMs: Long): Boolean {
     val deadline = System.nanoTime() + timeoutMs * 1_000_000L
     while (System.nanoTime() < deadline) {
       if (torRelayReady()) return true
+      if (!TorRelayGate.mustWaitForTor(
+          privateModeEnabled(), TorState.deliveryRelayLive, relayMultiaddr(), privateModePending)) {
+        return true
+      }
       try {
         Thread.sleep(500)
       } catch (ie: InterruptedException) {
@@ -305,6 +364,16 @@ object NodeRuntime {
 
   private fun startBlocking(): String? {
     if (ctx != 0L) {
+      // Senti P1 on #525: refuse to resume a node that is open on the DIRECT route while
+      // Private mode is armed (on, or intended and still bootstrapping). Resuming only
+      // flips delivery back on for the ctx we already have — it never re-applies routing —
+      // so it would put delivery straight back on the route the user just opted out of.
+      // Fail closed; reopenForRouting (teardown + cold open) is what brings delivery back.
+      if (!TorRelayGate.mayResumeDelivery(privateModeEnabled(), privateModePending, openedOverRelay)) {
+        val why = "Private mode: waiting for Tor before resuming delivery"
+        setStatus("initializing", why)
+        return why
+      }
       // #237: the node is already open — "Logos on" is a RESUME of paused Waku
       // delivery (the node/MLS engine was kept alive so BLE could still work).
       val rc = NodeBridge.chatSetDeliveryActive(ctx, true)
@@ -325,17 +394,30 @@ object NodeRuntime {
     // mode is on and the relay isn't ready, wait for it; if it never arrives, do
     // NOT open — return so the node stays down (no direct publish) and the next
     // start retries once Tor is up. When Private mode is off, this is a no-op.
-    if (privateModeEnabled() && !torRelayReady()) {
+    // Senti P1 on #525: `privateModePending` joins the gate so the bootstrap window — where
+    // the user has enabled Private mode but the KV has not flipped yet — is covered too.
+    if (TorRelayGate.mustWaitForTor(
+        privateModeEnabled(), TorState.deliveryRelayLive, relayMultiaddr(), privateModePending)) {
       setStatus("initializing", "Private mode: waiting for Tor before connecting")
       if (!awaitTorRelay(PRIVATE_MODE_TOR_WAIT_MS)) {
         setStatus("error", "Private mode: waiting for Tor — not publishing over a direct connection")
         return "waiting for Tor"
       }
     }
+    openedOverRelay = false // set by applyDeliveryPeerEnv below; never inherit a stale value
     // #219: pin the delivery client to our self-hosted node if configured. Set the
     // env vars the Rust delivery layer reads BEFORE opening the node (the node thread
     // inherits this process's env). Empty/unset KV → no-op → default fleet behaviour.
-    applyDeliveryPeerEnv()
+    //
+    // Senti P1 follow-up on #525 (sibling site): "default fleet behaviour" IS the direct
+    // route, so a swallowed fault here is only harmless outside Private mode. The gate above
+    // has already passed by this point, so nothing else would stop the publish.
+    if (!applyDeliveryPeerEnv() &&
+        !TorRelayGate.mayOpenWithoutRouting(privateModeEnabled(), privateModePending)) {
+      val why = "Private mode: could not apply Tor delivery routing — not connecting"
+      setStatus("error", why)
+      return why
+    }
     if (!setupDone) {
       // #360: in release, cap the Rust lib's log level so info-level lines (which can
       // carry message content / addresses) don't reach logcat. overwrite=false respects
@@ -384,6 +466,7 @@ object NodeRuntime {
     ctx = 0L
     address = null
     installationName = null
+    openedOverRelay = false // #525: no ctx, no routing to remember
     setStatus("stopped")
   }
 
@@ -426,6 +509,62 @@ object NodeRuntime {
   fun start(onDone: (String?) -> Unit) {
     executor.execute {
       try {
+        onDone(startBlocking())
+      } catch (t: Throwable) {
+        setStatus("error", t.message)
+        onDone(t.message ?: t.toString())
+      }
+    }
+  }
+
+  /**
+   * #517 path 2: re-open the node so the Private-mode delivery gate in [startBlocking]
+   * re-applies. Toggling Private mode on an ALREADY-RUNNING node otherwise never re-routes
+   * ongoing delivery egress — startBlocking's resume branch (`ctx != 0`) returns before the
+   * gate, so only a cold open applies the routing. A full teardown + cold reopen is the only
+   * path that runs the gate; the identity/address are unchanged (same seed on disk), and if
+   * Private mode is on but Tor isn't ready the reopen fails CLOSED (delivery down, not direct).
+   * No-op when the node isn't open — the next open applies the gate itself.
+   */
+  /**
+   * Senti P1 on #525: JS marks Private mode as INTENDED the moment the user enables it —
+   * before it awaits the Tor bootstrap and long before [KV_MEDIA_OVER_TOR] flips at 100%.
+   * While pending, the routing gates above treat the app as being in Private mode, so
+   * nothing can (re)open delivery on the direct route during the bootstrap window.
+   * Cleared by JS on success (the relay is up and the reopen re-applies routing), on
+   * bootstrap failure, and on cancel. Mirrors StorageModule.setPrivateModePending.
+   */
+  fun setPrivateModePending(pending: Boolean) {
+    privateModePending = pending
+  }
+
+  /**
+   * Senti P1 on #525: PAUSE delivery at Private-mode enable INTENT. Without this, a node
+   * that is already running keeps its filter/lightpush egress on the direct route for the
+   * entire Tor bootstrap (tens of seconds), because the only re-route — [reopenForRouting]
+   * — is queued after the bootstrap AND after relay setup. The media latch closed this
+   * window for StorageModule; it never gated delivery.
+   *
+   * Keeps the ctx (and therefore the MLS engine + BLE messaging) alive, exactly like the
+   * "Logos off" toggle. No-op when the node isn't open.
+   */
+  fun pauseForRouting(onDone: (String?) -> Unit) {
+    executor.execute {
+      try {
+        pauseBlocking()
+        onDone(null)
+      } catch (t: Throwable) {
+        setStatus("error", t.message)
+        onDone(t.message ?: t.toString())
+      }
+    }
+  }
+
+  fun reopenForRouting(onDone: (String?) -> Unit) {
+    executor.execute {
+      try {
+        if (ctx == 0L) { onDone(null); return@execute } // not open → nothing to re-route
+        stopBlocking()
         onDone(startBlocking())
       } catch (t: Throwable) {
         setStatus("error", t.message)

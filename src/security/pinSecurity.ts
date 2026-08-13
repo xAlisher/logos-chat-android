@@ -300,6 +300,90 @@ export function serializeVerifier(v: PinVerifier): string {
   return JSON.stringify(v);
 }
 
+// -- reading the persisted lock state (#516 follow-up, Senti P1 on #525) ------
+//
+// parseVerifier returns null for BOTH "the slot is empty" and "the slot holds
+// bytes we cannot parse". Those mean opposite things for the gate: empty is the
+// legitimate no-PIN state (open the app), unparseable means a PIN may well be
+// set and we simply cannot read it (an UNKNOWN lock state). Collapsing them let
+// a truncated/corrupt pinVerifier open the app PIN-less — the exact fail-OPEN
+// #516 set out to close. Everything below keeps the two apart.
+
+/** What a persisted verifier slot actually contained. */
+export type VerifierReadState =
+  | 'absent' // empty/unset — no PIN was ever stored (legitimately open)
+  | 'valid' // parsed into a usable verifier
+  | 'corrupt'; // NON-EMPTY but unparseable/invalid — the lock state is UNKNOWN
+
+export interface VerifierRead {
+  verifier: PinVerifier | null;
+  state: VerifierReadState;
+}
+
+/**
+ * Read a persisted verifier while KEEPING the absent/corrupt distinction that
+ * [parseVerifier] collapses. A non-empty value that does not parse (truncated
+ * write, tampering, a partially-restored backup) is 'corrupt', never 'absent'.
+ */
+export function readVerifier(raw: string | null | undefined): VerifierRead {
+  if (raw == null || raw.length === 0) return {verifier: null, state: 'absent'};
+  const parsed = parseVerifier(raw);
+  return parsed != null
+    ? {verifier: parsed, state: 'valid'}
+    : {verifier: null, state: 'corrupt'};
+}
+
+/** The raw reads securityStore.load() hands the decision below. */
+export interface LockLoadInputs {
+  /** Raw KV value for the main verifier; ignored when `mainThrew`. */
+  mainRaw: string | null | undefined;
+  /** Raw KV value for the duress verifier; ignored when `duressThrew`. */
+  duressRaw: string | null | undefined;
+  /** The main getSetting call THREW — a storage fault, not an answer. */
+  mainThrew: boolean;
+  /** The duress getSetting call THREW. */
+  duressThrew: boolean;
+}
+
+/** The gate state securityStore.load() commits to the store. */
+export interface LockLoadState {
+  mainVerifier: PinVerifier | null;
+  duressVerifier: PinVerifier | null;
+  hasPin: boolean;
+  hasDuressPin: boolean;
+  /** The lock state is UNKNOWN — App.tsx shows the retry screen, not the PIN pad. */
+  loadError: boolean;
+  unlocked: boolean;
+}
+
+/**
+ * #516: decide the initial lock state from what storage gave us. Fails CLOSED on
+ * anything that is not a clean answer — a read that threw OR a slot holding
+ * unreadable bytes. Only a clean, genuinely EMPTY main slot opens the app.
+ *
+ * A corrupt DURESS slot counts too: silently treating it as "no duress PIN" would
+ * disarm the wipe PIN without telling anyone.
+ */
+export function resolveLockLoad(inputs: LockLoadInputs): LockLoadState {
+  const main = inputs.mainThrew
+    ? ({verifier: null, state: 'corrupt'} as VerifierRead)
+    : readVerifier(inputs.mainRaw);
+  const duress = inputs.duressThrew
+    ? ({verifier: null, state: 'corrupt'} as VerifierRead)
+    : readVerifier(inputs.duressRaw);
+  const loadError = main.state === 'corrupt' || duress.state === 'corrupt';
+  return {
+    mainVerifier: main.verifier,
+    duressVerifier: duress.verifier,
+    hasPin: main.verifier != null,
+    hasDuressPin: duress.verifier != null,
+    loadError,
+    // Unknown state is NOT "unlocked". Otherwise: a PIN means a cold launch is
+    // locked, a clean empty slot means there is no gate to show.
+    unlocked: loadError ? false : main.verifier == null,
+  };
+}
+
 // -- restart lock-screen state machine --------------------------------------
 
 /** What entering a PIN at the restart gate resolves to. */
