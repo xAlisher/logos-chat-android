@@ -69,5 +69,6 @@ module.exports = {
     '<rootDir>/__tests__/storageOffMedia.test.ts',
     '<rootDir>/__tests__/videoCancel.test.ts',
     '<rootDir>/__tests__/gradleToolchain.test.ts',
+    '<rootDir>/__tests__/privateModeDelivery.test.ts',
   ],
 };

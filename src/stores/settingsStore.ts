@@ -369,6 +369,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // requests during the Tor-bootstrap window fail closed instead of egressing directly.
     // setTorRouting(true) below clears it once routing is live; cancel/disable clear it too.
     Storage.setPrivateModePending(true);
+    // Senti P1 on #525: DELIVERY needs the same intent latch, and an active stop. The media
+    // latch above only gates StorageModule; a node that is already running keeps its
+    // filter/lightpush egress on the direct route for the whole bootstrap below, because the
+    // only re-route (reopenNodeForRouting) is queued after Tor hits 100% AND after relay
+    // setup. So: latch first (nothing may reopen delivery direct while pending), then pause
+    // the running node's delivery NOW, before we await anything.
+    LogosChat.setNodePrivateModePending(true);
+    // Deliberately NOT awaited: the pause runs on the node executor, which a cold start may
+    // already be occupying with its own bounded wait-for-Tor. Awaiting it there would stall
+    // this function before Tor.start() and deadlock the very bootstrap it waits for. The
+    // latch — already set, synchronously ordered ahead of this call — is what holds the
+    // guarantee; the pause is the active teardown of an egress that is live right now.
+    LogosChat.pauseNodeForRouting().catch(() => {});
     torCancelled = false;
     torUnsub?.();
     try {
@@ -415,6 +428,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // #517 path 2: apply the new Tor delivery routing to an ALREADY-RUNNING node — a
       // Private-mode toggle otherwise only takes effect on the next node start, leaving a
       // running node's delivery egress direct. No-op if the node isn't up.
+      // #525: release the intent latch first — KV_MEDIA_OVER_TOR is now 'true', so Private
+      // mode itself keeps the gate armed from here on. If the relay setup above failed, that
+      // gate makes this reopen fail CLOSED (delivery down) rather than come back direct.
+      LogosChat.setNodePrivateModePending(false);
       LogosChat.reopenNodeForRouting().catch(() => {});
     } catch {
       // start/bootstrap failed — leave the toggle off and tear the daemon down.
@@ -425,6 +442,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
       Storage.setPrivateModePending(false); // #517: bootstrap failed → release the media gate
+      // #525: Private mode never came up and the toggle is back off, so RESTORE the delivery
+      // we paused at intent — the same call the media latch above makes. KV_MEDIA_OVER_TOR
+      // was never written 'true' on this path, so the reopen comes back on the direct route,
+      // i.e. exactly the state the user was in before they tried.
+      LogosChat.setNodePrivateModePending(false);
+      LogosChat.reopenNodeForRouting().catch(() => {});
     } finally {
       torUnsub?.();
       torUnsub = null;
@@ -457,6 +480,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // best-effort
     }
     // #517 path 2: re-route the running node back to direct delivery now, not just next start.
+    // #525: drop the delivery intent latch too — Private mode is off, so leaving it armed
+    // would make the reopen below fail closed and strand delivery down.
+    LogosChat.setNodePrivateModePending(false);
     LogosChat.reopenNodeForRouting().catch(() => {});
   },
 
@@ -465,6 +491,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // stay off. Don't touch the persisted pref (it was never turned on).
     torCancelled = true;
     Storage.setPrivateModePending(false); // #517: cancelled before Tor came up → release the gate
+    // #525: the user explicitly abandoned Private mode → release the delivery latch and
+    // restore the delivery we paused at intent. Private mode was never persisted, so the
+    // reopen comes back direct: the state they cancelled back to.
+    LogosChat.setNodePrivateModePending(false);
+    LogosChat.reopenNodeForRouting().catch(() => {});
     torUnsub?.();
     torUnsub = null;
     try {

@@ -69,6 +69,17 @@ object NodeRuntime {
   @Volatile var installationName: String? = null; private set
   private var setupDone = false
   @Volatile private var appContext: Context? = null
+  // Senti P1 on #525: Private mode is INTENDED but the (JS-driven) Tor bootstrap has not
+  // finished, so KV_MEDIA_OVER_TOR is still false. JS sets this at enable INTENT — before it
+  // awaits the bootstrap — so the whole bootstrap window counts as Private mode here instead
+  // of leaving a running node delivering over its direct route for the duration.
+  // Process-scoped by design (an intent does not survive process death), exactly like
+  // StorageModule.privateModePending on the media side.
+  @Volatile private var privateModePending = false
+  // Senti P1 on #525: was the currently-open ctx opened with a usable Tor relay? Set on the
+  // cold open (the only place routing is applied) and cleared on teardown. The resume path
+  // needs it because resuming does NOT re-apply routing.
+  @Volatile private var openedOverRelay = false
 
   val executor = Executors.newSingleThreadExecutor { r ->
     Thread(r, "logoschat-node").apply { isDaemon = true }
@@ -242,6 +253,9 @@ object NodeRuntime {
       val relayAddr = db.kvGet(KV_DELIVERY_RELAY_NODE)
       val direct = db.kvGet(KV_DELIVERY_SERVICE_NODE)
       val viaRelay = TorRelayGate.relayUsable(TorState.deliveryRelayLive, relayAddr)
+      // Senti P1 on #525: remember HOW this ctx was opened. A later resume cannot change
+      // it (routing is only read here, on a cold open), so the resume gate needs to know.
+      openedOverRelay = viaRelay
       val node = TorRelayGate.deliveryNode(TorState.deliveryRelayLive, relayAddr, direct)
       if (node != null) {
         Os.setenv("LOGOS_DELIVERY_SERVICE_NODE", node, true)
@@ -284,15 +298,21 @@ object NodeRuntime {
       }
 
   /**
-   * #GHSA-jj3m: block until the Tor relay multiaddr appears, up to [timeoutMs].
-   * Returns true if the relay is ready (safe to publish over Tor), false on timeout
-   * (caller must fail closed and NOT open — publishing now would leak the real IP).
+   * #GHSA-jj3m: block until it is safe to publish, up to [timeoutMs]. Returns true when
+   * the relay is ready (safe to publish over Tor) OR the gate stopped applying at all
+   * (Senti P1 on #525: the user cancelled/disabled Private mode while we waited — no
+   * reason to stall the node executor for the rest of the timeout). False on timeout: the
+   * caller must fail closed and NOT open, since publishing now would leak the real IP.
    * Runs on the node executor, so a bounded sleep-poll is acceptable.
    */
   private fun awaitTorRelay(timeoutMs: Long): Boolean {
     val deadline = System.nanoTime() + timeoutMs * 1_000_000L
     while (System.nanoTime() < deadline) {
       if (torRelayReady()) return true
+      if (!TorRelayGate.mustWaitForTor(
+          privateModeEnabled(), TorState.deliveryRelayLive, relayMultiaddr(), privateModePending)) {
+        return true
+      }
       try {
         Thread.sleep(500)
       } catch (ie: InterruptedException) {
@@ -305,6 +325,16 @@ object NodeRuntime {
 
   private fun startBlocking(): String? {
     if (ctx != 0L) {
+      // Senti P1 on #525: refuse to resume a node that is open on the DIRECT route while
+      // Private mode is armed (on, or intended and still bootstrapping). Resuming only
+      // flips delivery back on for the ctx we already have — it never re-applies routing —
+      // so it would put delivery straight back on the route the user just opted out of.
+      // Fail closed; reopenForRouting (teardown + cold open) is what brings delivery back.
+      if (!TorRelayGate.mayResumeDelivery(privateModeEnabled(), privateModePending, openedOverRelay)) {
+        val why = "Private mode: waiting for Tor before resuming delivery"
+        setStatus("initializing", why)
+        return why
+      }
       // #237: the node is already open — "Logos on" is a RESUME of paused Waku
       // delivery (the node/MLS engine was kept alive so BLE could still work).
       val rc = NodeBridge.chatSetDeliveryActive(ctx, true)
@@ -325,13 +355,17 @@ object NodeRuntime {
     // mode is on and the relay isn't ready, wait for it; if it never arrives, do
     // NOT open — return so the node stays down (no direct publish) and the next
     // start retries once Tor is up. When Private mode is off, this is a no-op.
-    if (privateModeEnabled() && !torRelayReady()) {
+    // Senti P1 on #525: `privateModePending` joins the gate so the bootstrap window — where
+    // the user has enabled Private mode but the KV has not flipped yet — is covered too.
+    if (TorRelayGate.mustWaitForTor(
+        privateModeEnabled(), TorState.deliveryRelayLive, relayMultiaddr(), privateModePending)) {
       setStatus("initializing", "Private mode: waiting for Tor before connecting")
       if (!awaitTorRelay(PRIVATE_MODE_TOR_WAIT_MS)) {
         setStatus("error", "Private mode: waiting for Tor — not publishing over a direct connection")
         return "waiting for Tor"
       }
     }
+    openedOverRelay = false // set by applyDeliveryPeerEnv below; never inherit a stale value
     // #219: pin the delivery client to our self-hosted node if configured. Set the
     // env vars the Rust delivery layer reads BEFORE opening the node (the node thread
     // inherits this process's env). Empty/unset KV → no-op → default fleet behaviour.
@@ -384,6 +418,7 @@ object NodeRuntime {
     ctx = 0L
     address = null
     installationName = null
+    openedOverRelay = false // #525: no ctx, no routing to remember
     setStatus("stopped")
   }
 
@@ -443,6 +478,40 @@ object NodeRuntime {
    * Private mode is on but Tor isn't ready the reopen fails CLOSED (delivery down, not direct).
    * No-op when the node isn't open — the next open applies the gate itself.
    */
+  /**
+   * Senti P1 on #525: JS marks Private mode as INTENDED the moment the user enables it —
+   * before it awaits the Tor bootstrap and long before [KV_MEDIA_OVER_TOR] flips at 100%.
+   * While pending, the routing gates above treat the app as being in Private mode, so
+   * nothing can (re)open delivery on the direct route during the bootstrap window.
+   * Cleared by JS on success (the relay is up and the reopen re-applies routing), on
+   * bootstrap failure, and on cancel. Mirrors StorageModule.setPrivateModePending.
+   */
+  fun setPrivateModePending(pending: Boolean) {
+    privateModePending = pending
+  }
+
+  /**
+   * Senti P1 on #525: PAUSE delivery at Private-mode enable INTENT. Without this, a node
+   * that is already running keeps its filter/lightpush egress on the direct route for the
+   * entire Tor bootstrap (tens of seconds), because the only re-route — [reopenForRouting]
+   * — is queued after the bootstrap AND after relay setup. The media latch closed this
+   * window for StorageModule; it never gated delivery.
+   *
+   * Keeps the ctx (and therefore the MLS engine + BLE messaging) alive, exactly like the
+   * "Logos off" toggle. No-op when the node isn't open.
+   */
+  fun pauseForRouting(onDone: (String?) -> Unit) {
+    executor.execute {
+      try {
+        pauseBlocking()
+        onDone(null)
+      } catch (t: Throwable) {
+        setStatus("error", t.message)
+        onDone(t.message ?: t.toString())
+      }
+    }
+  }
+
   fun reopenForRouting(onDone: (String?) -> Unit) {
     executor.execute {
       try {

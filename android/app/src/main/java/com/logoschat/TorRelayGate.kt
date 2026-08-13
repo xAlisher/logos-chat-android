@@ -31,12 +31,44 @@ object TorRelayGate {
       relayLive && !relayMultiaddr.isNullOrEmpty()
 
   /**
-   * Must the cold open block before publishing this device's bundle? Only in Private
-   * mode, and only until a relay is usable — publishing over a direct connection
+   * Senti P1 on #525: is Private mode ARMED — either already persisted (`mediaOverTor`)
+   * or merely INTENDED and still bootstrapping? The KV only flips at 100% bootstrap, so
+   * for the whole (tens-of-seconds) bootstrap window `privateMode` is still false while
+   * the user has plainly asked for Private mode. Every routing decision must treat that
+   * window as Private mode, or delivery keeps egressing directly right through it.
+   * Mirrors StorageModule's `privateModePending` on the media side.
+   */
+  fun privateModeArmed(privateMode: Boolean, privateModePending: Boolean): Boolean =
+      privateMode || privateModePending
+
+  /**
+   * Must the cold open block before publishing this device's bundle? Only when Private
+   * mode is armed, and only until a relay is usable — publishing over a direct connection
    * would join the real IP to a stable identity. No-op when Private mode is off.
    */
-  fun mustWaitForTor(privateMode: Boolean, relayLive: Boolean, relayMultiaddr: String?): Boolean =
-      privateMode && !relayUsable(relayLive, relayMultiaddr)
+  fun mustWaitForTor(
+      privateMode: Boolean,
+      relayLive: Boolean,
+      relayMultiaddr: String?,
+      privateModePending: Boolean = false,
+  ): Boolean =
+      privateModeArmed(privateMode, privateModePending) && !relayUsable(relayLive, relayMultiaddr)
+
+  /**
+   * Senti P1 on #525: may a PAUSED node simply RESUME delivery? A resume flips Waku
+   * delivery back on for the ctx that is already open — it does NOT re-apply routing
+   * (only a cold open reads the delivery env). So a node opened on the direct route must
+   * never resume while Private mode is armed: it would come back on that same direct
+   * route. Fail closed and let the reopen path (teardown + cold open) bring it back.
+   *
+   * A node that WAS opened over the relay resumes freely — that is the ordinary
+   * "Logos off / Logos on" toggle, and it is already routed through Tor.
+   */
+  fun mayResumeDelivery(
+      privateMode: Boolean,
+      privateModePending: Boolean,
+      openedOverRelay: Boolean,
+  ): Boolean = !privateModeArmed(privateMode, privateModePending) || openedOverRelay
 
   /**
    * Which multiaddr `LOGOS_DELIVERY_SERVICE_NODE` should carry: the Tor relay when it

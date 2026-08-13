@@ -130,4 +130,91 @@ class TorRelayGateTest {
     assertNull(TorRelayGate.deliveryNode(relayLive = true, relayMultiaddr = "", directNode = ""))
     assertNull(TorRelayGate.deliveryNode(relayLive = false, relayMultiaddr = null, directNode = null))
   }
+
+  // -- the enable-intent window (Senti P1 on #525) -----------------------------
+  //
+  // THE REGRESSION: `mediaOverTor` only flips at 100% bootstrap, so for the whole
+  // (tens-of-seconds) Tor bootstrap `privateMode` reads FALSE while the user has plainly
+  // asked for Private mode. Every gate keyed on `privateMode` alone therefore let an
+  // already-running node keep delivering on its direct route for that entire window — the
+  // one re-route (reopenForRouting) is queued only after bootstrap AND relay setup. The
+  // media side had a `privateModePending` latch for exactly this; delivery had none.
+
+  @Test
+  fun theBootstrapWindowCountsAsPrivateMode() {
+    // THE ORACLE: enable intent registered, KV not flipped yet, no relay. The gate must
+    // hold. Against the pre-#525 signature (privateMode alone) this is `false` — the
+    // window where delivery kept egressing directly.
+    assertTrue(
+        "an enabled-but-still-bootstrapping Private mode must gate delivery",
+        TorRelayGate.mustWaitForTor(
+            privateMode = false, relayLive = false, relayMultiaddr = null, privateModePending = true))
+    assertTrue(TorRelayGate.privateModeArmed(privateMode = false, privateModePending = true))
+  }
+
+  @Test
+  fun theIntentLatchReleasesOnceTheRelayIsActuallyUp() {
+    // Pending is not a permanent lock — the moment a live relay exists the gate opens, so
+    // enableTor's reopen re-routes rather than waiting out a timeout.
+    assertFalse(
+        TorRelayGate.mustWaitForTor(
+            privateMode = false, relayLive = true, relayMultiaddr = RELAY, privateModePending = true))
+  }
+
+  @Test
+  fun clearingTheIntentLatchRestoresTheOffBehaviour() {
+    // Bootstrap failure and user-cancel both clear the latch; with Private mode never
+    // persisted, delivery must be free to come back (direct) rather than stay stranded.
+    assertFalse(
+        "a cleared latch with Private mode off must not gate anything",
+        TorRelayGate.mustWaitForTor(
+            privateMode = false, relayLive = false, relayMultiaddr = null, privateModePending = false))
+  }
+
+  @Test
+  fun aPendingLatchDoesNotWeakenThePersistedGate() {
+    // The latch only ever ADDS coverage — Private mode on with no relay still waits.
+    for (pending in listOf(true, false)) {
+      assertTrue(
+          "privateMode=true must gate regardless of the latch (pending=$pending)",
+          TorRelayGate.mustWaitForTor(
+              privateMode = true, relayLive = false, relayMultiaddr = RELAY, privateModePending = pending))
+    }
+  }
+
+  // -- mayResumeDelivery (resume does NOT re-apply routing) -------------------
+
+  @Test
+  fun aDirectlyOpenedNodeMayNotResumeDeliveryDuringTheEnableWindow() {
+    // THE ORACLE: pausing at intent is worthless if anything can resume it. A resume only
+    // flips delivery back on for the ctx we already hold — it never re-reads the delivery
+    // env — so resuming a directly-opened node puts egress right back on the route the
+    // user opted out of.
+    assertFalse(
+        TorRelayGate.mayResumeDelivery(
+            privateMode = false, privateModePending = true, openedOverRelay = false))
+    assertFalse(
+        "the same holds once Private mode is persisted",
+        TorRelayGate.mayResumeDelivery(
+            privateMode = true, privateModePending = false, openedOverRelay = false))
+  }
+
+  @Test
+  fun aRelayOpenedNodeResumesFreelyInPrivateMode() {
+    // The ordinary "Logos off / Logos on" toggle under Private mode must keep working —
+    // that node is already routed through the relay, so a resume is safe.
+    assertTrue(
+        TorRelayGate.mayResumeDelivery(
+            privateMode = true, privateModePending = false, openedOverRelay = true))
+  }
+
+  @Test
+  fun resumeIsUngatedOutsidePrivateMode() {
+    for (relay in listOf(true, false)) {
+      assertTrue(
+          "no Private mode, no resume gate (openedOverRelay=$relay)",
+          TorRelayGate.mayResumeDelivery(
+              privateMode = false, privateModePending = false, openedOverRelay = relay))
+    }
+  }
 }

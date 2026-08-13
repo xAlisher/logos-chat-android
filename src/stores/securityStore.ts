@@ -9,7 +9,7 @@ import {useChatStore} from './chatStore'; // #328: clear in-memory chat state on
 import {useAvatarStore} from './avatarStore'; // #441: clear in-memory avatars on wipe
 import {
   makeVerifier,
-  parseVerifier,
+  resolveLockLoad,
   serializeVerifier,
   verifyPin,
   isValidPin,
@@ -106,36 +106,29 @@ export const useSecurityStore = create<SecurityState>((set, get) => ({
   duressVerifier: null,
 
   load: async () => {
-    let main: PinVerifier | null = null;
-    let duress: PinVerifier | null = null;
-    let readError = false;
+    let mainRaw: string | null = null;
+    let duressRaw: string | null = null;
+    let mainThrew = false;
+    let duressThrew = false;
     try {
-      // parseVerifier returns null on an EMPTY/malformed value (a legitimate "no PIN"); only a
-      // getSetting THROW reaches this catch — a storage read fault, i.e. UNKNOWN lock state.
-      main = parseVerifier(await LogosChat.getSetting(KV_PIN_VERIFIER));
+      mainRaw = await LogosChat.getSetting(KV_PIN_VERIFIER);
     } catch {
       // #516: a read error is NOT "no PIN". Fail closed.
-      readError = true;
+      mainThrew = true;
     }
     try {
-      duress = parseVerifier(await LogosChat.getSetting(KV_DURESS_VERIFIER));
+      duressRaw = await LogosChat.getSetting(KV_DURESS_VERIFIER);
     } catch {
       // #516: a duress read error must not silently DISARM the duress PIN either — treat the
       // whole lock state as unknown until a clean read succeeds.
-      readError = true;
+      duressThrew = true;
     }
-    set({
-      loaded: true,
-      loadError: readError,
-      mainVerifier: main,
-      duressVerifier: duress,
-      hasPin: main != null,
-      hasDuressPin: duress != null,
-      // #516: fail CLOSED on a read error — an unknown lock state is NOT "unlocked". App.tsx
-      // shows the retry screen instead of opening. Otherwise: cold launch with a PIN is LOCKED,
-      // no PIN means open.
-      unlocked: readError ? false : main == null,
-    });
+    // Senti P1 on #525: the RAW values go to the decision, not parseVerifier's output —
+    // parseVerifier answers null for an empty slot AND for unreadable bytes, and only the
+    // first of those means "no PIN". resolveLockLoad keeps them apart and fails closed on
+    // the second (loadError → App.tsx's retry screen), so a truncated/corrupt pinVerifier
+    // can no longer walk past the restart gate as a PIN-less app.
+    set({loaded: true, ...resolveLockLoad({mainRaw, duressRaw, mainThrew, duressThrew})});
   },
 
   unlock: () => set({unlocked: true}),
