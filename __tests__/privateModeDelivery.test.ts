@@ -82,17 +82,41 @@ jest.mock('react-native', () => ({
   },
 }));
 
-import {useSettingsStore} from '../src/stores/settingsStore';
+import {KV_MEDIA_OVER_TOR, useSettingsStore} from '../src/stores/settingsStore';
+
+const natives = () => require('react-native').NativeModules;
 
 /** Let queued microtasks drain (the store awaits several promises per step). */
 const settle = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 };
 
+/** The default (everything-works) behaviours; restored before each test. */
+const okSetSetting = (k: string, v: string) => {
+  calls.push({fn: 'setSetting', args: [k, v]});
+  return Promise.resolve(null);
+};
+const okStartRelay = record('Tor.startDeliveryRelay', Promise.resolve(0));
+
+/** Drive enableTor all the way through a successful 100% bootstrap. */
+const bootstrapToSuccess = async () => {
+  const p = useSettingsStore.getState().enableTor();
+  await settle();
+  bootstrapCb?.(100);
+  await settle();
+  await p;
+};
+
+/** The `pending` argument of every setNodePrivateModePending call, in order. */
+const latchCalls = () =>
+  calls.filter(c => c.fn === 'setNodePrivateModePending').map(c => c.args[0]);
+
 beforeEach(() => {
   calls.length = 0;
   bootstrapCb = null;
   torStartReject = null;
+  (natives().LogosChat.setSetting as jest.Mock).mockImplementation(okSetSetting);
+  (natives().Tor.startDeliveryRelay as jest.Mock).mockImplementation(okStartRelay);
   useSettingsStore.setState({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
 });
 
@@ -198,6 +222,73 @@ describe('the Tor-bootstrap window (delivery must not stay direct through it)', 
     calls.length = 0;
     await useSettingsStore.getState().disableTor();
     expect(calls.find(c => c.fn === 'setNodePrivateModePending')!.args).toEqual([false]);
+    expect(at('setNodePrivateModePending')).toBeLessThan(at('reopenNodeForRouting'));
+  });
+});
+
+// Senti P1 follow-up on #525 — releasing the intent latch hands the delivery gate to
+// NATIVE state. Native has exactly two ways to hold it: the persisted `mediaOverTor` KV
+// (NodeRuntime.privateModeEnabled → mustWaitForTor fails the reopen closed) and a usable
+// relay (relayLive AND the multiaddr in KV → the reopen routes over Tor). Both writes are
+// best-effort, so the latch must not drop until at least one of them is CONFIRMED.
+//
+// The hole these pin: on the success path the latch was released unconditionally. With a
+// transient DB fault taking out both KV writes, `privateModeEnabled()` read false and no
+// relay was usable, so the reopen sailed past every gate and cold-opened on the DIRECT
+// route — while zustand already said `mediaOverTor: true` and the user saw Private mode on.
+describe('the latch is only handed over to a gate that can actually hold it', () => {
+  it('THE ORACLE: both KV writes fail → the latch STAYS armed, so the reopen fails closed', async () => {
+    // A DB fault kills the mediaOverTor persist AND the relay multiaddr publish. The relay
+    // process may well be standing, but with no multiaddr in KV it is not usable natively.
+    (natives().LogosChat.setSetting as jest.Mock).mockImplementation((k: string, v: string) => {
+      calls.push({fn: 'setSetting', args: [k, v]});
+      return Promise.reject(new Error('db locked'));
+    });
+
+    await bootstrapToSuccess();
+
+    // Pre-fix this was [true, false] — the release with nothing behind it.
+    expect(latchCalls()).toEqual([true]);
+    // The reopen still runs: armed + no usable relay → mustWaitForTor holds delivery DOWN
+    // rather than letting it come back direct.
+    expect(order()).toContain('reopenNodeForRouting');
+  });
+
+  it('a failed mediaOverTor persist is fine while the relay IS usable', async () => {
+    // Only the Private-mode KV fails; the relay never gets to publish either, because the
+    // relay multiaddr write goes through the same store. Narrower oracle: the persist is
+    // what native reads to know Private mode is on at all.
+    (natives().LogosChat.setSetting as jest.Mock).mockImplementation((k: string, v: string) => {
+      calls.push({fn: 'setSetting', args: [k, v]});
+      return k === KV_MEDIA_OVER_TOR
+        ? Promise.reject(new Error('db locked'))
+        : Promise.resolve(null);
+    });
+
+    await bootstrapToSuccess();
+
+    // The relay KV write DID land, so a usable relay holds the gate → release is correct.
+    expect(latchCalls()).toEqual([true, false]);
+    expect(at('Tor.startDeliveryRelay')).toBeLessThan(at('reopenNodeForRouting'));
+  });
+
+  it('relay setup failing is fine — the persisted gate holds it, and fails the reopen closed', async () => {
+    (natives().Tor.startDeliveryRelay as jest.Mock).mockImplementation((...args: any[]) => {
+      calls.push({fn: 'Tor.startDeliveryRelay', args});
+      return Promise.reject(new Error('no socks'));
+    });
+
+    await bootstrapToSuccess();
+
+    // mediaOverTor persisted, so privateModeEnabled() is true natively: the reopen waits for
+    // a relay that never comes and leaves delivery down, not direct. Releasing is safe.
+    expect(latchCalls()).toEqual([true, false]);
+    expect(order()).toContain('reopenNodeForRouting');
+  });
+
+  it('the happy path still releases the latch (no delivery stranded by the new guard)', async () => {
+    await bootstrapToSuccess();
+    expect(latchCalls()).toEqual([true, false]);
     expect(at('setNodePrivateModePending')).toBeLessThan(at('reopenNodeForRouting'));
   });
 });

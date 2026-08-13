@@ -405,14 +405,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       Storage.setTorRouting(true, port);
       set({mediaOverTor: true, torBusy: false});
+      // Senti P1 follow-up on #525: whether this write LANDED decides who holds the
+      // delivery gate after the latch drops. The KV is what NodeRuntime.privateModeEnabled()
+      // reads; a swallowed failure here means the native side does not know Private mode
+      // is on at all. Media is unaffected (setTorRouting above is in-process).
+      let privateModePersisted = false;
       try {
         await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'true');
+        privateModePersisted = true;
       } catch {
-        // best-effort
+        // best-effort — the latch below stays armed to cover it
       }
       // #319: stand up the delivery relay to the CURRENT delivery node's host:port, then
       // point the node at the loopback relay (KV). Only set the KV AFTER the relay is up,
       // so we never send the node to a dead relay. Applies to delivery on next node start.
+      let relayUsable = false;
       try {
         const custom = (await LogosChat.getSetting(KV_DELIVERY_SERVICE_NODE)) || '';
         const node = custom.trim().length > 0 ? custom : DEFAULT_DELIVERY_NODE;
@@ -421,6 +428,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         if (target != null && relay != null) {
           await Tor.startDeliveryRelay(target.host, target.port, DELIVERY_RELAY_LOCAL_PORT);
           await LogosChat.setSetting(KV_DELIVERY_RELAY_NODE, relay);
+          // Both halves landed: the relay is standing AND its multiaddr is published, which
+          // is exactly what TorRelayGate.relayUsable() requires to route delivery over Tor.
+          relayUsable = true;
         }
       } catch {
         // relay failed → leave delivery direct (don't point the node at a dead relay)
@@ -428,10 +438,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // #517 path 2: apply the new Tor delivery routing to an ALREADY-RUNNING node — a
       // Private-mode toggle otherwise only takes effect on the next node start, leaving a
       // running node's delivery egress direct. No-op if the node isn't up.
-      // #525: release the intent latch first — KV_MEDIA_OVER_TOR is now 'true', so Private
-      // mode itself keeps the gate armed from here on. If the relay setup above failed, that
-      // gate makes this reopen fail CLOSED (delivery down) rather than come back direct.
-      LogosChat.setNodePrivateModePending(false);
+      //
+      // Senti P1 follow-up on #525: releasing the intent latch hands the gate to native
+      // state, so only release it once native state can actually HOLD the gate — either
+      // the persisted `mediaOverTor` (privateModeEnabled() → mustWaitForTor fails the
+      // reopen closed) or a usable relay (the reopen routes over Tor). Both are
+      // best-effort above, and if BOTH fell through, dropping the latch unconditionally
+      // left the reopen with nothing to gate on: it cold-opened on the DIRECT route while
+      // the UI (mediaOverTor: true) said Private mode was on. Keep the latch armed in that
+      // case — delivery stays down, which is the failure this whole path is meant to pick.
+      // disableTor/cancelTor still clear it, so this can never strand delivery for good.
+      if (privateModePersisted || relayUsable) {
+        LogosChat.setNodePrivateModePending(false);
+      }
       LogosChat.reopenNodeForRouting().catch(() => {});
     } catch {
       // start/bootstrap failed — leave the toggle off and tear the daemon down.
