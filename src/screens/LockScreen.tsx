@@ -16,6 +16,7 @@ import {useSecurityStore} from '../stores/securityStore';
 import {useChatStore} from '../stores/chatStore';
 import {useAvatarStore} from '../stores/avatarStore';
 import {useNodeStore} from '../stores/nodeStore';
+import {runDuressWipe} from '../security/duressWipe';
 import {
   PIN_LENGTH,
   MAX_PIN_ATTEMPTS,
@@ -78,21 +79,22 @@ export function LockScreen() {
       // empty, never the previous identity's conversations (the gate uncovers a list
       // already mounted from the in-memory chatStore). The suppress guard stops a
       // mid-wipe node_status event from repopulating it. Resume + refresh once the
-      // wipe finishes (fresh, empty identity). Still covert: no spinner, no error.
-      useChatStore.getState().suppressRefresh();
-      useChatStore.getState().reset();
-      useAvatarStore.getState().reset();
-      unlock();
-      void (async () => {
-        try {
-          await wipeAndReset();
-        } catch {
-          // swallow — surfacing an error here would reveal the duress path
-        } finally {
-          useChatStore.getState().resumeRefresh();
-          void useChatStore.getState().refreshConversations();
-        }
-      })();
+      // wipe finishes CLEANLY (fresh, empty identity); on a failed/partial wipe stay
+      // suppressed (#512). Still covert: no spinner, no error. The whole sequence is
+      // src/security/duressWipe.ts so its ordering is unit-testable.
+      const chat = useChatStore.getState();
+      void runDuressWipe({
+        suppressRefresh: chat.suppressRefresh,
+        resumeRefresh: chat.resumeRefresh,
+        // Re-read through getState(): the wipe replaces store state, so the
+        // post-wipe reset/refresh must hit the CURRENT actions, not stale ones.
+        resetChat: () => useChatStore.getState().reset(),
+        resetAvatars: () => useAvatarStore.getState().reset(),
+        unlock,
+        wipeAndReset,
+        refreshConversations: () =>
+          useChatStore.getState().refreshConversations(),
+      });
       return;
     }
     // wrong | lockout — flash the dots red, clear, keep the attempt count.

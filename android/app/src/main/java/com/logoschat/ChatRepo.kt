@@ -2,8 +2,59 @@ package com.logoschat
 
 import android.content.Context
 import android.util.Log
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
+
+/**
+ * #492 (Senti review): delete every entry in [dir] whose name starts with [prefix] and
+ * REPORT whether the directory is provably clean afterwards.
+ *
+ * `Context.deleteDatabase` only removes the fixed suffix set (-wal/-shm/-journal/-mj*),
+ * so the one-time SQLCipher migration's siblings — a PLAINTEXT `.migbak` (decrypted
+ * history) and the staged `.enc` — survive a duress/reset wipe unless swept here. The
+ * return value is the point: a wipe that could NOT confirm the plaintext copy is gone
+ * must not be folded into a clean-success report ([NodeRuntime.wipeAndRestart]).
+ *
+ * false (INCOMPLETE) when: the directory handle is null, its listing is unavailable
+ * (`listFiles()` == null — unreadable, so a `.migbak` may still be there), a delete
+ * fails, or the walk throws. true only when a real listing came back and nothing
+ * matching survives. A missing directory is clean — nothing survived.
+ *
+ * File-level (not a member) so the JVM unit test can drive it over a temp dir without
+ * a Context.
+ */
+internal fun sweepSiblings(dir: File?, prefix: String, tag: String): Boolean =
+    try {
+      when {
+        dir == null -> {
+          Log.w(tag, "wipe: no databases dir handle — cannot confirm the sweep")
+          false
+        }
+        !dir.exists() -> true // no databases/ at all: nothing survived
+        else -> {
+          val entries = dir.listFiles { f: File -> f.name.startsWith(prefix) }
+          if (entries == null) {
+            Log.w(tag, "wipe: databases listing unavailable — cannot confirm the sweep")
+            false
+          } else {
+            var ok = true
+            for (f in entries) {
+              // Re-check exists() AFTER delete(): delete() returns false for a file that
+              // is already gone, which is a clean outcome, not a failure.
+              if (!f.delete() && f.exists()) {
+                Log.w(tag, "wipe: could not delete ${f.name}")
+                ok = false
+              }
+            }
+            ok
+          }
+        }
+      }
+    } catch (t: Throwable) {
+      Log.w(tag, "wipe: databases sweep failed: ${t.message}")
+      false
+    }
 
 /**
  * Business rules over [ChatDb] — the single owner of durable app-side chat state.
@@ -97,8 +148,14 @@ object ChatRepo {
    * mesh pairings AND the kv (so the PIN/duress verifiers go with it). The node's
    * own identity/seed + encrypted store are wiped separately by
    * [NodeRuntime.wipeAndRestart], which owns those file paths.
+   *
+   * Returns whether the wipe is COMPLETE (#492 Senti review): false means something in
+   * `databases/` survived — possibly the PLAINTEXT `.migbak` copy of the history — and
+   * the caller must NOT report a clean reset. The store is still re-opened empty either
+   * way; a partial wipe must not brick the app.
    */
-  fun wipeAndReinit(context: Context) {
+  fun wipeAndReinit(context: Context): Boolean {
+    var complete: Boolean
     synchronized(this) {
       try {
         db?.close()
@@ -108,6 +165,19 @@ object ChatRepo {
       db = null
       activeConvoPk = 0
       context.applicationContext.deleteDatabase(ChatDb.DB_NAME)
+      // #492: deleteDatabase() only removes the fixed suffix set (-wal/-shm/-journal/
+      // -mj*), NOT arbitrary siblings. A one-time SQLCipher migration leaves a
+      // PLAINTEXT `.migbak` (decrypted history) and a staged `.enc` beside the db — a
+      // duress/reset wipe must remove those too, or a plaintext copy of the history
+      // survives the wipe. Sweep every databases/ entry whose name starts with DB_NAME
+      // (covers `.migbak`, `.enc`, and any future sibling). The sweep runs AFTER
+      // deleteDatabase and BEFORE init(), so its result also covers the db file itself:
+      // anything still matching the prefix here is a survivor.
+      complete =
+          sweepSiblings(
+              context.applicationContext.getDatabasePath(ChatDb.DB_NAME).parentFile,
+              ChatDb.DB_NAME,
+              TAG)
     }
     // init() early-returns if db != null; we just nulled it, so this re-opens fresh.
     init(context)
@@ -115,7 +185,8 @@ object ChatRepo {
     // deleted wholesale), so fire the change hook by hand or the FGS notification keeps
     // showing the pre-wipe totals.
     ChatDb.countsChanged()
-    Log.i(TAG, "app-side store wiped and re-initialized (empty)")
+    Log.i(TAG, "app-side store wiped and re-initialized (empty, complete=$complete)")
+    return complete
   }
 
   fun requireDb(): ChatDb =

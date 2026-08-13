@@ -657,8 +657,8 @@ The engine repin (upstream libchat `d2124fd` → `462a4884`, +9 commits) is capt
 - **[adb-input-url-autocap]** — the tester-announce URL autocapitalized to `Https://GitHub.com`
   (functional but ugly). Verify the screencap before the irreversible send.
 
-Native core: `xAlisher/logos-libchat-mls-android@3c38687` (consolidated to ONE `patches/libchat-android-arm64.patch`;
-former 349/437/433 + 490/491 folded in). `.so` `e879a3e0` (26 symbols). Gate: 85 Rust + 37 provenance + 508 app tests.
+Native core: `xAlisher/logos-libchat-mls-android@8791276` (consolidated to ONE `patches/libchat-android-arm64.patch`;
+former 349/437/433 + 490/491 folded in). `.so` `0ca5d637` (26 symbols; +#497 authenticated GroupV2 attribution). Gate: 85 Rust + 37 provenance + 508 app tests.
 
 ## 10i. x0net security batch (2026-08-11, v0.9.11) — see docs/skills/
 

@@ -157,9 +157,16 @@ object ChatDbCrypto {
    */
   private fun migrateIfNeeded(context: Context, keyHex: String): Boolean {
     val prefs = context.getSharedPreferences(SECURE_PREFS, Context.MODE_PRIVATE)
-    if (prefs.getBoolean(KEY_CHATDB_ENCRYPTED, false)) return true
-
     val dbFile = context.getDatabasePath(DB_NAME)
+    // #492: the plaintext migration backup. Once migration is committed the rollback
+    // that reads it (the catch below) is unreachable, so a `.migbak` left behind by a
+    // process death mid-swap is just an UNENCRYPTED copy of the history that nothing
+    // ever cleans. Sweep it on every already-migrated launch.
+    val bak = File(dbFile.parentFile, "$DB_NAME.migbak")
+    if (prefs.getBoolean(KEY_CHATDB_ENCRYPTED, false)) {
+      if (bak.exists()) runCatching { bak.delete() }
+      return true
+    }
     // Fresh start: no db, a 0-byte file, or a leftover "phantom" that exists() reports
     // but which is NOT a readable plaintext Peers db. The last case is #445: on GrapheneOS
     // (and similar) SECURE_PREFS / the Keystore-wrapped key can survive an uninstall while
@@ -169,6 +176,19 @@ object ChatDbCrypto {
     // missing/invalid db, and failed CLOSED, which blocked restore after the v0.9.0
     // signing-key reinstall (ChatRepo.init could never open the db).
     if (!dbFile.exists() || dbFile.length() == 0L || !isReadablePlaintextDb(dbFile)) {
+      // #492 (§2): the process may have died between the plaintext delete and the
+      // rename (the near side of the swap #488 covers on the far side). The db file is
+      // gone but the staged encrypted copy IS the user's database — promote it instead
+      // of starting the user empty (and orphaning the plaintext `.migbak`).
+      val staged = File(dbFile.parentFile, "$DB_NAME.enc")
+      if (!dbFile.exists() && staged.length() > 0L &&
+          isReadableEncryptedDb(staged, keyHex) && staged.renameTo(dbFile)) {
+        check(prefs.edit().putBoolean(KEY_CHATDB_ENCRYPTED, true).commit()) {
+          "ChatDb: failed to persist encrypted flag after promoting a staged db"
+        }
+        if (bak.exists()) runCatching { bak.delete() }
+        return true
+      }
       // #488: "not a readable plaintext db" is NOT the same as "nothing real on
       // disk" — a valid SQLCipher db also fails a plaintext open (its header is
       // encrypted). Before deleting, try a KEYED open with the key we already hold.
@@ -181,6 +201,7 @@ object ChatDbCrypto {
         check(prefs.edit().putBoolean(KEY_CHATDB_ENCRYPTED, true).commit()) {
           "ChatDb: failed to persist encrypted flag for an existing encrypted db"
         }
+        if (bak.exists()) runCatching { bak.delete() } // #492: crash-between-rename-and-flag orphan
         return true
       }
       listOf(dbFile, File("${dbFile.path}-wal"), File("${dbFile.path}-shm"), File("${dbFile.path}-journal"))
@@ -193,7 +214,6 @@ object ChatDbCrypto {
 
     // Existing PLAINTEXT db → export into an encrypted copy, verify, swap.
     val dir = dbFile.parentFile
-    val bak = File(dir, "$DB_NAME.migbak")
     val enc = File(dir, "$DB_NAME.enc")
     try {
       dbFile.copyTo(bak, overwrite = true)
