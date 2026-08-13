@@ -95,3 +95,54 @@ describe('wipeAndRestart folds the db wipe into wipeOk', () => {
     expect(startAt).toBeGreaterThan(wipeAt);
   });
 });
+
+// #514 — the SECOND destructive path. `importAndRestart` runs the same clean slate as
+// wipeAndRestart before installing the backup's identity, but discarded every deletion
+// result: a surviving plaintext `.migbak` of the OLD history sat beside the restored
+// identity while About reported a clean "Restored 0x…". Whatever gates wipeAndRestart
+// has to gate this path too, or the fix is only half applied.
+describe('importAndRestart folds its pre-restore wipe into wipeOk (#514)', () => {
+  const importBody = (() => {
+    const start = nodeRuntime.indexOf('fun importAndRestart');
+    const end = nodeRuntime.indexOf('fun autoRestartIfWanted');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return nodeRuntime.slice(start, end);
+  })();
+
+  it('accumulates ChatRepo.wipeAndReinit into wipeOk', () => {
+    // The exact swallow: a bare `ChatRepo.wipeAndReinit(context)` before the restore.
+    expect(importBody).toMatch(/wipeOk = ChatRepo\.wipeAndReinit\(context\) && wipeOk/);
+    expect(importBody).not.toMatch(/^\s*ChatRepo\.wipeAndReinit\(context\)\s*$/m);
+  });
+
+  it('folds every other delete in too, with no short-circuit', () => {
+    for (const f of [
+      'IDENTITY_FILE',
+      'IDENTITY_ENC_FILE',
+      'STORE_FILE',
+      '"chat-images"',
+    ]) {
+      expect(importBody).toContain(f);
+    }
+    const folds = importBody.match(/wipeOk = .*&& wipeOk/g) ?? [];
+    expect(folds.length).toBeGreaterThanOrEqual(4);
+    // The prefs clear is committed first, then folded — never `&&`-skipped.
+    expect(importBody).toMatch(/wipeOk = wipeOk && prefsOk/);
+  });
+
+  it('reports WIPE_INCOMPLETE without losing the partial-restore outcome', () => {
+    // Precedence: node-open failure > incomplete wipe > partial history restore.
+    expect(importBody).toMatch(
+      /onDone\(\s*err\s*\?:\s*if\s*\(!wipeOk\)\s*WIPE_INCOMPLETE\s+else\s+partial\s*\)/,
+    );
+  });
+
+  it('still installs the identity + re-opens the node after a partial wipe', () => {
+    const wipeAt = importBody.indexOf('ChatRepo.wipeAndReinit');
+    const seedAt = importBody.indexOf('writeBytes(seed)');
+    const startAt = importBody.indexOf('startBlocking()');
+    expect(seedAt).toBeGreaterThan(wipeAt);
+    expect(startAt).toBeGreaterThan(seedAt);
+  });
+});
