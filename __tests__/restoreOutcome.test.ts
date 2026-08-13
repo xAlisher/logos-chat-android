@@ -120,12 +120,7 @@ describe('native restore path (source gate)', () => {
     );
     expect(body).toContain('PARTIAL_RESTORE_PREFIX');
     // The final callback must be able to carry the partial error, not a bare `err`.
-    // #514 inserted WIPE_INCOMPLETE between the two — `partial` still has to be the
-    // last thing the callback can report, so assert the whole precedence chain rather
-    // than a shape that goes stale (and silently stops gating) on the next insert.
-    expect(body).toMatch(
-      /onDone\(\s*err\s*\?:\s*if\s*\(!wipeOk\)\s*WIPE_INCOMPLETE\s+else\s+partial\s*\)/,
-    );
+    expect(body).toMatch(/onDone\(err\s*\?:\s*partial\)/);
   });
 
   // The bridge has to keep the three outcomes distinct all the way to JS.

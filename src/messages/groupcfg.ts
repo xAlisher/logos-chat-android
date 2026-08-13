@@ -46,32 +46,14 @@ export function parseGroupCfg(s: string): GroupCfg | null {
  * (newest wins). Accepts timeline messages in ANY order — it sorts by `at`
  * (tie-broken by a monotonic `seq`, e.g. msgPk) so the most recent gcfg1: is the
  * one kept. Returns `storageOff` (true/false) or null if the group has no gcfg
- * marker from its creator. Mirrors foldPfps's sort-by-(at,seq) newest-wins shape,
- * but folds group-wide (not per-author) since storage is a single per-group setting.
- *
- * #518 (review): the fold is CREATOR-ONLY, exactly like the live inbound handler.
- * A history fold that trusted every marker was a way around the live gate: a
- * non-creator's `gcfg1:storage:on` is rejected on arrival but still PERSISTS on the
- * timeline, so re-opening the conversation would re-apply it and turn media fetches
- * back on against the creator's off-choice. `creator` must be the address from
- * authenticated native group state (LogosChat.groupCreator), and each message's
- * `author` the authenticated sender — never a wire-asserted field. Fails CLOSED:
- * an unknown creator folds to null (leave the hydrated/KV value alone).
+ * marker at all. Mirrors foldPfps's sort-by-(at,seq) newest-wins shape, but folds
+ * group-wide (not per-author) since storage is a single per-group setting.
  */
 export function foldGroupCfgs(
-  msgs: Array<{author?: string | null; body: string; at: number; seq?: number}>,
-  creator: string | null | undefined,
+  msgs: Array<{body: string; at: number; seq?: number}>,
 ): boolean | null {
-  const creatorAddr = (creator ?? '').trim().toLowerCase();
-  // No verified creator (pre-#349 group, native error, 1:1) ⇒ no marker in history
-  // can be attributed, so none may be honored.
-  if (creatorAddr === '') return null;
   const sorted = msgs
-    .filter(
-      m =>
-        isGroupCfgContent(m.body) &&
-        (m.author ?? '').trim().toLowerCase() === creatorAddr,
-    )
+    .filter(m => isGroupCfgContent(m.body))
     .slice()
     .sort((a, b) => a.at - b.at || (a.seq ?? 0) - (b.seq ?? 0));
   let out: boolean | null = null;
@@ -82,4 +64,21 @@ export function foldGroupCfgs(
     out = cfg.storageOff;
   }
   return out;
+}
+
+/**
+ * #518: fold gcfg markers to the group's storage state, but ONLY from markers authored by
+ * the authenticated group `creator`. History hydration MUST be creator-gated exactly like
+ * the live listener — otherwise a PERSISTED non-creator `gcfg1:storage:on` re-applies when
+ * the conversation is reopened, flipping storage back on and re-fetching media against the
+ * creator's off-choice (the live gate alone left this history path open). Fails closed:
+ * a null/unknown creator folds nothing, so the current state stands.
+ */
+export function foldGroupCfgsFromCreator(
+  msgs: Array<{body: string; at: number; seq?: number; author: string}>,
+  creator: string | null,
+): boolean | null {
+  if (creator == null) return null;
+  const c = creator.toLowerCase();
+  return foldGroupCfgs(msgs.filter(m => m.author.toLowerCase() === c));
 }

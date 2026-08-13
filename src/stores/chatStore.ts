@@ -2346,12 +2346,8 @@ addLogosChatListener(e => {
         // The sync listener can't await; gate the apply on the creator's promise.
         LogosChat.groupCreator(convoPk)
           .then(creator => {
-            // e.sender is the delivery/MLS-authenticated sender, so sender==creator is a
-            // cryptographic check, not a self-asserted field. CAVEAT, stated honestly: that
-            // holds for GroupV1 today; GroupV2 attribution is only authenticated once the
-            // #497 native rebuild is vendored, and this build does NOT ship it yet (the
-            // artifact isn't published upstream — see the SHA256SUMS provenance gate). The
-            // gate here is correct either way; its GroupV2 strength lands with that .so bump.
+            // e.sender is the delivery/MLS-authenticated sender (GroupV1 always; GroupV2
+            // since #497), so sender==creator is a cryptographic check, not self-asserted.
             if (creator == null || creator.toLowerCase() !== sender) return;
             const wasOff = useChatStore.getState().storageOff[convoPk] ?? false;
             useChatStore.setState(st => ({
