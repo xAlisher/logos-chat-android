@@ -409,9 +409,15 @@ function Bubble({
   const effAttr =
     relay != null
       ? {
+          // #519: `relay.origin` is a LOCAL, unverified claim the relayer wrote into the
+          // wire text — and anyone can paste `lr1:<victim>␟…` from the stock composer. Never
+          // bind cryptographic identity to it: the avatar seed, the testID, and the address
+          // the long-press menu targets must resolve against the AUTHENTICATED sender, or a
+          // sender could choose whose identity their own bubble renders under. The origin
+          // stays as a display label only (unverified), matching the "via bridge" design.
           label: relay.origin,
           hex: `· via ${bridgeName}`,
-          address: relay.origin,
+          address: attribution?.address ?? msg.senderAccount ?? '',
           verified: false,
         }
       : attribution;
