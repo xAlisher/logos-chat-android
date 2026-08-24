@@ -16,10 +16,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: npm ci
+      # #507: a dependency major can delete an API `src/` imports without failing a single job —
+      # jest only runs the logic suites and Gradle never reads the TypeScript. VisionCamera 5
+      # dropped `useCodeScanner` and only the *Android build* complained, about something else
+      # entirely. Typechecking is the cheapest check that reads the app against its dependencies.
+      - name: Typecheck (#507) — catches APIs a dependency bump removed
+        run: npx tsc --noEmit
       - name: JS logic tests (wire codec + store view helpers)
         run: npm run test:logic
       - name: Dependency audit (#366) — block on critical, report the rest
@@ -31,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - uses: actions/setup-java@v5

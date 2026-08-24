@@ -657,8 +657,8 @@ The engine repin (upstream libchat `d2124fd` → `462a4884`, +9 commits) is capt
 - **[adb-input-url-autocap]** — the tester-announce URL autocapitalized to `Https://GitHub.com`
   (functional but ugly). Verify the screencap before the irreversible send.
 
-Native core: `xAlisher/logos-libchat-mls-android@3c38687` (consolidated to ONE `patches/libchat-android-arm64.patch`;
-former 349/437/433 + 490/491 folded in). `.so` `e879a3e0` (26 symbols). Gate: 85 Rust + 37 provenance + 508 app tests.
+Native core: `xAlisher/logos-libchat-mls-android@8791276` (consolidated to ONE `patches/libchat-android-arm64.patch`;
+former 349/437/433 + 490/491 folded in). `.so` `0ca5d637` (26 symbols; +#497 authenticated GroupV2 attribution). Gate: 85 Rust + 37 provenance + 508 app tests.
 
 ## 10i. x0net security batch (2026-08-11, v0.9.11) — see docs/skills/
 
@@ -687,3 +687,39 @@ Three findings from @x0net (GH private vuln reports), all fixed + on-device veri
 
 Process: the **Senti review loop** (Codex `*/5`) caught the jj3m P2 AFTER tsc/jest + on-device were
 green — review-before-merge earned its keep. Gate: tsc + 524 app tests. All 4 advisories published.
+
+## 10j. "Close the residuals" security batch (2026-08-13, v0.9.15) — see docs/skills/
+
+Round 4: #520/#517/#516/#522 + **five Senti P1s** in a chain. All app-side (no `.so` change).
+Project lessons worth keeping:
+
+- **A read that returns `null` for BOTH "empty" and "corrupt" cannot drive a fail-closed gate.**
+  `securityStore.load()` fed `parseVerifier()`'s `null` straight into `hasPin` — but `parseVerifier`
+  returns `null` for an empty slot (legit no-PIN) AND for a non-empty-unparseable one (corrupt). A
+  truncated/tampered `pinVerifier` walked past the lock as "no PIN". Fix (`src/security/pinSecurity.ts`
+  `readVerifier`/`resolveLockLoad`): keep **absent / valid / corrupt** distinct; corrupt → `loadError`
+  → `App.tsx` shows a retry-only `LockUnknownScreen` (no PIN pad, no attempt burn, no wipe). Same
+  stance as the #516 storage-throw case. Extends `[failclosed-gate-inmemory-not-kv]`.
+- **Release a security latch only on a signal the consumer can re-read reliably.** Private mode's
+  delivery latch was dropped when `setSetting(mediaOverTor,'true')` *landed* — but the node's cold
+  reopen re-reads that KV via `NodeRuntime.privateModeEnabled()`, which catches a read fault and
+  returns `false` → delivery cold-opens DIRECT while the UI shows Private mode on. A landed WRITE is
+  not a readable-back GATE. Fix: release the in-memory latch only when the **relay is confirmed usable**
+  (`TorState.deliveryRelayLive` + published multiaddr — the one thing the reopen routes on, never a KV
+  read); otherwise keep it armed → fail closed (delivery down, never direct). The Kotlin side also made
+  `privateModeEnabled()` itself fail closed on a read fault. Sibling to `[failclosed-gate-inmemory-not-kv]`.
+- **Peers has NO delete-for-everyone — only "Delete for me".** A mis-sent message to a real group
+  (e.g. a tester announce with a typo) **cannot be retracted** for others; deleting only hides it on
+  your device. Get tester-facing sends right the first time; verify the screencap before sending
+  (see `[adb-input-url-autocap]` — the composer still auto-capitalizes URLs after a colon).
+- **`__tests__/nativeSbomDoc.test.ts` flags ANY `` `<8hex>…` `` in `docs/SBOM.md` as an unexplained
+  native hash.** Writing a *signing-cert* fingerprint in that abbreviated-ellipsis form trips the
+  native-provenance scanner. Write non-`.so` hashes (signing certs) as the full 64-hex, or reference
+  them without the `` `<8hex>…` `` shape.
+
+Process (the Senti loop, `reference_senti_loop`): Senti caught **5 P1s**; two agent-coordination
+hazards — the actor cron **answered the wrong (older) review** and declared "already fixed", stalling
+on the distinct newer P1 at head (detect by comparing each review's `commit_id`, not the actor's
+claim); and a **two-writer race** where the actor pushed onto a Senti-APPROVED head and `dismiss_stale`
+dropped the approval (fix: merge FAST on a clean approval, before the actor's next cycle). Gate: tsc +
+644 app tests + TorRelayGateTest 18. Signing creds live in `~/.gradle/gradle.properties`, NOT env vars.

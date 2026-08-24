@@ -28,6 +28,7 @@ import {
   shouldAutoReadd,
 } from './readdRecovery';
 import type {ReaddDebts, ReaddRequest} from './readdRecovery';
+import {createRefreshGate} from './refreshGate';
 import {isAddrContent, parseAddr} from '../messages/address';
 import {encodeLeave} from '../messages/leave';
 import {isImageContent, parseImageLocal} from '../native/imageMsg';
@@ -169,6 +170,9 @@ interface ChatState {
   meshMap: Record<string, {pubkey: string; name: string | null}>;
   activeConvoPk: number | null;
   refreshConversations: () => Promise<void>;
+  /** #490: pause/resume refreshConversations during a duress wipe (see the flag). */
+  suppressRefresh: () => void;
+  resumeRefresh: () => void;
   loadMessages: (convoPk: number) => Promise<void>;
   /**
    * #37: fetch the next OLDER page and PREPEND it to `messages[convoPk]`
@@ -427,6 +431,16 @@ const ackedGroups = new Set<number>();
  *  `at` throttles the re-broadcast so simultaneous joins don't storm. */
 const rebroadcast: Record<number, {seen: Set<string>; at: number}> = {};
 
+// #490: while a duress wipe is in flight, the conversation list is cleared and the
+// gate is dropped BEFORE the native wipe completes. A `node_status` "stopped" event
+// (fired mid-wipe, before the DB is deleted) would otherwise call refreshConversations
+// and repopulate the list from the not-yet-wiped DB — a visible tell. This flag makes
+// refreshConversations a no-op for that window; resumeRefresh() clears it after.
+let refreshSuppressed = false;
+// #490 (P1): invalidates a refresh already in flight (past its first await) so its
+// final set() can't repopulate the list reset() just cleared. See refreshGate.ts.
+const refreshGate = createRefreshGate();
+
 // #228: system notes (invited/joined/left/group-ended) persist per conversation in
 // the KV store so they survive an app restart. Bounded so KV never grows unbounded.
 const SYSLINE_CAP = 60;
@@ -597,6 +611,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeConvoPk: null,
 
   reset: () => {
+    // #490 P1: invalidate any refresh already in flight so it can't repopulate the
+    // maps we're about to clear (belt-and-braces with suppressRefresh, and covers a
+    // direct reset() — e.g. securityStore.wipeAndReset — with no suppress around it).
+    refreshGate.invalidate();
     // Module-level mutable caches (not in `set` state) — clear in place, and cancel
     // any outstanding invite timers so they don't fire against the new identity.
     for (const k of Object.keys(pendingJoins)) delete (pendingJoins as Record<string, unknown>)[k];
@@ -619,7 +637,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
+  suppressRefresh: () => {
+    refreshSuppressed = true;
+    refreshGate.invalidate(); // #490 P1: invalidate any refresh already in flight
+  },
+  resumeRefresh: () => {
+    refreshSuppressed = false;
+  },
+
   refreshConversations: async () => {
+    // #490: suppressed during a duress wipe so a mid-wipe node_status event can't
+    // repopulate the just-cleared list from the not-yet-wiped DB.
+    if (refreshSuppressed) return;
+    // #490 P1: capture the generation now; if reset()/suppress fires during our
+    // awaits below, the post-await check drops this (old-identity) result.
+    const token = refreshGate.enter();
     const rows: ConversationRow[] = JSON.parse(
       await LogosChat.listConversations(),
     );
@@ -645,13 +677,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch {
       // keep the previous map on a transient read failure
     }
+    // #490 P1: a reset()/suppressRefresh() that fired while we awaited above bumped
+    // the generation — this result is from the PREVIOUS identity; drop it rather than
+    // repopulate the just-cleared list behind the already-dropped gate.
+    if (refreshGate.isStale(token)) return;
     set({conversations, meshMap});
   },
 
   loadMessages: async (convoPk: number) => {
+    // #490 P1 (Senti on #515): the generation gate below only invalidates reads that
+    // were ALREADY in flight. A read that STARTS during the wipe captures the
+    // post-reset generation, so isStale() is false — it would read the not-yet-wiped
+    // DB and write the previous identity's bodies into the just-cleared thread, and
+    // if the native wipe throws there is no later reset() to undo it. Block newly
+    // started reads for exactly the window refreshConversations already blocks.
+    if (refreshSuppressed) return;
+    // #490 P1 (the same race Senti flagged on refreshConversations, worse payload):
+    // the lock screen covers a ChatScreen that may already be mounted, so a
+    // loadMessages in flight when the duress PIN lands would write the PREVIOUS
+    // identity's message BODIES into the thread reset() just cleared — behind the
+    // already-dropped gate. Capture the generation, re-check it before set().
+    const token = refreshGate.enter();
     const rows: MessageRow[] = JSON.parse(
       await LogosChat.listMessages(convoPk, 0, PAGE),
     );
+    if (refreshGate.isStale(token)) return;
     // #37: this is the newest-page (re)load — it replaces the window, so reset
     // the paging cursor state. A short first page means there's nothing older.
     set(s => ({
@@ -661,6 +711,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   loadMoreMessages: async (convoPk: number) => {
+    if (refreshSuppressed) return; // #490 P1: see loadMessages
     const s = get();
     if (s.loadingMore[convoPk] === true || s.reachedEnd[convoPk] === true) {
       return;
@@ -671,11 +722,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Nothing durable loaded yet — no cursor to page before.
       return;
     }
+    const token = refreshGate.enter(); // #490 P1: see loadMessages
     set(st => ({loadingMore: {...st.loadingMore, [convoPk]: true}}));
     try {
       const older: MessageRow[] = JSON.parse(
         await LogosChat.listMessages(convoPk, before, PAGE),
       );
+      if (refreshGate.isStale(token)) return;
       set(st => ({
         messages: {
           ...st.messages,
@@ -685,7 +738,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         reachedEnd: {...st.reachedEnd, [convoPk]: older.length < PAGE},
       }));
     } finally {
-      set(st => ({loadingMore: {...st.loadingMore, [convoPk]: false}}));
+      // don't re-add a key to the map reset() just cleared
+      if (!refreshGate.isStale(token)) {
+        set(st => ({loadingMore: {...st.loadingMore, [convoPk]: false}}));
+      }
     }
   },
 
@@ -2288,41 +2344,54 @@ addLogosChatListener(e => {
         }
       }
     }
-    // #344: an inbound gcfg1: marker announces the group's storage on/off choice.
-    // Honor the newest (this event IS the newest for its convo). MVP caveat: for a
-    // trusted community we do NOT hard-verify sender==creator here — no creator
-    // ADDRESS is stored, only a local createdByMe flag — so any member's gcfg1:
-    // marker is honored. Residual: a malicious member could flip the flag (a
-    // usability regression, not a storage leak — it can only make the group MORE
-    // restrictive; media a member declines to send is never uploaded). Folded
-    // control message, never a bubble (native + timeline suppression).
+    // #344/#518: an inbound gcfg1: marker announces the group's storage on/off choice.
+    // ONLY the AUTHENTICATED group creator may change it — verified against native group
+    // state (groupCreator), not a self-asserted field. Without this, any member could paste
+    // `gcfg1:storage:on` from the stock composer and force everyone to re-fetch stored media
+    // from the Storage node against the creator's off-choice — a privacy leak, not just the
+    // usability regression #344 assumed. Fail closed: if the creator can't be verified, do
+    // NOT apply. Folded control message, never a bubble (native + timeline suppression).
     if (
       e.kind === 'message' &&
       e.direction === 'in' &&
       e.convoPk != null &&
+      e.sender != null &&
       e.detail != null &&
       isGroupCfgContent(e.detail)
     ) {
       const cfg = parseGroupCfg(e.detail);
       if (cfg != null) {
         const convoPk = e.convoPk;
-        // #344: a live inbound marker is a real transition (a member sees the
-        // creator's flip) — announce it once, guarded on an actual change.
-        const wasOff = useChatStore.getState().storageOff[convoPk] ?? false;
-        useChatStore.setState(st => ({
-          storageOff: {...st.storageOff, [convoPk]: cfg.storageOff},
-        }));
-        persistGroupStorage(convoPk, cfg.storageOff);
-        if (wasOff !== cfg.storageOff) {
-          useChatStore
-            .getState()
-            .pushSystemLine(
-              convoPk,
-              cfg.storageOff
-                ? 'Storage turned off — text & voice only'
-                : 'Storage turned on — media enabled',
-            );
-        }
+        const sender = e.sender.toLowerCase();
+        // The sync listener can't await; gate the apply on the creator's promise.
+        LogosChat.groupCreator(convoPk)
+          .then(creator => {
+            // e.sender is the delivery/MLS-authenticated sender (GroupV1 always; GroupV2
+            // since #497), so sender==creator is a cryptographic check, not self-asserted.
+            if (creator == null || creator.toLowerCase() !== sender) return;
+            const wasOff = useChatStore.getState().storageOff[convoPk] ?? false;
+            useChatStore.setState(st => ({
+              storageOff: {...st.storageOff, [convoPk]: cfg.storageOff},
+            }));
+            persistGroupStorage(convoPk, cfg.storageOff);
+            if (wasOff !== cfg.storageOff) {
+              useChatStore
+                .getState()
+                .pushSystemLine(
+                  convoPk,
+                  cfg.storageOff
+                    ? 'Storage turned off — text & voice only'
+                    : 'Storage turned on — media enabled',
+                  // #518: attribute the flip to the creator who made it.
+                  describePeer(creator),
+                  creator,
+                );
+            }
+          })
+          .catch(() => {
+            // Unsupported build / native error → cannot verify the creator → do NOT apply
+            // (fail closed). The creator's own device already applied it via setGroupStorage.
+          });
       }
     }
     // #350: an inbound readd1: marker (over a 1:1) is a stuck member asking to be

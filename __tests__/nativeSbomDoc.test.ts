@@ -127,6 +127,9 @@ describe('docs/SBOM.md quotes no unexplained native hash', () => {
     '069cdb3d':
       'the 0.9.7/0.9.8 GHSA-xxgx-7757-3qq6 build (@0b6c0ca, upstream libchat d2124fd), ' +
       'superseded by the #427 repin build e879a3e0 (upstream libchat 462a4884)',
+    e879a3e0:
+      'the #427 repin build (@3c38687, upstream libchat 462a4884), superseded by the ' +
+      '#497 authenticated-attribution build 0ca5d637 — value-only, same 26 symbols',
   };
 
   const shipped = new Set(

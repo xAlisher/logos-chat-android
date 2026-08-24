@@ -4,6 +4,7 @@ import {
   parseGroupCfg,
   isGroupCfgContent,
   foldGroupCfgs,
+  foldGroupCfgsFromCreator,
   GROUPCFG_PREFIX,
 } from '../src/messages/groupcfg';
 
@@ -49,5 +50,54 @@ describe('groupcfg marker', () => {
   it('returns null when the group has no gcfg marker', () => {
     expect(foldGroupCfgs([{body: 'hi', at: 1}])).toBeNull();
     expect(foldGroupCfgs([])).toBeNull();
+  });
+});
+
+// #518 (Senti P1): the history-hydration fold must be creator-gated too, or a persisted
+// non-creator gcfg1:storage:on re-applies on reopen and defeats the live-listener gate.
+describe('foldGroupCfgsFromCreator — history hydration is creator-gated', () => {
+  const CREATOR = '0xCreatorAddr';
+  const MEMBER = '0xMemberAddr';
+
+  it('ignores a non-creator storage:on planted in history (the bypass)', () => {
+    // Creator turned storage OFF; a member later plants storage:on. The member's marker
+    // must NOT be folded — storage stays off.
+    const folded = foldGroupCfgsFromCreator(
+      [
+        {body: encodeGroupCfg({storageOff: true}), at: 10, seq: 1, author: CREATOR},
+        {body: encodeGroupCfg({storageOff: false}), at: 20, seq: 2, author: MEMBER},
+      ],
+      CREATOR,
+    );
+    expect(folded).toBe(true); // still OFF — the member's newer on-marker is filtered out
+  });
+
+  it('folds the creator markers (newest creator wins), ignoring member noise', () => {
+    const folded = foldGroupCfgsFromCreator(
+      [
+        {body: encodeGroupCfg({storageOff: true}), at: 10, seq: 1, author: CREATOR},
+        {body: encodeGroupCfg({storageOff: false}), at: 30, seq: 3, author: CREATOR},
+        {body: encodeGroupCfg({storageOff: true}), at: 40, seq: 4, author: MEMBER},
+      ],
+      CREATOR,
+    );
+    expect(folded).toBe(false); // creator's newest (on) wins; member's later off ignored
+  });
+
+  it('matches the creator case-insensitively', () => {
+    const folded = foldGroupCfgsFromCreator(
+      [{body: encodeGroupCfg({storageOff: true}), at: 1, seq: 1, author: '0xCREATORaddr'}],
+      CREATOR,
+    );
+    expect(folded).toBe(true);
+  });
+
+  it('fails closed: unknown creator folds nothing', () => {
+    expect(
+      foldGroupCfgsFromCreator(
+        [{body: encodeGroupCfg({storageOff: false}), at: 1, seq: 1, author: MEMBER}],
+        null,
+      ),
+    ).toBeNull();
   });
 });

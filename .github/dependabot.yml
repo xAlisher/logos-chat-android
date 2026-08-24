@@ -65,6 +65,66 @@ updates:
       # loudly at that point.
       - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]
+      # #507: VisionCamera 5 has no code scanning on Android, and Android is all we ship.
+      #
+      # v5 is a Nitro rewrite. It deletes `useCodeScanner` and the `<Camera codeScanner={...}>`
+      # prop; the replacement is `useObjectOutput` / `CameraObjectOutput`, annotated `@platform iOS`
+      # throughout the v5 sources — and on Android its factory is a stub that throws:
+      #
+      #     HybridCameraFactory.kt:113
+      #       override fun createObjectOutput(...): HybridCameraObjectOutputSpec {
+      #         throw Error("CameraObjectOutput is not available on Android!")
+      #       }
+      #
+      # src/screens/ScanScreen.tsx is *entirely* a QR scanner — it is how a peer's 64-hex address
+      # gets into the app without retyping it. Under v5 it would throw on mount, and there is no
+      # migration to write until upstream implements the Android side.
+      #
+      # #507 also failed the kotlin-unit job outright (VisionCamera 5's build.gradle needs
+      # `project(":react-native-nitro-modules")` and `project(":react-native-nitro-image")`, which
+      # autolinking never includes because npm installs those peers without declaring them). That
+      # part IS fixable by declaring both packages — which is exactly the trap: the fix turns CI
+      # green over a scan screen that no longer works.
+      #
+      # Lift this when VisionCamera ships an Android CameraObjectOutput.
+      # `__tests__/visionCameraContract.test.ts` holds the same line from inside the repo.
+      - dependency-name: "react-native-vision-camera"
+        update-types: ["version-update:semver-major"]
+
+      # #530: React Native 0.87 has no stable animation stack to stand on yet. The ceiling is a
+      # chain, and `react-native-reanimated` is the single link holding it down:
+      #
+      #     react-native-reanimated@4.5.3  peer react-native-worklets: "0.10.x - 0.11.x"
+      #     react-native-worklets@0.11.4   peer react-native:          "0.83 - 0.86"
+      #
+      # Worklets has ALREADY moved — 0.12.x peers `react-native: "0.83 - 0.87"`. It just cannot be
+      # adopted, because reanimated 4.5.3 refuses anything above 0.11.x. So bumping worklets alone
+      # does not unblock 0.87; reanimated is the thing to wait for.
+      #
+      # The 0.87 bump reproduced #470's exact failure shape — `npm ci` died with ERESOLVE and BOTH
+      # required jobs failed at install, before either suite could say anything about the code.
+      # Neither package is droppable: `src/components/MediaViewer.tsx` imports reanimated directly,
+      # and `babel.config.js` loads `react-native-worklets/plugin` as its last plugin.
+      #
+      # The other direction — "just upgrade reanimated" — is not available. As of 2026-08-21 the
+      # newest STABLE reanimated is 4.5.3; the only published builds that accept 0.87 are the
+      # `4.6.0-nightly-*` line. Shipping a nightly animation engine in a messenger release to
+      # unblock a routine dependency bump is a worse trade than staying one minor back.
+      #
+      # `react-native` and `@react-native/*` are ignored together because they version in
+      # lockstep: `@react-native/new-app-screen` peers on an EXACT `react-native@0.86.2`, so
+      # letting the siblings drift alone just re-breaks the install a different way.
+      #
+      # This is semver-MINOR rather than major because React Native is pre-1.0 — 0.87 *is* its
+      # major line. Patch bumps (0.86.x) still come through.
+      #
+      # Lift this when reanimated ships a STABLE release whose peer range reaches the React Native
+      # minor being proposed (and, transitively, a worklets line that does too).
+      # `__tests__/reanimatedToolchain.test.ts` holds the same line from inside the repo.
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: "@react-native/*"
+        update-types: ["version-update:semver-minor"]
     labels: [dependencies]
 
   - package-ecosystem: gradle

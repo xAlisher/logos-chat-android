@@ -130,4 +130,268 @@ class TorRelayGateTest {
     assertNull(TorRelayGate.deliveryNode(relayLive = true, relayMultiaddr = "", directNode = ""))
     assertNull(TorRelayGate.deliveryNode(relayLive = false, relayMultiaddr = null, directNode = null))
   }
+
+  // -- the enable-intent window (Senti P1 on #525) -----------------------------
+  //
+  // THE REGRESSION: `mediaOverTor` only flips at 100% bootstrap, so for the whole
+  // (tens-of-seconds) Tor bootstrap `privateMode` reads FALSE while the user has plainly
+  // asked for Private mode. Every gate keyed on `privateMode` alone therefore let an
+  // already-running node keep delivering on its direct route for that entire window — the
+  // one re-route (reopenForRouting) is queued only after bootstrap AND relay setup. The
+  // media side had a `privateModePending` latch for exactly this; delivery had none.
+
+  @Test
+  fun theBootstrapWindowCountsAsPrivateMode() {
+    // THE ORACLE: enable intent registered, KV not flipped yet, no relay. The gate must
+    // hold. Against the pre-#525 signature (privateMode alone) this is `false` — the
+    // window where delivery kept egressing directly.
+    assertTrue(
+        "an enabled-but-still-bootstrapping Private mode must gate delivery",
+        TorRelayGate.mustWaitForTor(
+            privateMode = false, relayLive = false, relayMultiaddr = null, privateModePending = true))
+    assertTrue(TorRelayGate.privateModeArmed(privateMode = false, privateModePending = true))
+  }
+
+  @Test
+  fun theIntentLatchReleasesOnceTheRelayIsActuallyUp() {
+    // Pending is not a permanent lock — the moment a live relay exists the gate opens, so
+    // enableTor's reopen re-routes rather than waiting out a timeout.
+    assertFalse(
+        TorRelayGate.mustWaitForTor(
+            privateMode = false, relayLive = true, relayMultiaddr = RELAY, privateModePending = true))
+  }
+
+  @Test
+  fun clearingTheIntentLatchRestoresTheOffBehaviour() {
+    // Bootstrap failure and user-cancel both clear the latch; with Private mode never
+    // persisted, delivery must be free to come back (direct) rather than stay stranded.
+    assertFalse(
+        "a cleared latch with Private mode off must not gate anything",
+        TorRelayGate.mustWaitForTor(
+            privateMode = false, relayLive = false, relayMultiaddr = null, privateModePending = false))
+  }
+
+  @Test
+  fun aPendingLatchDoesNotWeakenThePersistedGate() {
+    // The latch only ever ADDS coverage — Private mode on with no relay still waits.
+    for (pending in listOf(true, false)) {
+      assertTrue(
+          "privateMode=true must gate regardless of the latch (pending=$pending)",
+          TorRelayGate.mustWaitForTor(
+              privateMode = true, relayLive = false, relayMultiaddr = RELAY, privateModePending = pending))
+    }
+  }
+
+  // -- privateModeFromRead (a read FAULT is not a "no") -----------------------
+  //
+  // Senti P1 follow-up on #525. `enableTor` drops the in-memory intent latch as soon as the
+  // `mediaOverTor` write is confirmed, which hands the whole delivery gate to this persisted
+  // value. A confirmed write only proves the WRITE landed; the next READ of it can still
+  // fault (SQLite I/O error, or the `db == null` window `ChatRepo.wipeAndReinit` opens).
+  // Answering that fault with `false` — as the old `catch { false }` did — left the reopen
+  // with no persisted mode, no latch and no relay, so it cold-opened on the DIRECT route
+  // while the UI said Private mode was on.
+
+  @Test
+  fun anUnreadablePrivateModeGateCountsAsArmed() {
+    // THE ORACLE: unknown is not permission to egress.
+    assertTrue(
+        "a faulted read must arm the gate, not disarm it",
+        TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true))
+  }
+
+  @Test
+  fun aFaultedReadArmsTheGateWhateverItManagedToReturn() {
+    // The value is meaningless once the read faulted — a partial/garbage return must not
+    // talk the gate back down.
+    for (v in listOf(null, "", "false", "true", "1")) {
+      assertTrue(
+          "faulted read (value=$v) must arm the gate",
+          TorRelayGate.privateModeFromRead(readValue = v, readFaulted = true))
+    }
+  }
+
+  @Test
+  fun aCleanReadIsStillTakenAtItsWord() {
+    // Fail-closed must not become always-closed: a healthy DB that says "not private" is a
+    // real answer, and Private mode being off may never gate anything.
+    assertFalse(TorRelayGate.privateModeFromRead(readValue = null, readFaulted = false))
+    assertFalse(TorRelayGate.privateModeFromRead(readValue = "", readFaulted = false))
+    assertFalse(TorRelayGate.privateModeFromRead(readValue = "false", readFaulted = false))
+    assertTrue(TorRelayGate.privateModeFromRead(readValue = "true", readFaulted = false))
+  }
+
+  @Test
+  fun writeLandsRelayFailsThenTheReadFaults_deliveryStaysDownNotDirect() {
+    // The exact sequence from the review: `setSetting(mediaOverTor, 'true')` SUCCEEDS, relay
+    // setup FAILS, so the latch is released on the strength of the persisted gate alone —
+    // and then the reopen's read of that gate faults.
+    val privateMode = TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true)
+    assertTrue(
+        "the reopen must still block: no relay, and the gate could not be read",
+        TorRelayGate.mustWaitForTor(
+            privateMode = privateMode,
+            relayLive = false, // relay setup failed
+            relayMultiaddr = null, // …so no multiaddr was ever published
+            privateModePending = false, // latch released after the confirmed write
+        ))
+    // and the paused node must not resume onto the direct ctx it already holds either
+    assertFalse(
+        TorRelayGate.mayResumeDelivery(
+            privateMode = privateMode, privateModePending = false, openedOverRelay = false))
+  }
+
+  @Test
+  fun aFaultedReadDoesNotStrandDeliveryOnceTheRelayIsUp() {
+    // Fail-closed, not stuck: with a live relay the reopen routes over Tor and proceeds even
+    // though the gate read faulted. This is what keeps `awaitTorRelay`'s poll self-healing.
+    assertFalse(
+        TorRelayGate.mustWaitForTor(
+            privateMode = TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true),
+            relayLive = true,
+            relayMultiaddr = RELAY,
+            privateModePending = false))
+  }
+
+  // -- mayOpenWithoutRouting (deciding a route is not applying it) ------------
+  //
+  // The sibling of the above, found while fixing it. `applyDeliveryPeerEnv` runs AFTER
+  // mustWaitForTor has let the open through, and swallowed every fault as "non-fatal".
+  // A kvGet (or Os.setenv) throw there leaves LOGOS_DELIVERY_SERVICE_NODE unexported, the
+  // delivery client falls back to the baked-in fleet — the DIRECT route — and the open
+  // publishes the device bundle anyway, with Private mode armed and the UI saying Tor.
+
+  @Test
+  fun aFailedRoutingApplyMustNotOpenUnderPrivateMode() {
+    // THE ORACLE: passing the gate is not the same as being routed. The last step that can
+    // still put this open on the direct route is applying the env, so it has to fail closed.
+    assertFalse(
+        "a routing apply that failed must not open while Private mode is persisted",
+        TorRelayGate.mayOpenWithoutRouting(privateMode = true, privateModePending = false))
+    assertFalse(
+        "…nor during the bootstrap window, where the latch is the only signal",
+        TorRelayGate.mayOpenWithoutRouting(privateMode = false, privateModePending = true))
+  }
+
+  @Test
+  fun aFailedRoutingApplyIsStillNonFatalOutsidePrivateMode() {
+    // #219's original contract: not being able to pin a custom delivery node just means the
+    // baked-in fleet. That is only a leak when the user asked for Tor.
+    assertTrue(
+        TorRelayGate.mayOpenWithoutRouting(privateMode = false, privateModePending = false))
+  }
+
+  // -- mayResumeDelivery (resume does NOT re-apply routing) -------------------
+
+  @Test
+  fun aDirectlyOpenedNodeMayNotResumeDeliveryDuringTheEnableWindow() {
+    // THE ORACLE: pausing at intent is worthless if anything can resume it. A resume only
+    // flips delivery back on for the ctx we already hold — it never re-reads the delivery
+    // env — so resuming a directly-opened node puts egress right back on the route the
+    // user opted out of.
+    assertFalse(
+        TorRelayGate.mayResumeDelivery(
+            privateMode = false, privateModePending = true, openedOverRelay = false))
+    assertFalse(
+        "the same holds once Private mode is persisted",
+        TorRelayGate.mayResumeDelivery(
+            privateMode = true, privateModePending = false, openedOverRelay = false))
+  }
+
+  @Test
+  fun aRelayOpenedNodeResumesFreelyInPrivateMode() {
+    // The ordinary "Logos off / Logos on" toggle under Private mode must keep working —
+    // that node is already routed through the relay, so a resume is safe.
+    assertTrue(
+        TorRelayGate.mayResumeDelivery(
+            privateMode = true, privateModePending = false, openedOverRelay = true))
+  }
+
+  @Test
+  fun resumeIsUngatedOutsidePrivateMode() {
+    for (relay in listOf(true, false)) {
+      assertTrue(
+          "no Private mode, no resume gate (openedOverRelay=$relay)",
+          TorRelayGate.mayResumeDelivery(
+              privateMode = false, privateModePending = false, openedOverRelay = relay))
+    }
+  }
+
+  // -- deliveryEnv (the process env is not a fresh slate) ---------------------
+
+  /**
+   * Senti P1 (4th follow-up) on #525: a stand-in for the process-wide environment, since
+   * `applyDeliveryPeerEnv` mutates the SAME env on every same-process reopen. Mirrors
+   * NodeRuntime's two arms exactly — the arm choice itself is production code.
+   */
+  private class ProcessEnv {
+    private val vars = HashMap<String, String>()
+
+    fun open(relayLive: Boolean, relayMultiaddr: String?, directNode: String?) {
+      when (val env = TorRelayGate.deliveryEnv(relayLive, relayMultiaddr, directNode)) {
+        is TorRelayGate.DeliveryEnv.Set -> vars["LOGOS_DELIVERY_SERVICE_NODE"] = env.node
+        TorRelayGate.DeliveryEnv.Clear -> vars.remove("LOGOS_DELIVERY_SERVICE_NODE")
+      }
+    }
+
+    fun deliveryNodeVar(): String? = vars["LOGOS_DELIVERY_SERVICE_NODE"]
+  }
+
+  @Test
+  fun disablingPrivateModeClearsTheRelayOverrideInTheSameProcess() {
+    // THE ORACLE. enable-over-relay → disable-to-default, both opens in one process:
+    // disableTor() stops the loopback relay, clears the deliveryRelayNode KV and calls
+    // reopenNodeForRouting(). With no custom node the reopen picks "no override" — and if
+    // that only means "skip the export", the dead relay address from the FIRST open survives
+    // and the new delivery client dials a stopped port. Filter/lightpush stay stranded until
+    // the process restarts.
+    val env = ProcessEnv()
+    env.open(relayLive = true, relayMultiaddr = RELAY, directNode = null)
+    assertEquals("Private mode routes delivery over the relay", RELAY, env.deliveryNodeVar())
+
+    env.open(relayLive = false, relayMultiaddr = "", directNode = null)
+    assertNull(
+        "disabling Private mode must UNSET the override, not leave the dead relay behind",
+        env.deliveryNodeVar())
+  }
+
+  @Test
+  fun disablingPrivateModeFallsBackToTheCustomNodeNotTheDeadRelay() {
+    // Same transition with a self-hosted node configured: the override must be REPLACED,
+    // never left pointing at the stopped relay.
+    val env = ProcessEnv()
+    env.open(relayLive = true, relayMultiaddr = RELAY, directNode = DIRECT)
+    assertEquals(RELAY, env.deliveryNodeVar())
+
+    env.open(relayLive = false, relayMultiaddr = "", directNode = DIRECT)
+    assertEquals(DIRECT, env.deliveryNodeVar())
+  }
+
+  @Test
+  fun noNodeAnywhereIsAClearNotASkip() {
+    assertEquals(
+        TorRelayGate.DeliveryEnv.Clear,
+        TorRelayGate.deliveryEnv(relayLive = false, relayMultiaddr = null, directNode = null))
+    assertEquals(
+        "an empty custom node is no node at all",
+        TorRelayGate.DeliveryEnv.Clear,
+        TorRelayGate.deliveryEnv(relayLive = false, relayMultiaddr = "", directNode = ""))
+    // A stale multiaddr with no live relay behind it is also a clear, never an export.
+    assertEquals(
+        TorRelayGate.DeliveryEnv.Clear,
+        TorRelayGate.deliveryEnv(relayLive = false, relayMultiaddr = RELAY, directNode = null))
+  }
+
+  @Test
+  fun deliveryEnvAgreesWithDeliveryNode() {
+    for (live in listOf(true, false)) for (relay in listOf(RELAY, "", null)) for (direct in
+        listOf(DIRECT, "", null)) {
+      val node = TorRelayGate.deliveryNode(live, relay, direct)
+      val env = TorRelayGate.deliveryEnv(live, relay, direct)
+      if (node == null) assertEquals("live=$live relay=$relay direct=$direct",
+          TorRelayGate.DeliveryEnv.Clear, env)
+      else assertEquals("live=$live relay=$relay direct=$direct",
+          TorRelayGate.DeliveryEnv.Set(node), env)
+    }
+  }
 }
