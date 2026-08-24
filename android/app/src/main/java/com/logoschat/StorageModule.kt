@@ -38,12 +38,21 @@ class StorageModule(reactContext: ReactApplicationContext) :
   private val token = BuildConfig.STORAGE_TOKEN
   private val IV_LEN = 12
   private val TAG_BITS = 128
+  // #517 path 4: how long a media request waits for Tor to finish bootstrapping (Private
+  // mode intended) before failing closed instead of egressing directly.
+  private val PRIVATE_MODE_MEDIA_WAIT_MS = 30_000L
 
   // #318 (metadata privacy): when on, media upload/download is routed through a local SOCKS5
   // proxy (Tor) so the storage node sees a Tor exit IP, not the user's real IP. Set from JS
   // (settingsStore) via setTorRouting; the embedded/Orbot Tor listens on `torSocksPort`.
   @Volatile private var torEnabled = false
   @Volatile private var torSocksPort = 9050
+  // #517 path 4: Private mode is INTENDED but Tor hasn't finished bootstrapping yet, so
+  // `torEnabled` is still false. During that window a media request must NOT egress directly
+  // (real IP + bearer token + CID to the storage node). JS sets this true the moment the user
+  // enables Private mode — before the 100%-bootstrap setTorRouting call — so openConn can
+  // wait for the route (bounded) and then fail closed, mirroring the delivery-side gate.
+  @Volatile private var privateModePending = false
 
   private fun configured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
 
@@ -55,6 +64,19 @@ class StorageModule(reactContext: ReactApplicationContext) :
    */
   private fun openConn(urlStr: String): HttpURLConnection {
     val url = URL(urlStr)
+    // #517 path 4: Private mode intended but Tor not yet routing → wait for the route
+    // (bounded), then fail closed rather than egress directly during the bootstrap window.
+    if (privateModePending && !torEnabled) {
+      val deadline = System.currentTimeMillis() + PRIVATE_MODE_MEDIA_WAIT_MS
+      while (!torEnabled && System.currentTimeMillis() < deadline) {
+        if (!privateModePending) break // user cancelled Private mode → fall through
+        Thread.sleep(100)
+      }
+      if (privateModePending && !torEnabled) {
+        throw IllegalStateException(
+            "Private mode is on but Tor is not ready yet — not sending media over a direct connection")
+      }
+    }
     return if (torEnabled) {
       // #363: fail visibly rather than fall back to direct networking.
       if (torSocksPort <= 0) {
@@ -75,6 +97,20 @@ class StorageModule(reactContext: ReactApplicationContext) :
   fun setTorRouting(enabled: Boolean, socksPort: Int) {
     torEnabled = enabled
     if (socksPort > 0) torSocksPort = socksPort
+    // Once routing is live the pending window is over; clearing it also releases any
+    // openConn wait blocked below.
+    if (enabled) privateModePending = false
+  }
+
+  /**
+   * #517 path 4: JS marks Private mode as INTENDED at the moment the user enables it —
+   * before Tor finishes bootstrapping and before [setTorRouting] flips routing on at 100%.
+   * While pending, a media request waits for the route (bounded) and then fails closed
+   * rather than egressing directly. Cleared on disable/cancel (and when routing goes live).
+   */
+  @ReactMethod
+  fun setPrivateModePending(pending: Boolean) {
+    privateModePending = pending
   }
 
   /** #308: emit an upload-progress device event so the "sending" ring can fill. */

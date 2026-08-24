@@ -17,7 +17,7 @@ sha256sum /tmp/peers-so/lib/arm64-v8a/*.so
 ### Logos / Peers-built (the security-critical TCB)
 | Library | Purpose | Source / provenance |
 |---|---|---|
-| `liblogoschat.so` | MLS chat core (E2E messaging) | Published by `xAlisher/logos-libchat-mls-android` @ `3c38687`; **patch-based** on pinned upstream `libchat` commit `462a4884` (#427 repin; +9 commits incl. #184 delivery-based key/account publishing) + `patches/libchat-android-arm64.patch` (the sole consolidated fork patch — the former 349/437/433 group-ops and 490/491 GHSA-xxgx binding were folded in during the rebase; XWING #193 deferred, CIPHER_SUITE stays MLS_128 for wire/storage compat with ≤0.9.8) |
+| `liblogoschat.so` | MLS chat core (E2E messaging) | Published by `xAlisher/logos-libchat-mls-android` @ `8791276`; **patch-based** on pinned upstream `libchat` commit `462a4884` (#427 repin; +9 commits incl. #184 delivery-based key/account publishing) + `patches/libchat-android-arm64.patch` (the sole consolidated fork patch — the former 349/437/433 group-ops and 490/491 GHSA-xxgx binding were folded in during the rebase; XWING #193 deferred, CIPHER_SUITE stays MLS_128 for wire/storage compat with ≤0.9.8) + `patches/497-groupv2-authenticated-attribution.patch` (#497: GroupV2 attributes from the MLS-authenticated `sender_credential`) |
 | `liblogoschat_bridge.so` | JNI bridge | Built **in this repo** from `android/app/src/main/cpp/logoschat_jni.c` by `scripts/build-bridge.sh` (out-of-band; not a gradle task) — the only shipped lib whose source is reviewable in the same diff as its binary |
 | `liblogosdelivery.so` | Delivery layer (Waku-based) + SDS reliable channels | Published by `xAlisher/logos-libdelivery-android` @ `1646770` (Logos delivery / nwaku; see #402) |
 | `librln.so` | RLN rate-limiting nullifier (delivery spam control) | Published by `xAlisher/logos-libdelivery-android` @ `1646770` (Waku/RLN stack) |
@@ -52,7 +52,7 @@ cd android/app/src/main/jniLibs/arm64-v8a && sha256sum -c SHA256SUMS
 Comparing against a **release APK** instead: `liblogoschat.so`, `liblogosdelivery.so` and
 `librln.so` are already fully stripped and pass through packaging **bit-identical**, so their
 in-APK hashes match the manifest directly (re-verified on the GHSA-xxgx-7757-3qq6 security
-build: `e879a3e0…` in `jniLibs/` = `e879a3e0…` in `lib/arm64-v8a/` of `app-release.apk`).
+build: `0ca5d637…` in `jniLibs/` = `0ca5d637…` in `lib/arm64-v8a/` of `app-release.apk`).
 `liblogoschat_bridge.so` and `libc++_shared.so` still carry a symbol table that AGP's strip
 pass removes during packaging, so their in-APK hashes differ **by design** — cross-check
 those two by GNU build-id (`readelf -n`), recorded in the manifest header.
@@ -93,7 +93,7 @@ Fixed at the source rather than papered over in prose:
 
 - `xAlisher/logos-libchat-mls-android@04bc30d` **published the exact artifact** this app
   bundled at that point (`6dd23bc7…`), superseding the stale `8f4fbdc6…`. (Superseded twice
-  since — see rounds 3 and 4 below; the shipped binary is now `e879a3e0…` @ `3c38687` (the #427 repin; `069cdb3d…` @ `0b6c0ca` was the prior 0.9.8 build).)
+  since — see rounds 3 and 4 below; the shipped binary is now `0ca5d637…` @ `8791276` (the #427 repin + #497 authenticated-attribution build; `e879a3e0…` @ `3c38687` was the pre-#497 #427 build, `069cdb3d…` @ `0b6c0ca` the prior 0.9.8 build).)
 - `xAlisher/logos-libdelivery-android@1646770` — found in the same pass — is now published
   too. The app had been shipping `liblogosdelivery.so` `944e1629…` while that repo's public
   branch published `58c766b9…`, i.e. the **same defect, unreported**, for the delivery lib.
@@ -171,7 +171,7 @@ only evidence there is.
 ## Toolchain / provenance
 - Rust libs: `cargo` targeting `aarch64-linux-android`, Android **NDK r27**.
 - Android: **JDK 17**, Gradle (see `android/gradle/wrapper`).
-- Source pins: upstream `libchat` @ `462a4884` (#427 repin) + the `logos-libchat-mls-android` @ `3c38687`
+- Source pins: upstream `libchat` @ `462a4884` (#427 repin) + the `logos-libchat-mls-android` @ `8791276`
   patch set (see the manifest above); JS deps @ `package-lock.json`.
 - **Reproducible builds: measured, and currently NOT reproducible.** This was upgraded from
   "not yet proven" to a measurement during the #437 review. A full `cargo clean` + rerun of
@@ -207,9 +207,15 @@ The `kotlin-unit` job runs `processReleaseManifest` and asserts the merged **rel
 - `allowBackup="false"` (#366) — no ADB/cloud backup extraction of app data.
 - Exported components reviewed: only `MainActivity` is `exported="true"` (the launcher, required);
   services/providers are `exported="false"`.
-- **Release signing correctness** is NOT yet asserted — the release currently uses the debug
-  keystore (#356). A real signing-config + a CI signature assertion land with #356 (keystore
-  custody is a human handoff).
+- **Release signing** uses the production `CN=Peers` key (SHA-256
+  `67083eb88d7efaa792687af739bfa98f2a14041a61652a81a0441f68698e68bf`), in place since versionCode
+  113 (every versionCode in the F-Droid index verifies to it). The release build passes
+  `-PassertReleaseSigned`, which **hard-fails** rather than fall back to the debug keystore unless
+  the production credentials are configured (`RELEASE_STORE_FILE` et al., maintainer-held — see
+  `docs/SIGNING.md`); `__tests__/releaseSigning.test.ts` lints the credential wiring + the assert
+  guard. **Still outstanding (#522):** the signature is enforced at *release-cut* time (the
+  `/release-peers` flow verifies `apksigner` prints the `CN=Peers` SHA-256 above), NOT yet by a CI step — inspecting a
+  *produced* APK's signer in CI needs the keystore in CI, a human credential handoff.
 
 ## Assurance plan — remaining (external / infra)
 - **Device-level regression harness** (#366): encrypted storage, notification redaction, export

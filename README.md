@@ -3,7 +3,10 @@
 **You cannot be deplatformed if there is no platform.**
 
 Peers is a private, peer-to-peer messenger for Android. Your identity lives on your
-device — no phone number, no account, no central server, no Google. It keeps working
+device — no phone number, no account, no central server holding your messages, no
+Google. (Your device does publish a public key bundle to a directory registry so
+others can start a conversation with you — see [privacy.md](docs/privacy.md) for what
+that exposes and how Private mode covers it.) It keeps working
 when the network doesn't, by carrying the same conversation over whichever transport
 is alive: [Logos](https://github.com/logos-messaging/logos-chat) delivery, **MeshCore**
 (LoRa radio), or **Bluetooth mesh**.

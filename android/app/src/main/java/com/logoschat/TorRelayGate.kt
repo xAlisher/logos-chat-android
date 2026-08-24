@@ -31,12 +31,80 @@ object TorRelayGate {
       relayLive && !relayMultiaddr.isNullOrEmpty()
 
   /**
-   * Must the cold open block before publishing this device's bundle? Only in Private
-   * mode, and only until a relay is usable — publishing over a direct connection
+   * Senti P1 follow-up on #525: resolve the PERSISTED half of the gate from a KV read that
+   * may have faulted. A read fault is not a "no".
+   *
+   * `privateModeEnabled()` used to collapse "the DB said not-private" and "the DB could not
+   * be read" into the same `false`. That failed OPEN in the one window it mattered: once
+   * `enableTor` confirms the `mediaOverTor` write it hands the gate over and drops the
+   * in-memory intent latch, so the persisted value is the ONLY thing left holding delivery.
+   * If the very next read of it faulted (SQLite I/O error, or the brief `db == null` window
+   * a concurrent wipe opens), the cold reopen saw no persisted mode, no latch and no relay,
+   * sailed past [mustWaitForTor] and published over the DIRECT route — while the UI said
+   * Private mode was on. A write landing only proves the write landed; it cannot make the
+   * read infallible, so the read fails CLOSED instead. Same stance as #516 took for the lock
+   * state: a storage FAULT is unknown, and unknown is not permission to egress.
+   *
+   * Costs nothing when Private mode is off and the DB is healthy, and a transient fault
+   * self-heals — `awaitTorRelay` re-evaluates the gate every 500ms, so the next good read
+   * releases the wait rather than burning the whole timeout.
+   */
+  fun privateModeFromRead(readValue: String?, readFaulted: Boolean): Boolean =
+      readFaulted || readValue == "true"
+
+  /**
+   * Senti P1 on #525: is Private mode ARMED — either already persisted (`mediaOverTor`)
+   * or merely INTENDED and still bootstrapping? The KV only flips at 100% bootstrap, so
+   * for the whole (tens-of-seconds) bootstrap window `privateMode` is still false while
+   * the user has plainly asked for Private mode. Every routing decision must treat that
+   * window as Private mode, or delivery keeps egressing directly right through it.
+   * Mirrors StorageModule's `privateModePending` on the media side.
+   */
+  fun privateModeArmed(privateMode: Boolean, privateModePending: Boolean): Boolean =
+      privateMode || privateModePending
+
+  /**
+   * Must the cold open block before publishing this device's bundle? Only when Private
+   * mode is armed, and only until a relay is usable — publishing over a direct connection
    * would join the real IP to a stable identity. No-op when Private mode is off.
    */
-  fun mustWaitForTor(privateMode: Boolean, relayLive: Boolean, relayMultiaddr: String?): Boolean =
-      privateMode && !relayUsable(relayLive, relayMultiaddr)
+  fun mustWaitForTor(
+      privateMode: Boolean,
+      relayLive: Boolean,
+      relayMultiaddr: String?,
+      privateModePending: Boolean = false,
+  ): Boolean =
+      privateModeArmed(privateMode, privateModePending) && !relayUsable(relayLive, relayMultiaddr)
+
+  /**
+   * Senti P1 on #525: may a PAUSED node simply RESUME delivery? A resume flips Waku
+   * delivery back on for the ctx that is already open — it does NOT re-apply routing
+   * (only a cold open reads the delivery env). So a node opened on the direct route must
+   * never resume while Private mode is armed: it would come back on that same direct
+   * route. Fail closed and let the reopen path (teardown + cold open) bring it back.
+   *
+   * A node that WAS opened over the relay resumes freely — that is the ordinary
+   * "Logos off / Logos on" toggle, and it is already routed through Tor.
+   */
+  fun mayResumeDelivery(
+      privateMode: Boolean,
+      privateModePending: Boolean,
+      openedOverRelay: Boolean,
+  ): Boolean = !privateModeArmed(privateMode, privateModePending) || openedOverRelay
+
+  /**
+   * Senti P1 follow-up on #525 (sibling site): may the cold open PROCEED when applying the
+   * delivery routing failed?
+   *
+   * `applyDeliveryPeerEnv` runs AFTER [mustWaitForTor] has already let the open through, and
+   * used to swallow its own faults as "non-fatal". Outside Private mode that is right —
+   * failing to pin a custom node just means the baked-in fleet. Under Private mode it is the
+   * same fail-open the persisted-gate read had: the fleet default IS the direct route, so the
+   * bundle gets published over the real IP while the user is told they are on Tor. Deciding
+   * routing and applying it are two different things, and only the second one counts.
+   */
+  fun mayOpenWithoutRouting(privateMode: Boolean, privateModePending: Boolean): Boolean =
+      !privateModeArmed(privateMode, privateModePending)
 
   /**
    * Which multiaddr `LOGOS_DELIVERY_SERVICE_NODE` should carry: the Tor relay when it
@@ -50,4 +118,30 @@ object TorRelayGate {
   fun deliveryNode(relayLive: Boolean, relayMultiaddr: String?, directNode: String?): String? =
       relayMultiaddr?.takeIf { relayUsable(relayLive, it) }
           ?: directNode?.takeIf { it.isNotEmpty() }
+
+  /**
+   * Senti P1 (4th follow-up) on #525: what this open must leave in the process-wide
+   * `LOGOS_DELIVERY_SERVICE_NODE`.
+   *
+   * Deliberately NOT the same thing as [deliveryNode] returning null. "No override chosen"
+   * only means "the baked-in fleet" if the env is a fresh slate — and it is not: routing is
+   * re-applied by a same-process reopen (`reopenNodeForRouting`), so a previous open in THIS
+   * process may already have exported the Tor relay's loopback multiaddr. `disableTor()` stops
+   * that relay, clears the `deliveryRelayNode` KV and reopens; with no custom node configured
+   * the decision here is "no override", and merely skipping the export would leave the dead
+   * loopback address in place — the new delivery client would keep dialing a stopped relay and
+   * filter/lightpush would stay stranded until the process restarted. So "no override" is an
+   * explicit [Clear], and NodeRuntime must handle both arms.
+   */
+  sealed class DeliveryEnv {
+    /** Export this multiaddr (relay loopback, or the user's own node). */
+    data class Set(val node: String) : DeliveryEnv()
+
+    /** Unexport the override entirely — the built-in fleet, with nothing stale left behind. */
+    object Clear : DeliveryEnv()
+  }
+
+  fun deliveryEnv(relayLive: Boolean, relayMultiaddr: String?, directNode: String?): DeliveryEnv =
+      deliveryNode(relayLive, relayMultiaddr, directNode)?.let { DeliveryEnv.Set(it) }
+          ?: DeliveryEnv.Clear
 }

@@ -365,6 +365,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     // routing live — "green" per the UX = the network is actually reachable, not just
     // the process spawned. The SOCKS listener binds early; we read its port at the end.
     set({torBusy: true, torBootstrapPercent: 0});
+    // #517 path 4: mark Private mode intended NOW, before bootstrap completes, so media
+    // requests during the Tor-bootstrap window fail closed instead of egressing directly.
+    // setTorRouting(true) below clears it once routing is live; cancel/disable clear it too.
+    Storage.setPrivateModePending(true);
+    // Senti P1 on #525: DELIVERY needs the same intent latch, and an active stop. The media
+    // latch above only gates StorageModule; a node that is already running keeps its
+    // filter/lightpush egress on the direct route for the whole bootstrap below, because the
+    // only re-route (reopenNodeForRouting) is queued after Tor hits 100% AND after relay
+    // setup. So: latch first (nothing may reopen delivery direct while pending), then pause
+    // the running node's delivery NOW, before we await anything.
+    LogosChat.setNodePrivateModePending(true);
+    // Deliberately NOT awaited: the pause runs on the node executor, which a cold start may
+    // already be occupying with its own bounded wait-for-Tor. Awaiting it there would stall
+    // this function before Tor.start() and deadlock the very bootstrap it waits for. The
+    // latch — already set, synchronously ordered ahead of this call — is what holds the
+    // guarantee; the pause is the active teardown of an egress that is live right now.
+    LogosChat.pauseNodeForRouting().catch(() => {});
     torCancelled = false;
     torUnsub?.();
     try {
@@ -388,14 +405,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       }
       Storage.setTorRouting(true, port);
       set({mediaOverTor: true, torBusy: false});
+      // Persist Private mode so a future cold start re-gates. This is what
+      // NodeRuntime.privateModeEnabled() reads; but note it is NOT what releases the intent
+      // latch below — only a confirmed-usable relay does (Senti P1 3rd follow-up on #525),
+      // because this read can fault open at reopen time. Media is unaffected (setTorRouting
+      // above is in-process).
       try {
         await LogosChat.setSetting(KV_MEDIA_OVER_TOR, 'true');
       } catch {
-        // best-effort
+        // best-effort — the latch below stays armed unless the RELAY is confirmed usable
       }
       // #319: stand up the delivery relay to the CURRENT delivery node's host:port, then
       // point the node at the loopback relay (KV). Only set the KV AFTER the relay is up,
       // so we never send the node to a dead relay. Applies to delivery on next node start.
+      let relayUsable = false;
       try {
         const custom = (await LogosChat.getSetting(KV_DELIVERY_SERVICE_NODE)) || '';
         const node = custom.trim().length > 0 ? custom : DEFAULT_DELIVERY_NODE;
@@ -404,10 +427,33 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         if (target != null && relay != null) {
           await Tor.startDeliveryRelay(target.host, target.port, DELIVERY_RELAY_LOCAL_PORT);
           await LogosChat.setSetting(KV_DELIVERY_RELAY_NODE, relay);
+          // Both halves landed: the relay is standing AND its multiaddr is published, which
+          // is exactly what TorRelayGate.relayUsable() requires to route delivery over Tor.
+          relayUsable = true;
         }
       } catch {
         // relay failed → leave delivery direct (don't point the node at a dead relay)
       }
+      // #517 path 2: apply the new Tor delivery routing to an ALREADY-RUNNING node — a
+      // Private-mode toggle otherwise only takes effect on the next node start, leaving a
+      // running node's delivery egress direct. No-op if the node isn't up.
+      //
+      // Senti P1 (3rd follow-up) on #525: release the intent latch ONLY when the relay is
+      // confirmed usable — the single condition under which the reopen actually routes
+      // delivery over Tor (it keys on TorState.deliveryRelayLive + the published multiaddr,
+      // never on a KV read). A LANDED `mediaOverTor` write is NOT sufficient: the reopen's
+      // gate reads that KV back through privateModeEnabled(), which catches any transient
+      // read fault and returns false (NodeRuntime.kt:274-279) — so releasing the latch on
+      // "the write succeeded" hands the gate to a faultable native read that can fail OPEN,
+      // cold-opening delivery on the DIRECT route while the UI (mediaOverTor: true) shows
+      // Private mode on. Keeping the in-memory latch armed whenever the relay is not usable
+      // makes the reopen fail CLOSED (delivery down) regardless of what that read returns —
+      // the in-memory latch, not the native read, stays the authoritative gate through the
+      // reopen. disableTor/cancelTor still clear it, so nothing is stranded for good.
+      if (relayUsable) {
+        LogosChat.setNodePrivateModePending(false);
+      }
+      LogosChat.reopenNodeForRouting().catch(() => {});
     } catch {
       // start/bootstrap failed — leave the toggle off and tear the daemon down.
       try {
@@ -416,6 +462,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         // best-effort
       }
       set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
+      Storage.setPrivateModePending(false); // #517: bootstrap failed → release the media gate
+      // #525: Private mode never came up and the toggle is back off, so RESTORE the delivery
+      // we paused at intent — the same call the media latch above makes. KV_MEDIA_OVER_TOR
+      // was never written 'true' on this path, so the reopen comes back on the direct route,
+      // i.e. exactly the state the user was in before they tried.
+      LogosChat.setNodePrivateModePending(false);
+      LogosChat.reopenNodeForRouting().catch(() => {});
     } finally {
       torUnsub?.();
       torUnsub = null;
@@ -424,6 +477,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   disableTor: async () => {
     set({mediaOverTor: false, torBusy: false, torBootstrapPercent: 0});
+    Storage.setPrivateModePending(false); // #517: Private mode off → media may go direct again
     try {
       Tor.stopDeliveryRelay(); // #319
     } catch {
@@ -446,12 +500,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch {
       // best-effort
     }
+    // #517 path 2: re-route the running node back to direct delivery now, not just next start.
+    // #525: drop the delivery intent latch too — Private mode is off, so leaving it armed
+    // would make the reopen below fail closed and strand delivery down.
+    LogosChat.setNodePrivateModePending(false);
+    LogosChat.reopenNodeForRouting().catch(() => {});
   },
 
   cancelTor: () => {
     // User pressed Cancel mid-bootstrap: abort the pending enableTor, stop the daemon,
     // stay off. Don't touch the persisted pref (it was never turned on).
     torCancelled = true;
+    Storage.setPrivateModePending(false); // #517: cancelled before Tor came up → release the gate
+    // #525: the user explicitly abandoned Private mode → release the delivery latch and
+    // restore the delivery we paused at intent. Private mode was never persisted, so the
+    // reopen comes back direct: the state they cancelled back to.
+    LogosChat.setNodePrivateModePending(false);
+    LogosChat.reopenNodeForRouting().catch(() => {});
     torUnsub?.();
     torUnsub = null;
     try {

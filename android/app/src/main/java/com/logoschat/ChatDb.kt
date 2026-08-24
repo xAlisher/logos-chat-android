@@ -1157,6 +1157,13 @@ class ChatDb(
   private fun restoreRow(db: SupportSQLiteDatabase, table: String, row: JSONObject) {
     val cols = row.keys().asSequence().toList()
     if (cols.isEmpty()) return
+    // #516: mirror the export denylist on import. exportJson() deliberately strips the
+    // PIN/duress verifiers (EXPORT_EXCLUDED_KV) so an offline attacker can't guess them;
+    // without the same filter here a crafted backup could REPLANT a pinVerifier (a lockout)
+    // or a distinct-value duressVerifier the user never set (which silently wipes on a
+    // later unlock). Skip exactly those kv rows — a per-row skip, not a throw, so the rest
+    // of the restore still commits (no half-restored db).
+    if (table == "kv" && row.optString("key") in EXPORT_EXCLUDED_KV) return
     val args = arrayOfNulls<Any?>(cols.size)
     for ((i, c) in cols.withIndex()) {
       args[i] =

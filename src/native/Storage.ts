@@ -22,6 +22,13 @@ interface StorageNative {
    * Tor SOCKS port (embedded Tor, or 9050 for Orbot).
    */
   setTorRouting(enabled: boolean, socksPort: number): void;
+  /**
+   * #517 path 4: mark Private mode as INTENDED the moment the user enables it — before Tor
+   * finishes bootstrapping and before {@link setTorRouting} flips routing on at 100%. While
+   * pending, a media request waits for the route (bounded) then fails closed instead of
+   * egressing directly. Cleared on disable/cancel.
+   */
+  setPrivateModePending(pending: boolean): void;
 }
 
 const Storage = NativeModules.Storage as StorageNative;

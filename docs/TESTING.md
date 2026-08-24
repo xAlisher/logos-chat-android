@@ -38,6 +38,59 @@ Newest release first. These are the things that **changed** in each release — 
 poking hardest right after you update. (For the evergreen checklist, see the next
 section.)
 
+### v0.9.15 — close the residuals (security round 4)
+A tidy-up security round: no new features, just closing the last gaps around **Private mode
+(Tor)** and the **PIN lock**, plus honest docs. Worth poking:
+
+- **Private mode on/off round-trip.** Settings → turn **Private mode** on and wait for Tor to
+  finish. Send a text and a photo. Then turn Private mode **off** and send again. Working = both
+  states send fine, and turning Private mode **off does not strand delivery** — messages keep
+  going through afterwards without restarting the app.
+- **Delivery pauses while Tor comes up (not before, not leaking).** When you enable Private mode,
+  Logos should briefly drop to **Offline** (delivery is paused so nothing goes out on the direct
+  route while Tor bootstraps), then return **Online** once the relay is up. Disabling brings it
+  back **Online** on the normal route. Working = the status pill matches what Private mode is
+  actually doing at each step.
+- **PIN lock still arms on cold launch.** If you use an app-lock PIN, fully close the app (swipe
+  it away) and reopen it — you should be asked for your PIN before you can see any chats. Working
+  = the lock always shows on a cold start; a set PIN is never skipped.
+
+### v0.9.14 — authenticated attribution + storage authorization (security round 3)
+Another external-review round. The theme: control markers and attribution can no longer be
+forged from the wire. Worth poking:
+
+- **Group messages show the real sender.** Open a group, read a few messages, then close and
+  reopen the chat. Each message should show the correct sender name/avatar with the blue
+  **verified check** — attribution is now taken from the cryptographic MLS sender, not a field
+  the sending client can set. Working = who-sent-what is always right, including after reopening.
+- **Only the creator changes group storage.** As the group **creator**, toggle media storage
+  off then on (group menu). It applies for everyone. As a **non-creator**, you can't change it —
+  and a member can't flip it back on by any means, even after you reopen the chat. Working = only
+  the creator's choice sticks; the on/off system line names who changed it.
+- **Backup can't smuggle a PIN, and restore is honest.** Make a backup, then restore it
+  (About → Backup/Restore). Working = it restores your identity + history; a restored backup
+  cannot silently plant a lock/duress PIN; and if a restore can't fully clear old data it says so
+  (**"wipe incomplete"**) instead of claiming success.
+- **Duress PIN unchanged in normal use.** If you use a duress/wipe PIN, confirm normal unlock is
+  unaffected; the duress wipe still fires as designed. (Test only on a spare device — 3 wrong
+  PINs also wipe.)
+
+### v0.9.13 — security hardening round 2 (wipe + private mode)
+More fixes from an external reviewer, focused on the duress/reset wipe and Private mode. If you
+use a wipe PIN, the parts worth exercising:
+
+- **Reset is honest about failure.** Settings → Reset identity and data. On success it resets to a
+  fresh identity as before; if it somehow can't fully delete, it now says **"Reset failed"** rather
+  than claiming a clean wipe. (There's nothing you need to make fail — just confirm a normal reset
+  still comes back to a brand-new identity with empty chats.)
+- **Duress wipe leaves nothing behind.** If you set a wipe PIN and enter it at the lock screen, it
+  silently wipes to a fresh identity — and now also removes an old plaintext migration backup that
+  earlier builds could leave on disk. Behaves like a normal unlock; no spinner, no flash of your old
+  chat list. (Test only on a device whose identity you don't mind losing.)
+- **Private mode still fails closed.** Turn Private mode on, then fully close + reopen the app: the
+  node waits for Tor before connecting, then comes online. With no network it stays offline rather
+  than connecting directly.
+
 ### v0.9.12 — housekeeping (bug fixes + dependency hygiene)
 A tidy-up release: two visible bug fixes plus behind-the-scenes dependency updates. Worth a poke:
 
