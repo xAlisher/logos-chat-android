@@ -23,6 +23,51 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Both hoisted transitives, present because the toolchains this file pins pull them in. Typed
+// inline rather than adding @types packages for two call sites (same shape as babelToolchain).
+const yaml = require('js-yaml') as {load(src: string): unknown};
+const semver = require('semver') as {
+  coerce(v: string): {version: string} | null;
+  compare(a: string, b: string): number;
+};
+
+// Dependabot's Maven/Gradle `ignore.versions` uses MAVEN range syntax ([1.4,), (3.6.0,)), NOT npm
+// comparators — https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+// (Maven: use `[1.4,)`). npm `semver` cannot parse those, so validating the holds with
+// `semver.validRange`/`satisfies` (PR #513's first cut) gave FALSE confidence: `>= 9.4` is valid
+// npm-semver and passed, while Dependabot's Maven parser would never honour it. Senti P1 on #513.
+// This evaluates the ranges the way Dependabot actually will — Maven bracket semantics.
+const MAVEN_RANGE = /^([[(])\s*([^,)\]]*)\s*,\s*([^,)\]]*)\s*([)\]])$/;
+function coerceVer(v: string): string {
+  const c = semver.coerce(v);
+  if (!c) throw new Error(`uncoercible version: ${v}`);
+  return c.version;
+}
+/** A parseable Maven range (`[lo,hi]` with either bound optional) or a bare exact version. */
+function validMavenVersionSpec(spec: string): boolean {
+  if (MAVEN_RANGE.test(spec)) return true;
+  // A bare exact-version pin: digits and dots only. Deliberately rejects npm comparators
+  // (`>= 9.4`, `> 3.6.0`) — the whole point of Senti's #513 P1 — so a regression to npm syntax
+  // fails HERE, not just in the behavioural assertions below.
+  return /^\d+(\.\d+)*$/.test(spec) && semver.coerce(spec) != null;
+}
+/** Does `version` fall in Maven spec `spec` (`[9.4,)`, `(3.6.0,)`, or an exact version)? */
+function mavenSatisfies(version: string, spec: string): boolean {
+  const m = MAVEN_RANGE.exec(spec);
+  if (!m) return coerceVer(version) === coerceVer(spec); // bare exact-version pin
+  const [, lb, lo, hi, ub] = m;
+  const v = coerceVer(version);
+  if (lo !== '') {
+    const c = semver.compare(v, coerceVer(lo)); // [ → v>=lo ; ( → v>lo
+    if (lb === '[' ? c < 0 : c <= 0) return false;
+  }
+  if (hi !== '') {
+    const c = semver.compare(v, coerceVer(hi)); // ] → v<=hi ; ) → v<hi
+    if (ub === ']' ? c > 0 : c >= 0) return false;
+  }
+  return true;
+}
+
 const ROOT = path.join(__dirname, '..');
 const WRAPPER_PROPS = path.join(
   ROOT,
@@ -222,5 +267,98 @@ describe('Fresco animated-gif vs the version React Native pins (#464, #300)', ()
           `this drags RN's whole image pipeline to ${app}. Nothing fails to build — GIFs just ` +
           `stop animating (#300). Bump animated-gif only when RN bumps Fresco.`,
     ).toBe('matched');
+  });
+});
+
+// PR #513 review (Senti, P1 x2): Dependabot proposed *the exact same two bumps again* — wrapper
+// 9.3.1 -> 9.6.1 and animated-gif 3.6.0 -> 3.7.0, byte-for-byte the #464 change that had already
+// been rejected once.
+//
+// THE GAP THIS PINS. The two `describe` blocks above did their job both times: they went red on
+// #464 and red again on #513. But a guard that only fails downstream cannot stop the proposal —
+// it just re-litigates it. Every week the cooldown elapses, Dependabot re-opens the same PR, and
+// a human burns the same review deciding the same thing. #470 (Babel) and #507 (VisionCamera)
+// both ended by writing the refusal into `.github/dependabot.yml`; the gradle ecosystem block had
+// no `ignore:` list at all, which is why this one came back and Babel's did not.
+//
+// So this asserts the *upstream* half of that pair, and asserts it behaviourally: the ignore
+// ranges are evaluated against the versions #464/#513 actually proposed, rather than matched as
+// strings. A hold that is present but scoped wrong reads identical to a correct one under a regex.
+describe('Dependabot refuses the bumps the guards above reject (#513)', () => {
+  type Ignore = {'dependency-name'?: string; versions?: string[]};
+  type Ecosystem = {
+    'package-ecosystem'?: string;
+    directory?: string;
+    ignore?: Ignore[];
+  };
+
+  const config = yaml.load(
+    fs.readFileSync(path.join(ROOT, '.github/dependabot.yml'), 'utf8'),
+  ) as {updates?: Ecosystem[]};
+
+  const gradle = (config.updates ?? []).find(
+    u => u['package-ecosystem'] === 'gradle' && u.directory === '/android',
+  );
+
+  /** Would Dependabot suppress an update to `version` of `name`? */
+  function ignored(name: string, version: string): boolean {
+    return (gradle?.ignore ?? [])
+      .filter(entry => entry['dependency-name'] === name)
+      .some(entry =>
+        (entry.versions ?? []).some(range => mavenSatisfies(version, range)),
+      );
+  }
+
+  it('has an ignore list on the /android gradle ecosystem', () => {
+    expect(gradle).toBeDefined();
+    expect(Array.isArray(gradle?.ignore)).toBe(true);
+    // Every range must parse, or `ignored()` below would throw rather than report.
+    for (const entry of gradle?.ignore ?? []) {
+      for (const range of entry.versions ?? []) {
+        expect(`${range}: ${validMavenVersionSpec(range) ? 'valid' : 'unparseable'}`).toBe(
+          `${range}: valid`,
+        );
+      }
+    }
+  });
+
+  it('suppresses the Gradle wrapper bump that broke #464 and returned as #513', () => {
+    expect(
+      ignored('gradle-wrapper', '9.6.1')
+        ? 'held'
+        : 'Nothing in .github/dependabot.yml stops Dependabot re-proposing Gradle 9.6.1. It has ' +
+          'already been opened twice (#464, #513) and rejected twice by the guards above. Add an ' +
+          'ignore entry for gradle-wrapper covering >= 9.4.',
+    ).toBe('held');
+  });
+
+  it('still lets a 9.3.x wrapper patch through', () => {
+    // The hold is a compatibility ceiling, not a freeze: the axis that broke is the embedded
+    // Kotlin *minor*, so a patch inside the line CI is green on must still reach us. (It will
+    // still have to be measured into GRADLE_EMBEDDED_KOTLIN before it can be adopted.)
+    expect(ignored('gradle-wrapper', '9.3.2')).toBe(false);
+  });
+
+  it("suppresses any animated-gif above React Native's pinned Fresco", () => {
+    expect(
+      ignored('com.facebook.fresco:animated-gif', '3.7.0')
+        ? 'held'
+        : 'Nothing in .github/dependabot.yml stops Dependabot re-proposing animated-gif 3.7.0, ' +
+          'which drags RN\'s whole Fresco graph past what react-android was built against and ' +
+          'silently stops GIFs animating (#300). Add an ignore entry for ' +
+          'com.facebook.fresco:animated-gif covering > 3.6.0.',
+    ).toBe('held');
+  });
+
+  it('suppresses even a single patch above the pin, which the guard above would also reject', () => {
+    // 3.6.1 is the case a `>= 3.7.0` range would wave through while the "exactly RN's Fresco"
+    // assertion above still failed it — upstream and downstream have to agree on the rule.
+    expect(ignored('com.facebook.fresco:animated-gif', '3.6.1')).toBe(true);
+  });
+
+  it("does not hold animated-gif at or below RN's pin", () => {
+    expect(ignored('com.facebook.fresco:animated-gif', reactNativeFresco())).toBe(
+      false,
+    );
   });
 });
