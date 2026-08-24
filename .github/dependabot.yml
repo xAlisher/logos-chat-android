@@ -44,6 +44,27 @@ updates:
       - dependency-name: "@babel/core"
         update-types: ["version-update:semver-major"]
 
+      # #505: same story, different toolchain. The ESLint major is set by
+      # `@react-native/eslint-config`, which is the entire content of this repo's lint config
+      # (.eslintrc.js is `extends: '@react-native'` and nothing else).
+      #
+      # #505 bumped eslint to 10.8.0 and both required jobs died at `npm ci` with ERESOLVE:
+      # `@react-native/eslint-config@0.86.2` peers on `eslint@^8.0.0 || ^9.0.0`. No published
+      # release fixes that — 0.86.2 is `latest`, and even the 0.88.0 nightlies still declare the
+      # same `^8 || ^9`. ESLint 10 also removed eslintrc outright, so adopting it means rewriting
+      # the config for a shared config that cannot run under it.
+      #
+      # ESLint 9 is not the escape hatch either, despite being inside that peer range. The config
+      # subtree carries `eslint-plugin-ft-flow@^8.1.0`, and under ESLint 9 loading it throws
+      # `TypeError: context.getAllComments is not a function` before a single file is linted —
+      # verified locally on this branch. The peer range is optimistic; 8 is the only major the
+      # shared config's own dependencies actually run on.
+      #
+      # Lift this when React Native ships an eslint-config whose whole subtree accepts 9+;
+      # `__tests__/lintToolchain.test.ts` holds the same line from inside the repo and will fail
+      # loudly at that point.
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
       # #507: VisionCamera 5 has no code scanning on Android, and Android is all we ship.
       #
       # v5 is a Nitro rewrite. It deletes `useCodeScanner` and the `<Camera codeScanner={...}>`
