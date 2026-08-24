@@ -139,6 +139,49 @@ updates:
         applies-to: version-updates
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # #464, then #513 again: the wrapper bump 9.3.1 -> 9.6.1 kills the build before a single
+      # test runs. React Native ships its Gradle plugin as an *included build*, so `./gradlew`
+      # compiles RN's own Kotlin sources with the Kotlin RN pins (2.1.20 for RN 0.86) against the
+      # kotlin-stdlib the Gradle distribution embeds. A wrapper bump moves only the second one:
+      #
+      #     Gradle 9.3.1 -> kotlin-stdlib 2.2.21 (metadata 2.2.0)  OK
+      #     Gradle 9.6.1 -> kotlin-stdlib 2.3.21 (metadata 2.3.0)  breaks
+      #
+      # A Kotlin compiler reads metadata one minor past its own and no further, so 2.1.20 tops out
+      # at 2.2.0. `:gradle-plugin:settings-plugin:compileKotlin` then dies with "Internal compiler
+      # error" and a wall of "compiled with an incompatible version of Kotlin" that names neither
+      # the wrapper nor Dependabot.
+      #
+      # Scoped to >= 9.4 rather than the whole dependency so a 9.3.x patch is not blocked outright;
+      # the in-repo guard still refuses to adopt any wrapper whose embedded Kotlin nobody measured.
+      # Lift this when React Native raises its pinned Kotlin past the embedded stdlib's minor.
+      # `__tests__/gradleToolchain.test.ts` holds the same line from inside the repo.
+      # Maven/Gradle `ignore.versions` uses Maven RANGE syntax ([1.4,)), not npm comparators —
+      # https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+      # `[9.4,)` = 9.4 inclusive and up. (`>= 9.4` is npm-semver and Dependabot's Maven parser
+      # would not honour it — Senti P1 on #513.)
+      - dependency-name: "gradle-wrapper"
+        versions: ["[9.4,)"]
+
+      # #464, then #513 again: `animated-gif` is not a standalone library. It is one artifact of
+      # the Fresco set, and React Native ships the rest (fresco, imagepipeline, imagepipeline-
+      # native, fbcore, ...) transitively at the version RN builds against — 3.6.0 for RN 0.86.
+      # Gradle resolves a conflicting graph to the HIGHEST version, so bumping this one artifact
+      # silently drags every Fresco module past what react-android was compiled against:
+      #
+      #     com.facebook.fresco:fresco:3.6.0 -> 3.7.0
+      #     com.facebook.fresco:imagepipeline:3.6.0 -> 3.7.0
+      #     com.facebook.fresco:imagepipeline-native:3.6.0 -> 3.7.0   (:app:dependencies, #513)
+      #
+      # Nothing errors. It compiles, links, installs and renders the GIF's first frame — it just
+      # never animates again, gutting #300, the entire reason the artifact is declared.
+      #
+      # Lift this when RN itself bumps Fresco; the pin must then move to RN's new version, not
+      # ahead of it. `__tests__/gradleToolchain.test.ts` holds the same line from inside the repo.
+      # Maven range: `(3.6.0,)` = strictly above 3.6.0, unbounded (Senti P1 on #513 — not `> 3.6.0`).
+      - dependency-name: "com.facebook.fresco:animated-gif"
+        versions: ["(3.6.0,)"]
     labels: [dependencies]
 
   - package-ecosystem: github-actions
