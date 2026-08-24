@@ -89,6 +89,81 @@ function rejectedBy(
   return rejected;
 }
 
+/**
+ * The stack's INTERNAL link, which `rejectedBy` cannot see: reanimated declares a peer range on
+ * worklets, and Dependabot groups the two as unrelated packages. #531 promoted worklets to
+ * 0.12.0 while reanimated 4.5.3 still peered `"0.10.x - 0.11.x"`, and `npm ci` died with
+ * ERESOLVE before either required job ran a single test — #530's failure mode one link down.
+ * The two must move together: worklets only when the installed reanimated's range admits it.
+ */
+function workletsRejectedBy(packages: Record<string, LockEntry>): string[] {
+  const range =
+    packages['node_modules/react-native-reanimated']?.peerDependencies?.[
+      'react-native-worklets'
+    ];
+  const worklets = packages['node_modules/react-native-worklets']?.version;
+  if (!range || !worklets) {
+    return ['expected both react-native-reanimated and react-native-worklets in the lockfile'];
+  }
+  if (!semver.satisfies(worklets, range)) {
+    return [
+      `react-native-reanimated peers react-native-worklets@"${range}", which excludes ${worklets}`,
+    ];
+  }
+  return [];
+}
+
+describe('worklets stays inside reanimated peer range (#531)', () => {
+  it('pins a worklets that the installed reanimated actually accepts', () => {
+    expect(workletsRejectedBy(lock.packages).join('\n')).toBe('');
+  });
+
+  it('detects the #531 shape — worklets promoted past the reanimated that drives it', () => {
+    // Guards the check itself, same discipline as the #530 block below: this is the lockfile
+    // state exactly as PR #531 arrived.
+    const broken: Record<string, LockEntry> = {
+      'node_modules/react-native-reanimated': {
+        version: '4.5.3',
+        peerDependencies: {'react-native-worklets': '0.10.x - 0.11.x'},
+      },
+      'node_modules/react-native-worklets': {version: '0.12.0'},
+    };
+    expect(workletsRejectedBy(broken)).toEqual([
+      'react-native-reanimated peers react-native-worklets@"0.10.x - 0.11.x", which excludes 0.12.0',
+    ]);
+  });
+
+  it('matches the NATIVE stable-API contract, which the npm peer range cannot see', () => {
+    // Found while fixing #531: reanimated 4.6.0 peers worklets `"0.12.x"`, so npm accepts
+    // worklets 0.12.0 — but its C++ (`Compat/WorkletsApi.h`) static-asserts the worklets
+    // STABLE API version, and 0.12.0 ships "0.9.0" where 4.6.0 expects "0.12.1". `npm ci` and
+    // every lockfile check pass; the failure only surfaces 45 minutes later, five files into
+    // `buildCMakeRelWithDebInfo`. Read the two `#define`s out of the installed headers and
+    // compare them here, so a mismatch costs seconds instead of a native build.
+    const expected = fs
+      .readFileSync(
+        path.join(
+          ROOT,
+          'node_modules/react-native-reanimated/Common/cpp/reanimated/Compat/WorkletsApi.h',
+        ),
+        'utf8',
+      )
+      .match(/#define EXPECTED_WORKLETS_STABLE_API_VERSION "([^"]+)"/)?.[1];
+    const actual = fs
+      .readFileSync(
+        path.join(
+          ROOT,
+          'node_modules/react-native-worklets/Common/cpp/worklets/Compat/StableApi.h',
+        ),
+        'utf8',
+      )
+      .match(/#define WORKLETS_STABLE_API_VERSION "([^"]+)"/)?.[1];
+    // If either header moved, this fails loudly: a check that silently skips is not a check.
+    expect(expected).toBeDefined();
+    expect(actual).toBe(expected);
+  });
+});
+
 describe('React Native minor is capped by the animation stack (#530)', () => {
   const rnVersion = entry('react-native').version as string;
 
