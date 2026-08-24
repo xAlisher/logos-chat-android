@@ -27,9 +27,46 @@ import * as path from 'path';
 // inline rather than adding @types packages for two call sites (same shape as babelToolchain).
 const yaml = require('js-yaml') as {load(src: string): unknown};
 const semver = require('semver') as {
-  satisfies(version: string, range: string): boolean;
-  validRange(range: string): string | null;
+  coerce(v: string): {version: string} | null;
+  compare(a: string, b: string): number;
 };
+
+// Dependabot's Maven/Gradle `ignore.versions` uses MAVEN range syntax ([1.4,), (3.6.0,)), NOT npm
+// comparators — https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+// (Maven: use `[1.4,)`). npm `semver` cannot parse those, so validating the holds with
+// `semver.validRange`/`satisfies` (PR #513's first cut) gave FALSE confidence: `>= 9.4` is valid
+// npm-semver and passed, while Dependabot's Maven parser would never honour it. Senti P1 on #513.
+// This evaluates the ranges the way Dependabot actually will — Maven bracket semantics.
+const MAVEN_RANGE = /^([[(])\s*([^,)\]]*)\s*,\s*([^,)\]]*)\s*([)\]])$/;
+function coerceVer(v: string): string {
+  const c = semver.coerce(v);
+  if (!c) throw new Error(`uncoercible version: ${v}`);
+  return c.version;
+}
+/** A parseable Maven range (`[lo,hi]` with either bound optional) or a bare exact version. */
+function validMavenVersionSpec(spec: string): boolean {
+  if (MAVEN_RANGE.test(spec)) return true;
+  // A bare exact-version pin: digits and dots only. Deliberately rejects npm comparators
+  // (`>= 9.4`, `> 3.6.0`) — the whole point of Senti's #513 P1 — so a regression to npm syntax
+  // fails HERE, not just in the behavioural assertions below.
+  return /^\d+(\.\d+)*$/.test(spec) && semver.coerce(spec) != null;
+}
+/** Does `version` fall in Maven spec `spec` (`[9.4,)`, `(3.6.0,)`, or an exact version)? */
+function mavenSatisfies(version: string, spec: string): boolean {
+  const m = MAVEN_RANGE.exec(spec);
+  if (!m) return coerceVer(version) === coerceVer(spec); // bare exact-version pin
+  const [, lb, lo, hi, ub] = m;
+  const v = coerceVer(version);
+  if (lo !== '') {
+    const c = semver.compare(v, coerceVer(lo)); // [ → v>=lo ; ( → v>lo
+    if (lb === '[' ? c < 0 : c <= 0) return false;
+  }
+  if (hi !== '') {
+    const c = semver.compare(v, coerceVer(hi)); // ] → v<=hi ; ) → v<hi
+    if (ub === ']' ? c > 0 : c >= 0) return false;
+  }
+  return true;
+}
 
 const ROOT = path.join(__dirname, '..');
 const WRAPPER_PROPS = path.join(
@@ -268,7 +305,7 @@ describe('Dependabot refuses the bumps the guards above reject (#513)', () => {
     return (gradle?.ignore ?? [])
       .filter(entry => entry['dependency-name'] === name)
       .some(entry =>
-        (entry.versions ?? []).some(range => semver.satisfies(version, range)),
+        (entry.versions ?? []).some(range => mavenSatisfies(version, range)),
       );
   }
 
@@ -278,7 +315,7 @@ describe('Dependabot refuses the bumps the guards above reject (#513)', () => {
     // Every range must parse, or `ignored()` below would throw rather than report.
     for (const entry of gradle?.ignore ?? []) {
       for (const range of entry.versions ?? []) {
-        expect(`${range}: ${semver.validRange(range) ? 'valid' : 'unparseable'}`).toBe(
+        expect(`${range}: ${validMavenVersionSpec(range) ? 'valid' : 'unparseable'}`).toBe(
           `${range}: valid`,
         );
       }

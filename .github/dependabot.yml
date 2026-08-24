@@ -136,8 +136,12 @@ updates:
       # the in-repo guard still refuses to adopt any wrapper whose embedded Kotlin nobody measured.
       # Lift this when React Native raises its pinned Kotlin past the embedded stdlib's minor.
       # `__tests__/gradleToolchain.test.ts` holds the same line from inside the repo.
+      # Maven/Gradle `ignore.versions` uses Maven RANGE syntax ([1.4,)), not npm comparators —
+      # https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+      # `[9.4,)` = 9.4 inclusive and up. (`>= 9.4` is npm-semver and Dependabot's Maven parser
+      # would not honour it — Senti P1 on #513.)
       - dependency-name: "gradle-wrapper"
-        versions: [">= 9.4"]
+        versions: ["[9.4,)"]
 
       # #464, then #513 again: `animated-gif` is not a standalone library. It is one artifact of
       # the Fresco set, and React Native ships the rest (fresco, imagepipeline, imagepipeline-
@@ -154,8 +158,9 @@ updates:
       #
       # Lift this when RN itself bumps Fresco; the pin must then move to RN's new version, not
       # ahead of it. `__tests__/gradleToolchain.test.ts` holds the same line from inside the repo.
+      # Maven range: `(3.6.0,)` = strictly above 3.6.0, unbounded (Senti P1 on #513 — not `> 3.6.0`).
       - dependency-name: "com.facebook.fresco:animated-gif"
-        versions: ["> 3.6.0"]
+        versions: ["(3.6.0,)"]
     labels: [dependencies]
 
   - package-ecosystem: github-actions
