@@ -36,7 +36,9 @@ For new blobs, this request is sufficient:
 GET /data/<cid>?cap=<cap>
 ```
 
-No shared or account-wide bearer is sent. The capability is random/bound to exactly one CID, read-only, and available only to MLS recipients.
+No shared or account-wide bearer is sent. The capability is unguessable, bound to exactly one CID, read-only, and distributed inside MLS. The deployed capgate uses a deterministic 128-bit HMAC truncation; gateway v2 should prefer a random 256-bit capability stored only as a hash, or at minimum version the HMAC secret so it can be rotated.
+
+The compatibility path keeps `?cap=` because deployed clients and capgate already implement it. Gateway access logs must redact query strings. Gateway v2 should additionally accept a dedicated capability header so clients can migrate the bearer out of URLs without changing the `store2:` marker.
 
 ### One-use upload grants
 
