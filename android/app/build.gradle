@@ -215,8 +215,8 @@ dependencies {
 /** Distribution invariant: a reusable storage bearer must never enter a release APK/AAB. */
 tasks.register("assertNoPackagedStorageToken") {
     doLast {
-        def configured = project.findProperty('storageToken')?.toString()?.trim()
-        if (configured) {
+        def configured = project.findProperty('storageToken')
+        if (configured != null && !configured.toString().isEmpty()) {
             throw new GradleException(
                 "Refusing release build: storageToken must be empty; uploads use one-use grants.")
         }
