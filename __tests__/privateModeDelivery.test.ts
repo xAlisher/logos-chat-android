@@ -367,4 +367,12 @@ describe('the native gate the latch release hands over to', () => {
     expect(gateRead).toBeGreaterThan(-1);
     expect(gateRead).toBeLessThan(directOpen);
   });
+
+  it('download networking always disconnects, including every fail-closed response path', () => {
+    const src = native('StorageModule.kt');
+    const fn = src.slice(src.indexOf('fun downloadDecrypt'));
+    expect(fn).toMatch(/val blob\s*=\s*try\s*\{/);
+    expect(fn).toMatch(/finally\s*\{\s*conn\.disconnect\(\)\s*\}/);
+    expect(fn).not.toContain('errorStream?.bufferedReader()?.readText()');
+  });
 });

@@ -1,6 +1,8 @@
 package com.logoschat
 
 import java.security.MessageDigest
+import org.json.JSONObject
+import org.json.JSONTokener
 
 /** Pure upload-grant protocol helpers, separated from Android networking for JVM tests. */
 object StorageUploadGrant {
@@ -8,6 +10,57 @@ object StorageUploadGrant {
   private val OPAQUE_RE = Regex("^[0-9a-f]{64}$")
   private const val MAX_DIFFICULTY = 24
   private const val MAX_CLOCK_HORIZON_SECONDS = 5 * 60L
+
+  data class ChallengeJson(
+      val challenge: String,
+      val difficulty: Int,
+      val expiresAt: Long,
+  )
+
+  data class GrantJson(
+      val grant: String,
+      val maxBytes: Long,
+      val expiresAt: Long,
+  )
+
+  private fun strictObject(body: String, expectedKeys: Set<String>): JSONObject {
+    try {
+      val tokener = JSONTokener(body)
+      val value = tokener.nextValue()
+      require(value is JSONObject)
+      require(tokener.nextClean() == 0.toChar())
+      val actualKeys = mutableSetOf<String>()
+      val keys = value.keys()
+      while (keys.hasNext()) actualKeys += keys.next()
+      require(actualKeys == expectedKeys)
+      return value
+    } catch (_: Throwable) {
+      throw IllegalArgumentException("invalid upload grant JSON")
+    }
+  }
+
+  private fun exactLong(json: JSONObject, key: String): Long =
+      when (val value = json.get(key)) {
+        is Int -> value.toLong()
+        is Long -> value
+        else -> throw IllegalArgumentException("invalid upload grant JSON")
+      }
+
+  fun parseChallengeJson(body: String): ChallengeJson {
+    val json = strictObject(body, setOf("challenge", "difficulty", "expires_at"))
+    val challenge = json.get("challenge") as? String
+        ?: throw IllegalArgumentException("invalid upload grant JSON")
+    val difficulty = exactLong(json, "difficulty")
+    require(difficulty in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong())
+    return ChallengeJson(challenge, difficulty.toInt(), exactLong(json, "expires_at"))
+  }
+
+  fun parseGrantJson(body: String): GrantJson {
+    val json = strictObject(body, setOf("grant", "max_bytes", "expires_at"))
+    val grant = json.get("grant") as? String
+        ?: throw IllegalArgumentException("invalid upload grant JSON")
+    return GrantJson(grant, exactLong(json, "max_bytes"), exactLong(json, "expires_at"))
+  }
 
   fun challengeUrl(base: String): String = "${base.trimEnd('/')}/data/upload-challenges"
 

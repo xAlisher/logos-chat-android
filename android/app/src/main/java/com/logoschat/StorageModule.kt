@@ -58,11 +58,6 @@ class StorageModule(reactContext: ReactApplicationContext) :
 
   private fun uploadConfigured(): Boolean = base.isNotEmpty()
 
-  private data class UploadChallenge(
-      val challenge: String,
-      val difficulty: Int,
-      val expiresAt: Long,
-  )
 
   private fun readBoundedText(conn: HttpURLConnection, error: Boolean = false): String {
     val stream = if (error) conn.errorStream else conn.inputStream
@@ -105,12 +100,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
 
     val challenge =
         try {
-          val json = JSONObject(challengeBody)
-          UploadChallenge(
-              challenge = json.getString("challenge"),
-              difficulty = json.getInt("difficulty"),
-              expiresAt = json.getLong("expires_at"),
-          )
+          StorageUploadGrant.parseChallengeJson(challengeBody)
         } catch (_: Throwable) {
           throw RuntimeException("invalid upload challenge response")
         }
@@ -151,31 +141,21 @@ class StorageModule(reactContext: ReactApplicationContext) :
       grantConn.disconnect()
     }
 
-    val grantJson =
+    val parsedGrant =
         try {
-          JSONObject(grantBody)
+          StorageUploadGrant.parseGrantJson(grantBody)
         } catch (_: Throwable) {
           throw RuntimeException("invalid upload grant response")
         }
-    val grant: String
-    val maxBytes: Long
-    val expiresAt: Long
-    try {
-      grant = grantJson.getString("grant")
-      maxBytes = grantJson.getLong("max_bytes")
-      expiresAt = grantJson.getLong("expires_at")
-    } catch (_: Throwable) {
-      throw RuntimeException("invalid upload grant response")
-    }
     if (!StorageUploadGrant.validGrantResponse(
-            grant,
-            maxBytes,
+            parsedGrant.grant,
+            parsedGrant.maxBytes,
             blobBytes.toLong(),
-            expiresAt,
+            parsedGrant.expiresAt,
             System.currentTimeMillis() / 1000L)) {
       throw RuntimeException("invalid upload grant caveats")
     }
-    return grant
+    return parsedGrant.grant
   }
 
   /**
@@ -369,39 +349,41 @@ class StorageModule(reactContext: ReactApplicationContext) :
           val bearer = StorageAuthorization.bearerHeader(token, cap)
           if (bearer.isNotEmpty()) setRequestProperty("Authorization", bearer)
         }
-        val code = conn.responseCode
-        if (code in 300..399) throw RuntimeException("unexpected redirect ($code)")
-        if (code !in 200..299) {
-          val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"
-          throw RuntimeException("download failed ($code): ${err.take(200)}")
-        }
-        // #388: reject an unexpected response type (an HTML error/login page is not media).
-        val ctype = conn.contentType ?: ""
-        if (ctype.startsWith("text/html") || ctype.startsWith("application/json")) {
-          throw RuntimeException("unexpected content-type: $ctype")
-        }
-        // #388: bound the download. Reject up-front on an oversized Content-Length, then read
-        // with a streaming counter that aborts past the ciphertext ceiling (no unbounded read).
-        val max = StorageRef.MAX_CIPHERTEXT_BYTES
-        val declared = conn.contentLengthLong
-        if (declared in 1..Long.MAX_VALUE && declared > max) {
-          throw RuntimeException("media too large ($declared > $max)")
-        }
-        val blob =
-            conn.inputStream.use { ins ->
-              val out = java.io.ByteArrayOutputStream()
-              val chunk = ByteArray(64 * 1024)
-              var total = 0L
-              while (true) {
-                val n = ins.read(chunk)
-                if (n < 0) break
-                total += n
-                if (total > max) throw RuntimeException("media exceeds max size ($max bytes)")
-                out.write(chunk, 0, n)
-              }
-              out.toByteArray()
+        val blob = try {
+          val code = conn.responseCode
+          if (code in 300..399) throw RuntimeException("unexpected redirect ($code)")
+          if (code !in 200..299) {
+            readBoundedText(conn, error = true)
+            throw RuntimeException("download failed ($code)")
+          }
+          // #388: reject an unexpected response type (an HTML error/login page is not media).
+          val ctype = conn.contentType ?: ""
+          if (ctype.startsWith("text/html") || ctype.startsWith("application/json")) {
+            throw RuntimeException("unexpected content-type: $ctype")
+          }
+          // #388: bound the download. Reject up-front on an oversized Content-Length, then read
+          // with a streaming counter that aborts past the ciphertext ceiling (no unbounded read).
+          val max = StorageRef.MAX_CIPHERTEXT_BYTES
+          val declared = conn.contentLengthLong
+          if (declared in 1..Long.MAX_VALUE && declared > max) {
+            throw RuntimeException("media too large ($declared > $max)")
+          }
+          conn.inputStream.use { ins ->
+            val out = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+              val n = ins.read(chunk)
+              if (n < 0) break
+              total += n
+              if (total > max) throw RuntimeException("media exceeds max size ($max bytes)")
+              out.write(chunk, 0, n)
             }
-        conn.disconnect()
+            out.toByteArray()
+          }
+        } finally {
+          conn.disconnect()
+        }
         if (blob.size <= IV_LEN) throw RuntimeException("blob too short")
 
         val key = Base64.decode(keyB64, Base64.NO_WRAP)

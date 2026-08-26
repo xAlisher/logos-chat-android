@@ -5,7 +5,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(application = android.app.Application::class)
 class StorageUploadGrantTest {
   @Test
   fun proofIsBoundToChallengeAndExactCiphertextLength() {
@@ -67,5 +72,44 @@ class StorageUploadGrantTest {
     assertFalse(StorageUploadGrant.validGrantResponse(grant, 1235, 1234, 200, 100))
     assertFalse(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 100, 100))
     assertFalse(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 1000, 100))
+  }
+
+  @Test
+  fun challengeJsonRejectsCoercionUnknownKeysAndTrailingValues() {
+    val challenge = "a".repeat(64)
+    val parsed =
+        StorageUploadGrant.parseChallengeJson(
+            """{"challenge":"$challenge","difficulty":18,"expires_at":1100}""")
+    assertEquals(18, parsed.difficulty)
+    for (invalid in listOf(
+        """{"challenge":"$challenge","difficulty":"18","expires_at":1100}""",
+        """{"challenge":"$challenge","difficulty":18.0,"expires_at":1100}""",
+        """{"challenge":"$challenge","difficulty":18,"expires_at":1100,"extra":1}""",
+        """{"challenge":"$challenge","difficulty":18,"expires_at":1100} {}""",
+    )) {
+      try {
+        StorageUploadGrant.parseChallengeJson(invalid)
+        fail("accepted malformed challenge JSON")
+      } catch (_: IllegalArgumentException) {}
+    }
+  }
+
+  @Test
+  fun grantJsonRejectsCoercionUnknownKeysAndTrailingValues() {
+    val grant = "b".repeat(64)
+    val parsed =
+        StorageUploadGrant.parseGrantJson(
+            """{"grant":"$grant","max_bytes":99,"expires_at":1100}""")
+    assertEquals(99L, parsed.maxBytes)
+    for (invalid in listOf(
+        """{"grant":"$grant","max_bytes":"99","expires_at":1100}""",
+        """{"grant":"$grant","max_bytes":99,"expires_at":1100,"extra":1}""",
+        """{"grant":"$grant","max_bytes":99,"expires_at":1100} []""",
+    )) {
+      try {
+        StorageUploadGrant.parseGrantJson(invalid)
+        fail("accepted malformed grant JSON")
+      } catch (_: IllegalArgumentException) {}
+    }
   }
 }
