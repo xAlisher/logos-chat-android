@@ -26,8 +26,9 @@ import android.util.Base64
  *     destPath. Resolves the path.
  *
  * The node only ever sees ciphertext; the KEY is returned to JS and travels E2E in the
- * marker (never to the node). Endpoint + bearer token come from BuildConfig (injected at
- * build time, kept out of git). All network/crypto runs off the RN thread.
+ * marker (never to the node). The BuildConfig bearer is a temporary legacy upload credential;
+ * capability-bearing downloads do not need or send it. All network/crypto runs off the RN
+ * thread.
  */
 class StorageModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -54,7 +55,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
   // wait for the route (bounded) and then fail closed, mirroring the delivery-side gate.
   @Volatile private var privateModePending = false
 
-  private fun configured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
+  private fun uploadConfigured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
 
   /**
    * #318/#363: open a connection, routed through the local Tor SOCKS proxy when Private mode
@@ -132,7 +133,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
   fun uploadEncrypted(localPath: String, id: String, promise: Promise) {
     Thread {
       try {
-        if (!configured()) throw IllegalStateException("storage not configured")
+        if (!uploadConfigured()) throw IllegalStateException("storage upload not configured")
         // #320: size padding — [4-byte realLen][data][zero pad → Padmé bucket] so the node
         // sees only a bucketed size, not the exact file size (MediaPadding, unit-tested #323).
         val plain = MediaPadding.pad(File(localPath).readBytes())
@@ -194,12 +195,14 @@ class StorageModule(reactContext: ReactApplicationContext) :
   fun downloadDecrypt(cid: String, keyB64: String, cap: String, padded: Boolean, promise: Promise) {
     Thread {
       try {
-        if (!configured()) throw IllegalStateException("storage not configured")
         // #388: the CID / key / cap come from an untrusted sender's marker. Validate with a
         // strict allowlist + length bound BEFORE any network or file use.
         if (!StorageRef.validCid(cid)) throw IllegalArgumentException("invalid media cid")
         if (!StorageRef.validKeyB64(keyB64)) throw IllegalArgumentException("invalid media key")
         if (!StorageRef.validCap(cap)) throw IllegalArgumentException("invalid media cap")
+        if (base.isEmpty() || !StorageAuthorization.canDownload(token, cap)) {
+          throw IllegalStateException("storage download not authorized")
+        }
 
         // #388: cache filename is SHA-256(cid), never the raw cid → no path traversal / collision.
         val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
@@ -216,7 +219,8 @@ class StorageModule(reactContext: ReactApplicationContext) :
           instanceFollowRedirects = false // #388: never follow a redirect off the storage node
           connectTimeout = 15000
           readTimeout = 60000
-          setRequestProperty("Authorization", "Bearer $token")
+          val bearer = StorageAuthorization.bearerHeader(token)
+          if (bearer.isNotEmpty()) setRequestProperty("Authorization", bearer)
         }
         val code = conn.responseCode
         if (code in 300..399) throw RuntimeException("unexpected redirect ($code)")
