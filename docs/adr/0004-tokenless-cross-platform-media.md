@@ -54,10 +54,10 @@ The initial issuer uses an anonymous challenge plus bounded proof-of-work and se
 
 The first protocol revision uses these exact steps:
 
-1. `POST /data/upload-challenges` returns a random 256-bit challenge, expiry, and bounded proof difficulty.
+1. `POST /data/upload-challenges` returns an expiry-bearing authenticated 256-bit challenge token and bounded proof difficulty. It remains stateless until successfully proved.
 2. The client finds a nonce whose `SHA-256("<challenge>:<ciphertext-bytes>:<nonce>")` has the required leading zero bits.
 3. `POST /data/upload-grants` submits the challenge, exact padded-ciphertext byte count, and nonce.
-4. The issuer returns a random 256-bit grant valid for two minutes and stores only its SHA-256 hash.
+4. The issuer records the proved challenge hash as spent, then returns a random 256-bit grant valid for two minutes and stores only its SHA-256 hash.
 5. `POST /data` carries the grant in `X-Upload-Grant`; capgate persists consumption before forwarding any bytes upstream.
 
 Challenges and grants are one-use. Grant consumption survives capgate recreation through a private `0600` state ledger on a dedicated Docker volume. The gateway enforces per-source-window and global request/byte limits without storing raw IP addresses; its keyed, window-scoped IP buckets expire with the quota window. Redirects are rejected and upstream calls are timeout-bounded.
