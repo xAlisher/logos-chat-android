@@ -219,7 +219,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
           instanceFollowRedirects = false // #388: never follow a redirect off the storage node
           connectTimeout = 15000
           readTimeout = 60000
-          val bearer = StorageAuthorization.bearerHeader(token)
+          val bearer = StorageAuthorization.bearerHeader(token, cap)
           if (bearer.isNotEmpty()) setRequestProperty("Authorization", bearer)
         }
         val code = conn.responseCode

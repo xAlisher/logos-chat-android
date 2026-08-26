@@ -11,6 +11,6 @@ object StorageAuthorization {
   fun canDownload(legacyToken: String, capability: String): Boolean =
       legacyToken.isNotEmpty() || capability.isNotEmpty()
 
-  fun bearerHeader(legacyToken: String): String =
-      if (legacyToken.isEmpty()) "" else "Bearer $legacyToken"
+  fun bearerHeader(legacyToken: String, capability: String): String =
+      if (legacyToken.isEmpty() || capability.isNotEmpty()) "" else "Bearer $legacyToken"
 }

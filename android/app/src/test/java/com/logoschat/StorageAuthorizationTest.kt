@@ -21,8 +21,10 @@ class StorageAuthorizationTest {
   }
 
   @Test
-  fun bearerHeaderIsOnlyPresentForLegacyCredential() {
-    assertTrue(StorageAuthorization.bearerHeader("").isEmpty())
-    assertTrue(StorageAuthorization.bearerHeader("legacy-token") == "Bearer legacy-token")
+  fun bearerHeaderIsOnlyPresentForCaplessLegacyRequest() {
+    assertTrue(StorageAuthorization.bearerHeader("", "").isEmpty())
+    assertTrue(StorageAuthorization.bearerHeader("legacy-token", "read-cap").isEmpty())
+    assertTrue(
+        StorageAuthorization.bearerHeader("legacy-token", "") == "Bearer legacy-token")
   }
 }
