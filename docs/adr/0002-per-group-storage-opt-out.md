@@ -6,11 +6,13 @@
 
 ## Context
 
-Message **content** is end-to-end encrypted; the residual is **metadata**. On the
-**messaging** side we hide the conversation graph with the sealed envelope + single global
-content topic (#336, shipped v0.8.0). On the **storage** side we host media as client-encrypted
-E2E blobs on Logos Storage (`store2:` markers); the node sees only ciphertext, and we mitigate
-network metadata with **Tor** (hides IP) and **Padmé** (buckets size).
+Message **content** is end-to-end encrypted; the residual is **metadata**. The sealed envelope
+and single global content topic (#336, shipped v0.8.0) reduce cleartext routing metadata, but do
+not currently hide the conversation graph: per-conversation subscriptions and conversation
+hints remain observable as documented in `docs/privacy.md` and ADR 0001. On the **storage** side
+we host media as client-encrypted E2E blobs on Logos Storage (`store2:` markers); the node sees
+only ciphertext, and we mitigate network metadata with **Tor** (hides IP in Private mode) and
+**Padmé** (buckets size).
 
 The stubborn residual is **which blob a user fetches**: a storage object has *identity* — you
 must address it by CID to retrieve it, and finding it *is* the leak. Investigation (#337)
@@ -42,8 +44,9 @@ When a creator switches **storage OFF** for a group:
 - The flag lives in group state (creator-set) and is surfaced in Group Info
   ("Storage off — text & voice only, no photos/video").
 
-A storage-off group is thus fully on the private path: sealed-envelope messaging (graph
-hidden) **plus zero storage footprint**.
+A storage-off group has **zero storage footprint** when every participating client enforces the
+policy. It does not hide messaging-side conversation metadata, and mixed-client groups cannot
+claim this property until every supported client enforces storage-off on send and receive.
 
 ## Consequences
 
