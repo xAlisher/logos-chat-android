@@ -356,4 +356,15 @@ describe('the native gate the latch release hands over to', () => {
     // and the apply must actually be able to report failure
     expect(src).toMatch(/private fun applyDeliveryPeerEnv\(\)\s*:\s*Boolean/);
   });
+
+  it('the media connection gate reads persisted Private mode before allowing direct egress', () => {
+    const src = native('StorageModule.kt');
+    expect(src).toContain('ChatRepo.requireDb().kvGet(NodeRuntime.KV_MEDIA_OVER_TOR)');
+    expect(src).toContain('TorRelayGate.privateModeFromRead');
+    expect(src).toContain('TorRelayGate.mustWaitForMedia');
+    const gateRead = src.indexOf('ChatRepo.requireDb().kvGet(NodeRuntime.KV_MEDIA_OVER_TOR)');
+    const directOpen = src.indexOf('url.openConnection() as HttpURLConnection');
+    expect(gateRead).toBeGreaterThan(-1);
+    expect(gateRead).toBeLessThan(directOpen);
+  });
 });

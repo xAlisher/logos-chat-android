@@ -64,6 +64,16 @@ object TorRelayGate {
       privateMode || privateModePending
 
   /**
+   * Must a media request wait rather than opening a direct socket? Unlike delivery, media
+   * already owns its SOCKS connection and only needs to know whether that route is live.
+   */
+  fun mustWaitForMedia(
+      privateMode: Boolean,
+      privateModePending: Boolean,
+      torRoutingLive: Boolean,
+  ): Boolean = privateModeArmed(privateMode, privateModePending) && !torRoutingLive
+
+  /**
    * Must the cold open block before publishing this device's bundle? Only when Private
    * mode is armed, and only until a relay is usable — publishing over a direct connection
    * would join the real IP to a stable identity. No-op when Private mode is off.

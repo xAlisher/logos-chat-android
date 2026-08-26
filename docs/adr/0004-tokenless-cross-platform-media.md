@@ -81,7 +81,7 @@ Unchanged and strong: storage receives padded ciphertext, never the AES key or p
 
 ### Network metadata
 
-The gateway/storage operator can observe request timing, padded size, CID, the presented read capability, and linkage between an upload and later fetches. Direct mode also reveals client IP. Therefore grant issuance, upload, and download must all use Android's existing fail-closed Tor route in Private mode. No operation may silently fall back while Tor bootstraps or fails.
+The gateway/storage operator can observe request timing, padded size, CID, the presented read capability, and linkage between an upload and later fetches. Direct mode also reveals client IP. Therefore grant issuance, upload, and download must all use Android's existing fail-closed Tor route in Private mode. No operation may silently fall back while Tor bootstraps or fails. Before opening any media connection, native code synchronously reads the persisted `mediaOverTor` gate; a read fault counts as armed. This closes the cold-start window before asynchronous JavaScript preference hydration can set the process-local latch.
 
 A desktop client without equivalent routing does not have metadata-privacy parity and must state that honestly until a Tor/Mix route exists.
 

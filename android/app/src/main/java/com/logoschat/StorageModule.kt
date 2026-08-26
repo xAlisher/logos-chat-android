@@ -184,20 +184,33 @@ class StorageModule(reactContext: ReactApplicationContext) :
    * proxy port is unusable we throw, and if the proxy is down the connect() itself fails.
    * The only direct path is when Tor is explicitly off.
    */
+  private fun persistedPrivateModeEnabled(): Boolean {
+    var faulted = false
+    val value =
+        try {
+          ChatRepo.requireDb().kvGet(NodeRuntime.KV_MEDIA_OVER_TOR)
+        } catch (_: Throwable) {
+          faulted = true
+          null
+        }
+    return TorRelayGate.privateModeFromRead(value, faulted)
+  }
+
   private fun openConn(urlStr: String): HttpURLConnection {
     val url = URL(urlStr)
-    // #517 path 4: Private mode intended but Tor not yet routing → wait for the route
-    // (bounded), then fail closed rather than egress directly during the bootstrap window.
-    if (privateModePending && !torEnabled) {
-      val deadline = System.currentTimeMillis() + PRIVATE_MODE_MEDIA_WAIT_MS
-      while (!torEnabled && System.currentTimeMillis() < deadline) {
-        if (!privateModePending) break // user cancelled Private mode → fall through
-        Thread.sleep(100)
-      }
-      if (privateModePending && !torEnabled) {
-        throw IllegalStateException(
-            "Private mode is on but Tor is not ready yet — not sending media over a direct connection")
-      }
+    // The native persisted read closes the cold-start window before JS hydrates settings and
+    // arms privateModePending. A read fault is unknown, therefore armed. Re-read while waiting
+    // so a healthy "off" value or user cancellation releases promptly instead of timing out.
+    var persistedPrivateMode = !torEnabled && persistedPrivateModeEnabled()
+    val deadline = System.currentTimeMillis() + PRIVATE_MODE_MEDIA_WAIT_MS
+    while (TorRelayGate.mustWaitForMedia(persistedPrivateMode, privateModePending, torEnabled) &&
+        System.currentTimeMillis() < deadline) {
+      Thread.sleep(100)
+      persistedPrivateMode = !torEnabled && persistedPrivateModeEnabled()
+    }
+    if (TorRelayGate.mustWaitForMedia(persistedPrivateMode, privateModePending, torEnabled)) {
+      throw IllegalStateException(
+          "Private mode is on but Tor is not ready yet — not sending media over a direct connection")
     }
     return if (torEnabled) {
       // #363: fail visibly rather than fall back to direct networking.
