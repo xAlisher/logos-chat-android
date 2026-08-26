@@ -12,7 +12,7 @@ store2:<cid>:<aes-key-b64>:<mime>:<width>:<height>:<read-cap>
 blob = 12-byte IV || AES-256-GCM(Padmé(real-length || media))
 ```
 
-The blob is encrypted before upload. Its random key and read capability travel inside the MLS message, not to storage. This gives content confidentiality and works identically for direct and group conversations.
+The blob is encrypted before upload. Its random key and read capability are distributed through the MLS message. The AES key is never sent to storage; the read capability is later presented to the gateway to authorize a ciphertext download. This gives content confidentiality and works identically for direct and group conversations.
 
 The remaining authorization model is unsuitable for distribution. Android's `STORAGE_TOKEN` is compiled into configured APKs; desktop's equivalent is an environment-provisioned `PEERS_STORAGE_TOKEN`. A shared bearer recovered from any client can be replayed for proxy and upload abuse. Existing per-blob capabilities bound the read impact, but do not make the shared bearer secret.
 
@@ -71,7 +71,7 @@ Unchanged and strong: storage receives padded ciphertext, never the AES key or p
 
 ### Network metadata
 
-The gateway/storage operator can observe request timing, padded size, CID, and linkage between an upload and later fetches. Direct mode also reveals client IP. Therefore grant issuance, upload, and download must all use Android's existing fail-closed Tor route in Private mode. No operation may silently fall back while Tor bootstraps or fails.
+The gateway/storage operator can observe request timing, padded size, CID, the presented read capability, and linkage between an upload and later fetches. Direct mode also reveals client IP. Therefore grant issuance, upload, and download must all use Android's existing fail-closed Tor route in Private mode. No operation may silently fall back while Tor bootstraps or fails.
 
 A desktop client without equivalent routing does not have metadata-privacy parity and must state that honestly until a Tor/Mix route exists.
 
