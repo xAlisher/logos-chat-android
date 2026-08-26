@@ -52,12 +52,22 @@ Before upload, a client requests an anonymous short-lived grant. The grant is:
 
 The initial issuer uses an anonymous challenge plus bounded proof-of-work and server-side request/byte/retention limits. The issuer interface must permit unlinkable paid or Privacy Pass-style vouchers later. A stable account, device identifier, phone number, Google service, or mandatory attestation is rejected because it creates a new media correlation identity and excludes self-built/F-Droid clients.
 
+The first protocol revision uses these exact steps:
+
+1. `POST /data/upload-challenges` returns a random 256-bit challenge, expiry, and bounded proof difficulty.
+2. The client finds a nonce whose `SHA-256("<challenge>:<ciphertext-bytes>:<nonce>")` has the required leading zero bits.
+3. `POST /data/upload-grants` submits the challenge, exact padded-ciphertext byte count, and nonce.
+4. The issuer returns a random 256-bit grant valid for two minutes and stores only its SHA-256 hash.
+5. `POST /data` carries the grant in `X-Upload-Grant`; capgate persists consumption before forwarding any bytes upstream.
+
+Challenges and grants are one-use. Grant consumption survives capgate recreation through a private `0600` state ledger on a dedicated Docker volume. The gateway enforces per-source-window and global request/byte limits without storing raw IP addresses; its keyed, window-scoped IP buckets expire with the quota window. Redirects are rejected and upstream calls are timeout-bounded.
+
 The gateway returns the existing `<cid>:<cap>` result after upload, so `store2:` remains wire-compatible.
 
 ### Rollout
 
 1. Gateway accepts one-use grants and capability-only reads alongside legacy bearer auth.
-2. Android and desktop permit cap-only reads and gain grant clients.
+2. Android and desktop permit cap-only reads; Android gains the first grant client.
 3. Release checks reject embedded storage bearers.
 4. Disable and rotate the legacy shared bearer.
 

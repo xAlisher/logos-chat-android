@@ -13,6 +13,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
+import org.json.JSONObject
 
 /**
  * #297/#300 — client side of Logos Storage (Codex) media hosting.
@@ -26,9 +27,9 @@ import android.util.Base64
  *     destPath. Resolves the path.
  *
  * The node only ever sees ciphertext; the KEY is returned to JS and travels E2E in the
- * marker (never to the node). The BuildConfig bearer is a temporary legacy upload credential;
- * capability-bearing downloads do not need or send it. All network/crypto runs off the RN
- * thread.
+ * marker (never to the node). Uploads use anonymous short-lived one-use grants; the legacy
+ * BuildConfig bearer is retained only for capless legacy downloads. All network/crypto runs off
+ * the RN thread.
  */
 class StorageModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -55,7 +56,127 @@ class StorageModule(reactContext: ReactApplicationContext) :
   // wait for the route (bounded) and then fail closed, mirroring the delivery-side gate.
   @Volatile private var privateModePending = false
 
-  private fun uploadConfigured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
+  private fun uploadConfigured(): Boolean = base.isNotEmpty()
+
+  private data class UploadChallenge(
+      val challenge: String,
+      val difficulty: Int,
+      val expiresAt: Long,
+  )
+
+  private fun readBoundedText(conn: HttpURLConnection, error: Boolean = false): String {
+    val stream = if (error) conn.errorStream else conn.inputStream
+    if (stream == null) return ""
+    return stream.use { input ->
+      val out = java.io.ByteArrayOutputStream()
+      val chunk = ByteArray(1024)
+      while (true) {
+        val n = input.read(chunk)
+        if (n < 0) break
+        if (out.size() + n > 4096) throw RuntimeException("storage response too large")
+        out.write(chunk, 0, n)
+      }
+      out.toString(Charsets.UTF_8.name())
+    }
+  }
+
+  private fun requestUploadGrant(blobBytes: Int): String {
+    val challengeConn = openConn(StorageUploadGrant.challengeUrl(base)).apply {
+      requestMethod = "POST"
+      instanceFollowRedirects = false
+      connectTimeout = 15000
+      readTimeout = 30000
+      setFixedLengthStreamingMode(0)
+      doOutput = true
+    }
+    val challengeBody: String
+    try {
+      challengeConn.outputStream.close()
+      val code = challengeConn.responseCode
+      if (code in 300..399) throw RuntimeException("unexpected grant redirect ($code)")
+      if (code !in 200..299) {
+        readBoundedText(challengeConn, error = true)
+        throw RuntimeException("upload challenge failed ($code)")
+      }
+      challengeBody = readBoundedText(challengeConn)
+    } finally {
+      challengeConn.disconnect()
+    }
+
+    val challenge =
+        try {
+          val json = JSONObject(challengeBody)
+          UploadChallenge(
+              challenge = json.getString("challenge"),
+              difficulty = json.getInt("difficulty"),
+              expiresAt = json.getLong("expires_at"),
+          )
+        } catch (_: Throwable) {
+          throw RuntimeException("invalid upload challenge response")
+        }
+    val nowSeconds = System.currentTimeMillis() / 1000L
+    if (!StorageUploadGrant.validChallenge(
+            challenge.challenge, challenge.difficulty, challenge.expiresAt, nowSeconds)) {
+      throw RuntimeException("invalid or expired upload challenge")
+    }
+    val nonce =
+        StorageUploadGrant.solveProof(challenge.challenge, blobBytes.toLong(), challenge.difficulty)
+    val requestBytes =
+        JSONObject()
+            .put("challenge", challenge.challenge)
+            .put("bytes", blobBytes)
+            .put("nonce", nonce)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+    val grantConn = openConn(StorageUploadGrant.grantUrl(base)).apply {
+      requestMethod = "POST"
+      instanceFollowRedirects = false
+      connectTimeout = 15000
+      readTimeout = 30000
+      doOutput = true
+      setFixedLengthStreamingMode(requestBytes.size)
+      setRequestProperty("Content-Type", "application/json")
+    }
+    val grantBody: String
+    try {
+      grantConn.outputStream.use { it.write(requestBytes) }
+      val code = grantConn.responseCode
+      if (code in 300..399) throw RuntimeException("unexpected grant redirect ($code)")
+      if (code !in 200..299) {
+        readBoundedText(grantConn, error = true)
+        throw RuntimeException("upload grant failed ($code)")
+      }
+      grantBody = readBoundedText(grantConn)
+    } finally {
+      grantConn.disconnect()
+    }
+
+    val grantJson =
+        try {
+          JSONObject(grantBody)
+        } catch (_: Throwable) {
+          throw RuntimeException("invalid upload grant response")
+        }
+    val grant: String
+    val maxBytes: Long
+    val expiresAt: Long
+    try {
+      grant = grantJson.getString("grant")
+      maxBytes = grantJson.getLong("max_bytes")
+      expiresAt = grantJson.getLong("expires_at")
+    } catch (_: Throwable) {
+      throw RuntimeException("invalid upload grant response")
+    }
+    if (!StorageUploadGrant.validGrantResponse(
+            grant,
+            maxBytes,
+            blobBytes.toLong(),
+            expiresAt,
+            System.currentTimeMillis() / 1000L)) {
+      throw RuntimeException("invalid upload grant caveats")
+    }
+    return grant
+  }
 
   /**
    * #318/#363: open a connection, routed through the local Tor SOCKS proxy when Private mode
@@ -145,40 +266,53 @@ class StorageModule(reactContext: ReactApplicationContext) :
         val ct = cipher.doFinal(plain)
         val blob = iv + ct // IV || ciphertext(+tag)
 
+        val uploadGrant = requestUploadGrant(blob.size)
+
         val conn = openConn("$base/data").apply {
           requestMethod = "POST"
+          instanceFollowRedirects = false
           doOutput = true
           connectTimeout = 15000
           readTimeout = 60000
           setFixedLengthStreamingMode(blob.size)
-          setRequestProperty("Authorization", "Bearer $token")
-          setRequestProperty("Content-Type", "application/octet-stream")
-        }
-        // #308: stream in chunks so we can report real byte-level upload progress.
-        conn.outputStream.use { os ->
-          val chunk = 64 * 1024
-          var off = 0
-          emitSending(id, 0.0)
-          while (off < blob.size) {
-            val n = minOf(chunk, blob.size - off)
-            os.write(blob, off, n)
-            off += n
-            emitSending(id, off.toDouble() / blob.size)
+          for ((name, value) in StorageUploadGrant.uploadHeaders(uploadGrant)) {
+            setRequestProperty(name, value)
           }
-          os.flush()
         }
-        val code = conn.responseCode
-        if (code !in 200..299) {
-          val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"
-          throw RuntimeException("upload failed ($code): ${err.take(200)}")
+        val body = try {
+          // #308: stream in chunks so we can report real byte-level upload progress.
+          conn.outputStream.use { os ->
+            val chunk = 64 * 1024
+            var off = 0
+            emitSending(id, 0.0)
+            while (off < blob.size) {
+              val n = minOf(chunk, blob.size - off)
+              os.write(blob, off, n)
+              off += n
+              emitSending(id, off.toDouble() / blob.size)
+            }
+            os.flush()
+          }
+          val code = conn.responseCode
+          if (code in 300..399) throw RuntimeException("unexpected upload redirect ($code)")
+          if (code !in 200..299) {
+            readBoundedText(conn, error = true)
+            throw RuntimeException("upload failed ($code)")
+          }
+          readBoundedText(conn).trim()
+        } finally {
+          conn.disconnect()
         }
         // #302: the capgate proxy returns "cid:cap" (cap = per-blob fetch capability).
-        val body = conn.inputStream.bufferedReader().readText().trim()
-        conn.disconnect()
-        if (body.isEmpty()) throw RuntimeException("empty CID from storage")
         val sep = body.indexOf(':')
-        val cid = if (sep >= 0) body.substring(0, sep) else body
-        val cap = if (sep >= 0) body.substring(sep + 1) else ""
+        if (sep <= 0 || sep != body.lastIndexOf(':')) {
+          throw RuntimeException("invalid hosted-media reference from storage")
+        }
+        val cid = body.substring(0, sep)
+        val cap = body.substring(sep + 1)
+        if (!StorageRef.validCid(cid) || !StorageRef.validCap(cap) || cap.isEmpty()) {
+          throw RuntimeException("invalid hosted-media reference from storage")
+        }
 
         val out = Arguments.createMap()
         out.putString("cid", cid)

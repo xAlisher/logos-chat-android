@@ -100,9 +100,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 128
         versionName "0.9.15"
-        // #300: Logos Storage (Codex) media endpoint + bearer token. The token is injected
-        // at build time from the `storageToken` gradle property (kept OUT of git); empty by
-        // default so the feature no-ops in a plain build.
+        // #300/#533: Logos Storage media endpoint. The optional token is accepted only for
+        // legacy capless downloads in debug builds; releases reject any non-empty value.
+        // Uploads use anonymous short-lived one-use grants.
         buildConfigField "String", "STORAGE_BASE", "\"${project.findProperty('storageBase') ?: 'https://msg.logos.live/s/api/storage/v1'}\""
         buildConfigField "String", "STORAGE_TOKEN", "\"${project.findProperty('storageToken') ?: ''}\""
         ndk {
@@ -212,6 +212,17 @@ dependencies {
     }
 }
 
+/** Distribution invariant: a reusable storage bearer must never enter a release APK/AAB. */
+tasks.register("assertNoPackagedStorageToken") {
+    doLast {
+        def configured = project.findProperty('storageToken')?.toString()?.trim()
+        if (configured) {
+            throw new GradleException(
+                "Refusing release build: storageToken must be empty; uploads use one-use grants.")
+        }
+    }
+}
+
 /**
  * Guard against shipping a STALE JNI bridge. liblogoschat_bridge.so is built
  * out-of-band by scripts/build-bridge.sh (NOT by gradle — RN New Arch owns the
@@ -255,6 +266,9 @@ tasks.register("checkBridgeSymbols") {
 
 // Run the guard before native libs are merged into any release APK/bundle.
 tasks.configureEach { t ->
+    if (t.name == "preReleaseBuild") {
+        t.dependsOn("assertNoPackagedStorageToken")
+    }
     if (t.name == "mergeReleaseNativeLibs") {
         t.dependsOn("checkBridgeSymbols")
     }
