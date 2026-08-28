@@ -1,6 +1,7 @@
 package com.logoschat
 
 import android.util.Base64
+import java.io.File
 import java.net.URLEncoder
 import java.security.MessageDigest
 
@@ -66,6 +67,30 @@ object StorageRef {
   fun cacheName(cid: String): String {
     val d = MessageDigest.getInstance("SHA-256").digest(cid.toByteArray(Charsets.UTF_8))
     return d.joinToString("") { "%02x".format(it) }
+  }
+
+  /** Sidecar containing the original downloaded ciphertext byte count for cache-limit checks. */
+  fun cacheCiphertextSizeName(cid: String): String = cacheName(cid) + ".ciphertext-size"
+
+  /** Cached plaintext is reusable only when its original ciphertext size is known and allowed. */
+  fun validCachedCiphertextSize(ciphertextBytes: Long?, maxCiphertextBytes: Long): Boolean =
+      ciphertextBytes != null && ciphertextBytes > 0 && ciphertextBytes <= maxCiphertextBytes
+
+  /** Read the tiny app-private size sidecar and decide whether this cache entry is reusable. */
+  fun reusableCacheEntry(
+      cachedPlaintext: File,
+      ciphertextSizeFile: File,
+      maxCiphertextBytes: Long,
+  ): Boolean {
+    if (!cachedPlaintext.isFile || cachedPlaintext.length() <= 0) return false
+    if (!ciphertextSizeFile.isFile || ciphertextSizeFile.length() !in 1L..20L) return false
+    val ciphertextBytes =
+        try {
+          ciphertextSizeFile.readText(Charsets.US_ASCII).toLongOrNull()
+        } catch (_: Throwable) {
+          null
+        }
+    return validCachedCiphertextSize(ciphertextBytes, maxCiphertextBytes)
   }
 
   /**

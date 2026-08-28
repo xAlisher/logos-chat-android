@@ -1,6 +1,7 @@
 package com.logoschat
 
 import android.util.Base64
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -106,5 +107,39 @@ class StorageRefTest {
         StorageRef.MAX_CIPHERTEXT_BYTES,
         StorageRef.effectiveCiphertextLimit(StorageRef.MAX_CIPHERTEXT_BYTES.toDouble() * 2),
     )
+  }
+
+  @Test
+  fun cacheHit_requiresOriginalCiphertextWithinRequestedLimit() {
+    val audioLimit = 2L * 1024 * 1024
+    assertEquals(
+        StorageRef.cacheName(goodCid) + ".ciphertext-size",
+        StorageRef.cacheCiphertextSizeName(goodCid),
+    )
+    assertFalse(StorageRef.validCachedCiphertextSize(null, audioLimit))
+    assertFalse(StorageRef.validCachedCiphertextSize(0L, audioLimit))
+    assertFalse(StorageRef.validCachedCiphertextSize(audioLimit + 1, audioLimit))
+    assertTrue(StorageRef.validCachedCiphertextSize(audioLimit, audioLimit))
+  }
+
+  @Test
+  fun reusableCacheEntry_readsBoundedCiphertextMetadata() {
+    val dir = Files.createTempDirectory("storage-cache-test").toFile()
+    try {
+      val cachedPlaintext = java.io.File(dir, StorageRef.cacheName(goodCid))
+      val ciphertextSize = java.io.File(dir, StorageRef.cacheCiphertextSizeName(goodCid))
+      cachedPlaintext.writeBytes(byteArrayOf(1))
+      ciphertextSize.writeText("2097152", Charsets.US_ASCII)
+      assertTrue(StorageRef.reusableCacheEntry(cachedPlaintext, ciphertextSize, 2L * 1024 * 1024))
+
+      ciphertextSize.writeText("2097153", Charsets.US_ASCII)
+      assertFalse(StorageRef.reusableCacheEntry(cachedPlaintext, ciphertextSize, 2L * 1024 * 1024))
+      ciphertextSize.writeText("not-a-size", Charsets.US_ASCII)
+      assertFalse(StorageRef.reusableCacheEntry(cachedPlaintext, ciphertextSize, 2L * 1024 * 1024))
+      ciphertextSize.delete()
+      assertFalse(StorageRef.reusableCacheEntry(cachedPlaintext, ciphertextSize, 2L * 1024 * 1024))
+    } finally {
+      dir.deleteRecursively()
+    }
   }
 }
