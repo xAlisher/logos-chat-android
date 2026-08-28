@@ -34,6 +34,12 @@ import org.json.JSONObject
 class StorageModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
 
+  companion object {
+    // #543: serialises classify→publish on the shared media cache pair so a concurrent reader
+    // never observes a half-swapped entry. File ops only — NEVER held across the download.
+    private val CACHE_LOCK = Any()
+  }
+
   override fun getName() = "Storage"
 
   private val base = BuildConfig.STORAGE_BASE
@@ -343,15 +349,24 @@ class StorageModule(reactContext: ReactApplicationContext) :
         val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
         val dest = File(dir, StorageRef.cacheName(cid))
         val ciphertextSizeFile = File(dir, StorageRef.cacheCiphertextSizeName(cid))
-        if (dest.exists() && dest.length() > 0) {
-          if (StorageRef.reusableCacheEntry(dest, ciphertextSizeFile, max)) {
+        // #543: one cache pair serves EVERY reference to this CID, but the ciphertext bound is
+        // per-caller (audio is far stricter than visual media) and the mime it comes from is
+        // sender-controlled. A caller that cannot use an entry must not destroy it for the one
+        // that can, so the pair is only ever REPLACED — after a verified download — never
+        // unlinked up front.
+        when (synchronized(CACHE_LOCK) {
+          StorageRef.classifyCacheEntry(dest, ciphertextSizeFile, max)
+        }) {
+          StorageRef.CacheVerdict.REUSE -> {
             promise.resolve(dest.absolutePath)
             return@Thread
           }
-          // Legacy, corrupt, or less-restrictively cached entries must be revalidated from the
-          // ciphertext source before reuse under this request's bound.
-          dest.delete()
-          ciphertextSizeFile.delete()
+          // Known ciphertext size, above this caller's bound: re-downloading could only abort
+          // past the same bound, so reject and leave the looser caller's entry intact.
+          StorageRef.CacheVerdict.TOO_LARGE ->
+              throw RuntimeException("cached media exceeds max size ($max bytes)")
+          // Legacy, missing, or corrupt metadata: revalidate from the ciphertext source.
+          StorageRef.CacheVerdict.REVALIDATE -> Unit
         }
         // #302: present the per-blob capability on GET (proxy 403s without a valid one).
         // #388: URL components are percent-encoded (defence in depth on top of validation).
@@ -410,8 +425,22 @@ class StorageModule(reactContext: ReactApplicationContext) :
         // #320: store2 blobs are size-padded — strip the header + zero pad (MediaPadding).
         val plain = if (padded) MediaPadding.strip(decrypted) else decrypted
 
-        dest.writeBytes(plain)
-        ciphertextSizeFile.writeText(blob.size.toString(), Charsets.US_ASCII)
+        // #543: land the verified plaintext beside the cache entry, then swap the pair in one
+        // critical section. A failure anywhere above leaves the previous entry exactly as it was.
+        val staged = File.createTempFile(StorageRef.cacheName(cid) + ".", ".part", dir)
+        try {
+          staged.writeBytes(plain)
+          synchronized(CACHE_LOCK) {
+            // Another thread may have published a pair usable under this bound while we
+            // downloaded; if so its entry is equivalent (same CID) — keep it, drop ours.
+            if (StorageRef.classifyCacheEntry(dest, ciphertextSizeFile, max) !=
+                StorageRef.CacheVerdict.REUSE) {
+              StorageRef.publishCacheEntry(staged, dest, ciphertextSizeFile, blob.size.toLong())
+            }
+          }
+        } finally {
+          staged.delete() // no-op once publishCacheEntry has moved it
+        }
         promise.resolve(dest.absolutePath)
       } catch (t: Throwable) {
         promise.reject("storage_download", t.message, t)

@@ -74,6 +74,7 @@ module.exports = {
     '<rootDir>/__tests__/privateModeDelivery.test.ts',
     '<rootDir>/__tests__/hostedVoice.test.ts',
     '<rootDir>/__tests__/hostedReferenceConfinement.test.ts',
+    '<rootDir>/__tests__/hostedMediaCacheSharing.test.ts',
     '<rootDir>/__tests__/hostedTransportBoundary.test.ts',
     '<rootDir>/__tests__/hostedClipboardBoundary.test.tsx',
   ],
