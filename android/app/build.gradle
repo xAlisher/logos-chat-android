@@ -98,8 +98,8 @@ android {
         applicationId "com.logoschat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 128
-        versionName "0.9.15"
+        versionCode 129
+        versionName "0.9.16"
         // #300/#533: Logos Storage media endpoint. The optional token is accepted only for
         // legacy capless downloads in debug builds; releases reject any non-empty value.
         // Uploads use anonymous short-lived one-use grants.

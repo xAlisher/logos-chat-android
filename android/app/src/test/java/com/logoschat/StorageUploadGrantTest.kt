@@ -51,6 +51,8 @@ class StorageUploadGrantTest {
     assertFalse(StorageUploadGrant.validChallenge("ab".repeat(32), 31, 200, 100))
     assertFalse(StorageUploadGrant.validChallenge("ab".repeat(32), 18, 100, 100))
     assertTrue(StorageUploadGrant.validChallenge("ab".repeat(32), 18, 200, 100))
+    assertTrue(StorageUploadGrant.validChallenge("ab".repeat(32), 18, 220, 100))
+    assertFalse(StorageUploadGrant.validChallenge("ab".repeat(32), 18, 221, 100))
   }
 
   @Test
@@ -65,12 +67,22 @@ class StorageUploadGrantTest {
   }
 
   @Test
+  fun freshUploadCapabilityRequiresExactGatewayShape() {
+    assertTrue(StorageUploadGrant.validUploadCapability("ab".repeat(16)))
+    assertFalse(StorageUploadGrant.validUploadCapability("ab".repeat(15)))
+    assertFalse(StorageUploadGrant.validUploadCapability("AB".repeat(16)))
+    assertFalse(StorageUploadGrant.validUploadCapability("g0".repeat(16)))
+  }
+
+  @Test
   fun grantCaveatsMustMatchTheExactCiphertextAndRemainShortLived() {
     val grant = "ef".repeat(32)
 
     assertTrue(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 200, 100))
     assertFalse(StorageUploadGrant.validGrantResponse(grant, 1235, 1234, 200, 100))
     assertFalse(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 100, 100))
+    assertTrue(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 220, 100))
+    assertFalse(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 221, 100))
     assertFalse(StorageUploadGrant.validGrantResponse(grant, 1234, 1234, 1000, 100))
   }
 

@@ -11,7 +11,6 @@ import {
   Alert,
   Animated,
   DeviceEventEmitter,
-  Easing,
   Image,
   Linking,
   Text,
@@ -21,7 +20,6 @@ import {
   FlatList,
   ScrollView,
   KeyboardAvoidingView,
-  Modal,
   PermissionsAndroid,
   Platform,
   ToastAndroid,
@@ -82,6 +80,7 @@ import type {Conversation, Message, SystemNote, MediaSend} from '../stores/chatS
 
 // #313: send button "breathes" while the node is connecting.
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+const EMPTY_MESSAGES: Message[] = [];
 
 // #188: a timeline row is either a message or an interleaved system line.
 type Row =
@@ -109,18 +108,17 @@ import {
   isReactionContent,
   parseReaction,
   foldReactions,
-  REACTION_PALETTE,
   type ReactionState,
 } from '../messages/reactions';
 import {isPinContent, parsePin, foldPins} from '../messages/pins';
 import {isPfpContent, foldPfps} from '../messages/pfp';
-import {isGroupCfgContent, foldGroupCfgsFromCreator} from '../messages/groupcfg';
+import {foldGroupCfgsFromCreator} from '../messages/groupcfg';
 import {isFoldedMarker} from '../messages/markers';
 import {isLeaveContent} from '../messages/leave';
-import {encodeReply, parseReply, isReplyContent, displayBody} from '../messages/reply';
+import {encodeReply, parseReply, displayBody} from '../messages/reply';
 import {parseMedia, isMediaContent, mediaLabel} from '../messages/media';
 import {isAddrContent, parseAddr, encodeAddr} from '../messages/address';
-import {useMediaBlob} from '../native/mediaCache';
+import {maxCiphertextBytesForMime, useMediaBlob} from '../native/mediaCache';
 import {MediaVideo} from '../components/MediaVideo';
 import {MediaViewer, type MediaAuthor} from '../components/MediaViewer';
 import {
@@ -397,11 +395,16 @@ function Bubble({
   const imgDims = image != null ? fitImage(image.meta.width, image.meta.height) : null;
   // #300: store1: media hosted on Logos Storage — fetched+decrypted on demand.
   const mediaRef = isMediaContent(raw) ? parseMedia(raw) : null;
+  const hostedVoice = mediaRef?.mime.startsWith('audio/') === true
+    ? {mime: mediaRef.mime, durationMs: mediaRef.width, waveform: []}
+    : null;
   // #344: in a storage-off group, a media message renders a placeholder and MUST
   // NOT fetch — pass null to useMediaBlob so no Storage request ever fires.
   const mediaBlocked = storageOff === true && mediaRef != null;
   const media = useMediaBlob(mediaBlocked ? null : mediaRef);
-  const mediaDims = mediaRef != null ? fitImage(mediaRef.width, mediaRef.height) : null;
+  const mediaDims = mediaRef != null && hostedVoice == null
+    ? fitImage(mediaRef.width, mediaRef.height)
+    : null;
   const relay = parseRelay(raw);
   const displayText = relay?.text ?? raw;
   const bridgeName =
@@ -455,7 +458,7 @@ function Bubble({
             ? onRetry
             : image != null
             ? () => onOpenMedia?.(msg.msgPk)
-            : mediaRef != null && media.status === 'ready'
+            : mediaRef != null && hostedVoice == null && media.status === 'ready'
             ? () => onOpenMedia?.(msg.msgPk)
             : location != null
             ? () => onOpenLocation(location)
@@ -471,7 +474,7 @@ function Bubble({
           viaMesh && (own ? styles.bubbleMeshOwn : styles.bubbleMeshPeer),
           viaBle && (own ? styles.bubbleBleOwn : styles.bubbleBlePeer),
           failed && styles.bubbleFailed,
-          (image != null || mediaRef != null) && styles.bubbleImage, // #300 thin 2px frame
+          (image != null || (mediaRef != null && hostedVoice == null)) && styles.bubbleImage,
         ]}>
         {/* #295: quoted-reply header — tap to jump to the original. */}
         {quoted != null && (
@@ -491,7 +494,31 @@ function Bubble({
             </Text>
           </Pressable>
         )}
-        {mediaBlocked && mediaDims != null ? (
+        {mediaBlocked && hostedVoice != null ? (
+          <Text style={[type.caption, {color: own ? colors.onAccent : colors.textDim}]}>
+            media disabled in this group
+          </Text>
+        ) : hostedVoice != null ? (
+          media.status === 'ready' ? (
+            <VoiceBubble
+              path={media.path}
+              meta={hostedVoice}
+              tint={own ? colors.onAccent : colors.text}
+            />
+          ) : media.status === 'loading' ? (
+            <ActivityIndicator color={own ? colors.onAccent : colors.textDim} />
+          ) : media.status === 'error' ? (
+            <Pressable onPress={media.retry}>
+              <Text style={[type.caption, {color: own ? colors.onAccent : colors.textDim}]}>
+                voice message unavailable — tap to retry
+              </Text>
+            </Pressable>
+          ) : (
+            <Text style={[type.caption, {color: own ? colors.onAccent : colors.textDim}]}>
+              voice message expired
+            </Text>
+          )
+        ) : mediaBlocked && mediaDims != null ? (
           // #344: storage-off group — never fetch/show the blob. Show a placeholder
           // sized to the bubble so the timeline doesn't jump.
           <View
@@ -644,7 +671,7 @@ export function ChatScreen() {
   const navigation = useNavigation<Nav>();
   const {convoPk} = route.params;
   const convo = useChatStore(s => s.conversations[convoPk]);
-  const messages = useChatStore(s => s.messages[convoPk]) ?? [];
+  const messages = useChatStore(s => s.messages[convoPk]) ?? EMPTY_MESSAGES;
   const groupMembers = useChatStore(s => s.members[convoPk]);
   // #444 (review of PR #447): the header subtitle depends on the roster SIZE, and
   // the header is registered through navigation.setOptions — a closure that only
@@ -669,7 +696,6 @@ export function ChatScreen() {
   const send = useChatStore(s => s.send);
   const sendReaction = useChatStore(s => s.sendReaction); // #264
   const pinMessage = useChatStore(s => s.pinMessage); // #266
-  const sendImage = useChatStore(s => s.sendImage);
   const sendGif = useChatStore(s => s.sendGif); // #306 gif via Logos Storage
   const stageVideo = useChatStore(s => s.stageVideo); // #307 pick+stage a video
   const sendStagedVideo = useChatStore(s => s.sendStagedVideo); // #305/#308 compress→upload→send
@@ -1660,7 +1686,11 @@ export function ChatScreen() {
         await AudioRecorder.cancelRecording();
       }
     } catch (e: any) {
-      // stopRecording rejects "empty"/"too short" on a tap — treat as cancel.
+      // Recorder taps may be empty; upload/send failures must never disappear.
+      const message = String(e?.message ?? e);
+      if (!/empty|too short|not_recording/i.test(message)) {
+        useNodeStore.setState({error: `voice send failed: ${message}`});
+      }
     }
   };
 
@@ -2609,7 +2639,13 @@ export function ChatScreen() {
           const m = parseMedia(t.text);
           if (m == null) return;
           try {
-            const path = await Storage.downloadDecrypt(m.cid, m.key, m.cap ?? '', m.padded ?? false);
+            const path = await Storage.downloadDecrypt(
+              m.cid,
+              m.key,
+              m.cap ?? '',
+              m.padded ?? false,
+              maxCiphertextBytesForMime(m.mime),
+            );
             await ImagePickerNative.saveMediaToGallery(path, m.mime);
             ToastAndroid.show('Saved to phone', ToastAndroid.SHORT);
           } catch {
@@ -2654,12 +2690,17 @@ export function ChatScreen() {
       <ForwardPicker
         visible={forwardContent != null}
         onClose={() => setForwardContent(null)}
-        onPick={pk => {
+        onPick={async pk => {
           const c = forwardContent;
           setForwardContent(null);
           if (c != null) {
-            forwardMessage(c, pk);
-            ToastAndroid.show('Forwarded', ToastAndroid.SHORT);
+            try {
+              await forwardMessage(c, pk);
+              ToastAndroid.show('Forwarded', ToastAndroid.SHORT);
+            } catch {
+              // forwardMessage already surfaces the concrete failure.
+              return;
+            }
             // #343: when the forwarded content is a shared-contact (addr1:) card
             // — the AddressModal "Send" path — jump into that chat afterwards.
             // Plain message forwards (bubble menu) stay put as before.

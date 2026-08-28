@@ -303,7 +303,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
         }
         val cid = body.substring(0, sep)
         val cap = body.substring(sep + 1)
-        if (!StorageRef.validCid(cid) || !StorageRef.validCap(cap) || cap.isEmpty()) {
+        if (!StorageRef.validCid(cid) || !StorageUploadGrant.validUploadCapability(cap)) {
           throw RuntimeException("invalid hosted-media reference from storage")
         }
 
@@ -319,7 +319,14 @@ class StorageModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  fun downloadDecrypt(cid: String, keyB64: String, cap: String, padded: Boolean, promise: Promise) {
+  fun downloadDecrypt(
+      cid: String,
+      keyB64: String,
+      cap: String,
+      padded: Boolean,
+      maxCiphertextBytes: Double,
+      promise: Promise,
+  ) {
     Thread {
       try {
         // #388: the CID / key / cap come from an untrusted sender's marker. Validate with a
@@ -332,9 +339,11 @@ class StorageModule(reactContext: ReactApplicationContext) :
         }
 
         // #388: cache filename is SHA-256(cid), never the raw cid → no path traversal / collision.
+        val max = StorageRef.effectiveCiphertextLimit(maxCiphertextBytes)
         val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
         val dest = File(dir, StorageRef.cacheName(cid))
         if (dest.exists() && dest.length() > 0) {
+          if (dest.length() > max) throw RuntimeException("cached media exceeds max size ($max bytes)")
           promise.resolve(dest.absolutePath)
           return@Thread
         }
@@ -363,7 +372,6 @@ class StorageModule(reactContext: ReactApplicationContext) :
           }
           // #388: bound the download. Reject up-front on an oversized Content-Length, then read
           // with a streaming counter that aborts past the ciphertext ceiling (no unbounded read).
-          val max = StorageRef.MAX_CIPHERTEXT_BYTES
           val declared = conn.contentLengthLong
           if (declared in 1..Long.MAX_VALUE && declared > max) {
             throw RuntimeException("media too large ($declared > $max)")

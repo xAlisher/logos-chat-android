@@ -28,6 +28,7 @@ import {
 } from './OverflowMenu';
 import {parseImageLocal, isImageContent} from '../native/imageMsg';
 import {isMediaContent} from '../messages/media';
+import {containsSensitiveHostedReference} from '../messages/hostedReference';
 import {isVoiceContent} from '../native/voiceMsg';
 import {
   parseLocation,
@@ -35,6 +36,7 @@ import {
   geoUri,
   isLocationContent,
 } from '../native/locMsg';
+
 
 /** The bubble the menu was opened on. */
 export interface BubbleTarget {
@@ -116,6 +118,7 @@ export function BubbleActionMenu({
     const isImage = isImageContent(body);
     const isVoice = isVoiceContent(body);
     const isLoc = isLocationContent(body);
+    const isHosted = containsSensitiveHostedReference(target.text);
     // #295: Reply works on any message (own or peer), first for prominence.
     if (onReply != null) {
       items.push({
@@ -183,7 +186,7 @@ export function BubbleActionMenu({
       }
     }
     // Copy: readable content only — text or location coordinates (not media markers).
-    if (!isImage && !isVoice) {
+    if (!isImage && !isVoice && !isHosted) {
       const copyText = isLoc
         ? (() => {
             const l = parseLocation(body);

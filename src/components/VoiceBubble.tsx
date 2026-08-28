@@ -11,7 +11,7 @@ import {
   DeviceEventEmitter,
   useWindowDimensions,
 } from 'react-native';
-import {colors, type} from '../theme';
+import {type} from '../theme';
 import AudioRecorder from '../native/Audio';
 import {formatDuration, type VoiceMeta} from '../native/voiceMsg';
 

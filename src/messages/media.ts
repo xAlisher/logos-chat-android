@@ -54,6 +54,7 @@ const MAX_CID_LEN = 128;
 const MAX_CAP_LEN = 256;
 const MAX_MIME_LEN = 128;
 const MAX_DIM = 100_000;
+const MAX_VOICE_DURATION_MS = 120_000;
 // CID: base58/base32 style — alphanumeric + unreserved marks, NEVER '/', ':', '?', '#', '&',
 // '.', whitespace (traversal / URL injection).
 const CID_RE = /^[A-Za-z0-9_~-]{1,128}$/;
@@ -71,6 +72,7 @@ export function parseMedia(s: string): MediaRef | null {
   const [cid, key, mime, w, h, cap] = parts;
   const width = Number(w);
   const height = Number(h);
+  const audio = mime.startsWith('audio/');
   // #388: strict field validation — reject traversal/injection/oversized/malformed markers.
   if (
     cid.length > MAX_CID_LEN ||
@@ -82,8 +84,9 @@ export function parseMedia(s: string): MediaRef | null {
     !Number.isInteger(height) ||
     width < 1 ||
     height < 1 ||
-    width > MAX_DIM ||
-    height > MAX_DIM
+    width > (audio ? MAX_VOICE_DURATION_MS : MAX_DIM) ||
+    height > MAX_DIM ||
+    (audio && height !== 1)
   ) {
     return null;
   }
@@ -96,6 +99,7 @@ export function mediaLabel(s: string): string {
   const m = parseMedia(s);
   if (m == null) return s;
   if (m.mime.startsWith('video/')) return 'Video';
+  if (m.mime.startsWith('audio/')) return 'Voice message';
   if (m.mime === 'image/gif') return 'GIF';
   return 'Media';
 }

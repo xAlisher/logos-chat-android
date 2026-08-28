@@ -8,8 +8,9 @@ import org.json.JSONTokener
 object StorageUploadGrant {
   const val HEADER = "X-Upload-Grant"
   private val OPAQUE_RE = Regex("^[0-9a-f]{64}$")
+  private val UPLOAD_CAPABILITY_RE = Regex("^[0-9a-f]{32}$")
   private const val MAX_DIFFICULTY = 24
-  private const val MAX_CLOCK_HORIZON_SECONDS = 5 * 60L
+  private const val MAX_CLOCK_HORIZON_SECONDS = 2 * 60L
 
   data class ChallengeJson(
       val challenge: String,
@@ -78,6 +79,9 @@ object StorageUploadGrant {
           expiresAtSeconds <= nowSeconds + MAX_CLOCK_HORIZON_SECONDS
 
   fun validGrant(grant: String): Boolean = OPAQUE_RE.matches(grant)
+
+  fun validUploadCapability(capability: String): Boolean =
+      UPLOAD_CAPABILITY_RE.matches(capability)
 
   fun validGrantResponse(
       grant: String,

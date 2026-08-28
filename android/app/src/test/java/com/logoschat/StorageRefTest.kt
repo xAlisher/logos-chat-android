@@ -97,4 +97,14 @@ class StorageRefTest {
     // trailing slash on base is normalised (no double slash)
     assertEquals("$base/data/$goodCid", StorageRef.buildDataUrl("$base/", goodCid, ""))
   }
+
+  @Test
+  fun effectiveCiphertextLimit_honorsTrustedVoiceBound() {
+    assertEquals(2L * 1024 * 1024, StorageRef.effectiveCiphertextLimit(2.0 * 1024 * 1024))
+    assertEquals(StorageRef.MAX_CIPHERTEXT_BYTES, StorageRef.effectiveCiphertextLimit(0.0))
+    assertEquals(
+        StorageRef.MAX_CIPHERTEXT_BYTES,
+        StorageRef.effectiveCiphertextLimit(StorageRef.MAX_CIPHERTEXT_BYTES.toDouble() * 2),
+    )
+  }
 }

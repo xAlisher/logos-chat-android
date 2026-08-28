@@ -6,7 +6,7 @@ import React, {useEffect, useRef, useState} from 'react';
 import type Svg from 'react-native-svg';
 import {useNavigation} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import LogosChat, {shortAddress} from '../native/LogosChat';
+import LogosChat from '../native/LogosChat';
 import {
   Text,
   View,

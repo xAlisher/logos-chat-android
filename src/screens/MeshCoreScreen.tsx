@@ -74,7 +74,6 @@ export function MeshCoreScreen() {
   const channels = useMeshStore(s => s.channels);
   const contacts = useMeshStore(s => s.contacts);
   const error = useMeshStore(s => s.error);
-  const connect = useMeshStore(s => s.connect);
   const scanForRadios = useMeshStore(s => s.scanForRadios);
   const connectTo = useMeshStore(s => s.connectTo);
   const disconnect = useMeshStore(s => s.disconnect);
