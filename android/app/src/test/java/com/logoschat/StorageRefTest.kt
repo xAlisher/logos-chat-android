@@ -142,4 +142,102 @@ class StorageRefTest {
       dir.deleteRecursively()
     }
   }
+
+  /**
+   * Senti P2 on #543. The cache pair is keyed by SHA-256(cid) ALONE, so an image cached under the
+   * 100 MiB visual bound and an `audio` mime reference to the SAME cid (the mime comes off the
+   * sender's marker) share one pair. The stricter caller must be able to say "not for me" WITHOUT
+   * discarding the entry — the first cut deleted both files, then failed its own 2 MiB
+   * re-download, leaving mediaCache.ts memoising a path that no longer existed.
+   */
+  @Test
+  fun oversizedForThisCaller_isRejected_notDiscarded() {
+    val audioLimit = 2L * 1024 * 1024
+    val visualLimit = 100L * 1024 * 1024
+    val fiveMiB = 5L * 1024 * 1024
+    // Same recorded entry, two callers: the visual one serves it, the audio one rejects it.
+    assertEquals(StorageRef.CacheVerdict.REUSE, StorageRef.classifyCiphertextSize(fiveMiB, visualLimit))
+    assertEquals(StorageRef.CacheVerdict.TOO_LARGE, StorageRef.classifyCiphertextSize(fiveMiB, audioLimit))
+    // TOO_LARGE is distinct from REVALIDATE precisely so the caller can reject without deleting;
+    // only unknown provenance (legacy/corrupt/absent) justifies a re-download.
+    assertEquals(StorageRef.CacheVerdict.REVALIDATE, StorageRef.classifyCiphertextSize(null, audioLimit))
+    assertEquals(StorageRef.CacheVerdict.REVALIDATE, StorageRef.classifyCiphertextSize(0L, audioLimit))
+    assertEquals(StorageRef.CacheVerdict.REUSE, StorageRef.classifyCiphertextSize(audioLimit, audioLimit))
+  }
+
+  @Test
+  fun strictCallerLeavesTheLooserCallersEntryReadable() {
+    val audioLimit = 2L * 1024 * 1024
+    val visualLimit = 100L * 1024 * 1024
+    val dir = Files.createTempDirectory("storage-cache-share").toFile()
+    try {
+      val dest = java.io.File(dir, StorageRef.cacheName(goodCid))
+      val size = java.io.File(dir, StorageRef.cacheCiphertextSizeName(goodCid))
+      dest.writeBytes("image-plaintext".toByteArray())
+      size.writeText((5L * 1024 * 1024).toString(), Charsets.US_ASCII)
+
+      // The audio-bounded caller classifies the pair and, per TOO_LARGE, touches nothing.
+      assertEquals(StorageRef.CacheVerdict.TOO_LARGE, StorageRef.classifyCacheEntry(dest, size, audioLimit))
+      assertTrue(dest.isFile)
+      assertTrue(size.isFile)
+      // The visual caller that owns this entry can still read it — the regression's whole point.
+      assertEquals(StorageRef.CacheVerdict.REUSE, StorageRef.classifyCacheEntry(dest, size, visualLimit))
+      assertEquals("image-plaintext", dest.readText())
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  @Test
+  fun publishCacheEntry_replacesBothFilesTogether() {
+    val visualLimit = 100L * 1024 * 1024
+    val dir = Files.createTempDirectory("storage-cache-publish").toFile()
+    try {
+      val dest = java.io.File(dir, StorageRef.cacheName(goodCid))
+      val size = java.io.File(dir, StorageRef.cacheCiphertextSizeName(goodCid))
+      dest.writeBytes("stale".toByteArray())
+      size.writeText("999", Charsets.US_ASCII)
+      val staged = java.io.File(dir, StorageRef.cacheName(goodCid) + ".part")
+      staged.writeBytes("fresh".toByteArray())
+
+      StorageRef.publishCacheEntry(staged, dest, size, 4096L)
+
+      assertEquals("fresh", dest.readText())
+      assertEquals("4096", size.readText(Charsets.US_ASCII))
+      assertFalse(staged.exists()) // moved, not copied-and-left
+      assertEquals(StorageRef.CacheVerdict.REUSE, StorageRef.classifyCacheEntry(dest, size, visualLimit))
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
+
+  /** A pair whose sidecar is gone mid-swap must read as REVALIDATE, never as a bogus REUSE. */
+  @Test
+  fun tornPairFailsClosed() {
+    val dir = Files.createTempDirectory("storage-cache-torn").toFile()
+    try {
+      val dest = java.io.File(dir, StorageRef.cacheName(goodCid))
+      val size = java.io.File(dir, StorageRef.cacheCiphertextSizeName(goodCid))
+      dest.writeBytes("bytes".toByteArray())
+      assertEquals(
+          StorageRef.CacheVerdict.REVALIDATE,
+          StorageRef.classifyCacheEntry(dest, size, 100L * 1024 * 1024),
+      )
+      // An absurdly long sidecar is metadata we refuse to parse, not a usable bound.
+      size.writeText("1".repeat(64), Charsets.US_ASCII)
+      assertEquals(
+          StorageRef.CacheVerdict.REVALIDATE,
+          StorageRef.classifyCacheEntry(dest, size, 100L * 1024 * 1024),
+      )
+      // Plaintext missing but metadata present is equally unusable.
+      size.writeText("4096", Charsets.US_ASCII)
+      dest.delete()
+      assertEquals(
+          StorageRef.CacheVerdict.REVALIDATE,
+          StorageRef.classifyCacheEntry(dest, size, 100L * 1024 * 1024),
+      )
+    } finally {
+      dir.deleteRecursively()
+    }
+  }
 }

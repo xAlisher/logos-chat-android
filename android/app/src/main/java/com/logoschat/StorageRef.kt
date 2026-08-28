@@ -72,25 +72,79 @@ object StorageRef {
   /** Sidecar containing the original downloaded ciphertext byte count for cache-limit checks. */
   fun cacheCiphertextSizeName(cid: String): String = cacheName(cid) + ".ciphertext-size"
 
+  /**
+   * #542/#543 — how one caller may use the cache pair for a CID. The pair is keyed by the CID
+   * ALONE, but the ciphertext bound is per-caller (audio is far stricter than visual media), so
+   * a caller that cannot use an entry must never destroy it for the caller that can.
+   */
+  enum class CacheVerdict {
+    /** Original ciphertext size is known and within this caller's bound → serve the entry. */
+    REUSE,
+    /** Known size, above THIS caller's bound → reject the request, leave the pair untouched. */
+    TOO_LARGE,
+    /** Legacy/missing/corrupt metadata → re-download under this bound, then replace the pair. */
+    REVALIDATE,
+  }
+
   /** Cached plaintext is reusable only when its original ciphertext size is known and allowed. */
   fun validCachedCiphertextSize(ciphertextBytes: Long?, maxCiphertextBytes: Long): Boolean =
-      ciphertextBytes != null && ciphertextBytes > 0 && ciphertextBytes <= maxCiphertextBytes
+      classifyCiphertextSize(ciphertextBytes, maxCiphertextBytes) == CacheVerdict.REUSE
+
+  /** Pure verdict for a recorded ciphertext size against one caller's bound. */
+  fun classifyCiphertextSize(ciphertextBytes: Long?, maxCiphertextBytes: Long): CacheVerdict =
+      when {
+        ciphertextBytes == null || ciphertextBytes <= 0L -> CacheVerdict.REVALIDATE
+        ciphertextBytes <= maxCiphertextBytes -> CacheVerdict.REUSE
+        else -> CacheVerdict.TOO_LARGE
+      }
+
+  /** Read the tiny app-private size sidecar and classify the pair for this caller's bound. */
+  fun classifyCacheEntry(
+      cachedPlaintext: File,
+      ciphertextSizeFile: File,
+      maxCiphertextBytes: Long,
+  ): CacheVerdict {
+    if (!cachedPlaintext.isFile || cachedPlaintext.length() <= 0) return CacheVerdict.REVALIDATE
+    if (!ciphertextSizeFile.isFile || ciphertextSizeFile.length() !in 1L..20L) {
+      return CacheVerdict.REVALIDATE
+    }
+    val ciphertextBytes =
+        try {
+          ciphertextSizeFile.readText(Charsets.US_ASCII).trim().toLongOrNull()
+        } catch (_: Throwable) {
+          null
+        }
+    return classifyCiphertextSize(ciphertextBytes, maxCiphertextBytes)
+  }
 
   /** Read the tiny app-private size sidecar and decide whether this cache entry is reusable. */
   fun reusableCacheEntry(
       cachedPlaintext: File,
       ciphertextSizeFile: File,
       maxCiphertextBytes: Long,
-  ): Boolean {
-    if (!cachedPlaintext.isFile || cachedPlaintext.length() <= 0) return false
-    if (!ciphertextSizeFile.isFile || ciphertextSizeFile.length() !in 1L..20L) return false
-    val ciphertextBytes =
-        try {
-          ciphertextSizeFile.readText(Charsets.US_ASCII).toLongOrNull()
-        } catch (_: Throwable) {
-          null
-        }
-    return validCachedCiphertextSize(ciphertextBytes, maxCiphertextBytes)
+  ): Boolean = classifyCacheEntry(cachedPlaintext, ciphertextSizeFile, maxCiphertextBytes) ==
+      CacheVerdict.REUSE
+
+  /**
+   * #543 — replace a cache pair with a freshly verified download, atomically enough that no
+   * concurrent reader can observe new metadata over old bytes. Order matters: drop the sidecar
+   * FIRST (the pair now classifies REVALIDATE — fail-closed, worst case a redundant download),
+   * then move the verified plaintext into place, then record its ciphertext size. The previous
+   * plaintext is only ever overwritten by a complete download — never unlinked speculatively.
+   */
+  fun publishCacheEntry(
+      verifiedPlaintext: File,
+      cachedPlaintext: File,
+      ciphertextSizeFile: File,
+      ciphertextBytes: Long,
+  ) {
+    ciphertextSizeFile.delete()
+    if (!verifiedPlaintext.renameTo(cachedPlaintext)) {
+      // Same directory, so rename is normally atomic; fall back to a copy if the FS refuses.
+      cachedPlaintext.writeBytes(verifiedPlaintext.readBytes())
+      verifiedPlaintext.delete()
+    }
+    ciphertextSizeFile.writeText(ciphertextBytes.toString(), Charsets.US_ASCII)
   }
 
   /**
