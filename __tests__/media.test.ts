@@ -32,6 +32,14 @@ describe('media marker', () => {
     expect(mediaLabel('just text')).toBe('just text');
   });
 
+  it('round-trips hosted voice duration without treating it as visual geometry', () => {
+    const voice = {...ref, mime: 'audio/mp4', width: 42_000, height: 1};
+    const encoded = encodeMedia(voice);
+    expect(parseMedia(encoded)).toEqual({...voice, padded: true});
+    expect(mediaLabel(encoded)).toBe('Voice message');
+    expect(parseMedia(encoded.replace(':42000:1', ':120001:1'))).toBeNull();
+  });
+
   it('#302: round-trips the per-blob cap (store2) + parses legacy capless markers', () => {
     const withCap = {...ref, cap: 'a2a008e66058cdd57e08ace8f0eb57bd'};
     const enc = encodeMedia(withCap);

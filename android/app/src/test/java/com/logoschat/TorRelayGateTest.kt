@@ -222,6 +222,31 @@ class TorRelayGateTest {
   }
 
   @Test
+  fun persistedPrivateModeBlocksMediaBeforeJsHydrationArmsTheLatch() {
+    assertTrue(
+        TorRelayGate.mustWaitForMedia(
+            privateMode = true, privateModePending = false, torRoutingLive = false))
+  }
+
+  @Test
+  fun unreadablePrivateModeSettingBlocksMediaInsteadOfEgressingDirectly() {
+    val privateMode = TorRelayGate.privateModeFromRead(readValue = null, readFaulted = true)
+    assertTrue(
+        TorRelayGate.mustWaitForMedia(
+            privateMode = privateMode, privateModePending = false, torRoutingLive = false))
+  }
+
+  @Test
+  fun mediaGateDoesNotBlockWhenPrivateModeIsCleanlyOffOrTorIsLive() {
+    assertFalse(
+        TorRelayGate.mustWaitForMedia(
+            privateMode = false, privateModePending = false, torRoutingLive = false))
+    assertFalse(
+        TorRelayGate.mustWaitForMedia(
+            privateMode = true, privateModePending = false, torRoutingLive = true))
+  }
+
+  @Test
   fun writeLandsRelayFailsThenTheReadFaults_deliveryStaysDownNotDirect() {
     // The exact sequence from the review: `setSetting(mediaOverTor, 'true')` SUCCEEDS, relay
     // setup FAILS, so the latch is released on the strength of the persisted gate alone —

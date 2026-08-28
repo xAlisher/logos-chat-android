@@ -1,6 +1,7 @@
 package com.logoschat
 
 import android.graphics.SurfaceTexture
+import android.graphics.Matrix
 import android.os.Handler
 import android.os.Looper
 import android.view.Surface
@@ -32,6 +33,13 @@ class MediaVideoView(private val reactCtx: ThemedReactContext) :
   private var reportProgress = false
   private var paused = false
   private var prepared = false
+
+  private fun updateAspectFit() {
+    val fit = videoAspectFit(width, height, player?.videoWidth ?: 0, player?.videoHeight ?: 0)
+    setTransform(Matrix().apply {
+      setScale(fit.scaleX, fit.scaleY, width / 2f, height / 2f)
+    })
+  }
 
   private val handler = Handler(Looper.getMainLooper())
   private val ticker = object : Runnable {
@@ -97,8 +105,12 @@ class MediaVideoView(private val reactCtx: ThemedReactContext) :
         setSurface(s)
         isLooping = true
         setVolume(if (muted) 0f else 1f, if (muted) 0f else 1f)
+        setOnVideoSizeChangedListener { _, videoWidth, videoHeight ->
+          if (videoWidth > 0 && videoHeight > 0) updateAspectFit()
+        }
         setOnPreparedListener {
           prepared = true
+          updateAspectFit()
           emit("onVideoLoad", Arguments.createMap().apply {
             putDouble("duration", it.duration.toDouble())
           })
@@ -136,7 +148,9 @@ class MediaVideoView(private val reactCtx: ThemedReactContext) :
     return true
   }
 
-  override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+  override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
+    updateAspectFit()
+  }
   override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
 }
 

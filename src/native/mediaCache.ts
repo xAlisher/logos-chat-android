@@ -9,7 +9,7 @@
 // copies and blew the 256MB heap. Now: keyed by cid (content-addressed → immutable), a single
 // in-flight promise is SHARED across all callers/renders, and distinct downloads are throttled
 // so a timeline full of videos can't decrypt them all at once.
-import {useEffect, useState} from 'react';
+import {useCallback, useEffect, useState} from 'react';
 import Storage from './Storage';
 import type {MediaRef} from '../messages/media';
 
@@ -18,6 +18,13 @@ const inflight = new Map<string, Promise<string>>();
 
 // Throttle concurrent (distinct-cid) decrypts — each holds a full file in the heap.
 const MAX_CONCURRENT = 2;
+/** 120 s at the app's 24 kbps AAC rate is ~360 KiB; 2 MiB leaves ample codec overhead. */
+export const MAX_HOSTED_AUDIO_CIPHERTEXT_BYTES = 2 * 1024 * 1024;
+const MAX_GENERAL_CIPHERTEXT_BYTES = 100 * 1024 * 1024;
+export const maxCiphertextBytesForMime = (mime: string): number =>
+  mime.startsWith('audio/')
+    ? MAX_HOSTED_AUDIO_CIPHERTEXT_BYTES
+    : MAX_GENERAL_CIPHERTEXT_BYTES;
 let active = 0;
 const queue: Array<() => void> = [];
 function acquire(): Promise<void> {
@@ -37,22 +44,30 @@ function release() {
 }
 
 /** One shared download+decrypt per cid, cached and throttled. */
-function fetchBlob(cid: string, key: string, cap: string, padded: boolean): Promise<string> {
-  const cached = pathByCid.get(cid);
+function fetchBlob(
+  cid: string,
+  key: string,
+  cap: string,
+  padded: boolean,
+  mime: string,
+): Promise<string> {
+  const maxBytes = maxCiphertextBytesForMime(mime);
+  const cacheKey = `${cid}:${maxBytes}`;
+  const cached = pathByCid.get(cacheKey);
   if (cached != null) return Promise.resolve(cached);
-  const existing = inflight.get(cid);
+  const existing = inflight.get(cacheKey);
   if (existing != null) return existing;
   const p = acquire()
-    .then(() => Storage.downloadDecrypt(cid, key, cap, padded))
+    .then(() => Storage.downloadDecrypt(cid, key, cap, padded, maxBytes))
     .then(path => {
-      pathByCid.set(cid, path);
+      pathByCid.set(cacheKey, path);
       return path;
     })
     .finally(() => {
-      inflight.delete(cid);
+      inflight.delete(cacheKey);
       release();
     });
-  inflight.set(cid, p);
+  inflight.set(cacheKey, p);
   return p;
 }
 
@@ -60,7 +75,7 @@ export type MediaState =
   | {status: 'idle'}
   | {status: 'loading'}
   | {status: 'ready'; path: string}
-  | {status: 'error'}
+  | {status: 'error'; retry: () => void}
   // #303: the blob was evicted by node retention (a 404 on GET) → show an honest placeholder.
   | {status: 'expired'};
 
@@ -69,9 +84,14 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
   const key = ref?.key ?? null;
   const cap = ref?.cap ?? ''; // #302: legacy markers have none → "" (proxy 403s → placeholder)
   const padded = ref?.padded ?? false; // #320: store2 blobs are size-padded → strip on decrypt
+  const mime = ref?.mime ?? '';
+  const maxBytes = maxCiphertextBytesForMime(mime);
+  const cacheKey = cid == null ? null : `${cid}:${maxBytes}`;
+  const [attempt, setAttempt] = useState(0);
+  const retry = useCallback(() => setAttempt(value => value + 1), []);
   const [state, setState] = useState<MediaState>(() =>
-    cid != null && pathByCid.has(cid)
-      ? {status: 'ready', path: pathByCid.get(cid)!}
+    cacheKey != null && pathByCid.has(cacheKey)
+      ? {status: 'ready', path: pathByCid.get(cacheKey)!}
       : {status: cid != null ? 'loading' : 'idle'},
   );
   useEffect(() => {
@@ -79,14 +99,14 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
       setState({status: 'idle'});
       return;
     }
-    const cached = pathByCid.get(cid);
+    const cached = pathByCid.get(`${cid}:${maxBytes}`);
     if (cached != null) {
       setState({status: 'ready', path: cached});
       return;
     }
     let alive = true;
     setState({status: 'loading'});
-    fetchBlob(cid, key, cap, padded)
+    fetchBlob(cid, key, cap, padded, mime)
       .then(path => {
         if (alive) setState({status: 'ready', path});
       })
@@ -94,12 +114,12 @@ export function useMediaBlob(ref: MediaRef | null): MediaState {
         if (!alive) return;
         // #303: a 404 means the node evicted the blob (retention) → "expired", not a failure.
         const expired = /\b404\b/.test(String((e as {message?: string})?.message ?? e));
-        setState({status: expired ? 'expired' : 'error'});
+        setState(expired ? {status: 'expired'} : {status: 'error', retry});
       });
     return () => {
       alive = false;
     };
     // Primitives only — NOT the `ref` object (which is new each render → re-fire storm).
-  }, [cid, key, cap, padded]);
+  }, [cid, key, cap, padded, mime, maxBytes, attempt, retry]);
   return state;
 }

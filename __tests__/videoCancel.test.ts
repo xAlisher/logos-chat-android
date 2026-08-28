@@ -11,10 +11,14 @@ import type {PickedRawMedia} from '../src/native/ImagePicker';
 
 const mockUploadEncrypted = jest.fn();
 const mockTranscode = jest.fn();
+const mockSendMessageTo = jest.fn();
 
 jest.mock('../src/native/LogosChat', () => ({
   __esModule: true,
-  default: {listConversations: jest.fn().mockResolvedValue('[]')},
+  default: {
+    listConversations: jest.fn().mockResolvedValue('[]'),
+    sendMessageTo: (...a: any[]) => mockSendMessageTo(...a),
+  },
   addLogosChatListener: () => ({remove() {}}),
   shortAddress: (a: string) => a,
 }));
@@ -50,13 +54,11 @@ const VIDEO: PickedRawMedia = {
   posterPath: '/cache/raw/poster.jpg',
 };
 
-let send: jest.Mock;
-
 beforeEach(() => {
   mockUploadEncrypted.mockReset();
   mockTranscode.mockReset();
-  send = jest.fn().mockResolvedValue(undefined);
-  useChatStore.setState({mediaSends: {}, send});
+  mockSendMessageTo.mockReset().mockResolvedValue('{"status":"sent"}');
+  useChatStore.setState({mediaSends: {}});
   useNodeStore.setState({error: null});
 });
 
@@ -72,7 +74,7 @@ describe('sendStagedVideo — cancelled transcode (#385)', () => {
 
     expect(mockTranscode).toHaveBeenCalledTimes(1);
     expect(mockUploadEncrypted).not.toHaveBeenCalled();
-    expect(send).not.toHaveBeenCalled();
+    expect(mockSendMessageTo).not.toHaveBeenCalled();
   });
 
   it('clears the in-flight bubble and surfaces no error (a cancel is not a failure)', async () => {
@@ -107,8 +109,8 @@ describe('sendStagedVideo — uncancelled paths still send (#385)', () => {
     await useChatStore.getState().sendStagedVideo(7, VIDEO);
 
     expect(mockUploadEncrypted).toHaveBeenCalledWith('/cache/media-out/enc_1.mp4', expect.any(String));
-    expect(send).toHaveBeenCalledTimes(1);
-    const [convoPk, marker] = send.mock.calls[0];
+    expect(mockSendMessageTo).toHaveBeenCalledTimes(1);
+    const [convoPk, marker] = mockSendMessageTo.mock.calls[0];
     expect(convoPk).toBe(7);
     expect(marker).toContain('CID');
     expect(useChatStore.getState().mediaSends).toEqual({});
@@ -121,6 +123,6 @@ describe('sendStagedVideo — uncancelled paths still send (#385)', () => {
     await useChatStore.getState().sendStagedVideo(7, VIDEO);
 
     expect(mockUploadEncrypted).toHaveBeenCalledWith(VIDEO.path, expect.any(String));
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(mockSendMessageTo).toHaveBeenCalledTimes(1);
   });
 });

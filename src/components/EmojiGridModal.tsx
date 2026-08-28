@@ -4,7 +4,7 @@
 // grid keeps it zero-dep and edge-case-free; a full system-wide picker/search is a future
 // enhancement (see #298).
 import React from 'react';
-import {Modal, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {Modal, Pressable, ScrollView, StyleSheet, Text} from 'react-native';
 import {colors, type, spacing, radii} from '../theme';
 
 // ~70 common reaction emojis across faces / gestures / hearts / symbols / misc.

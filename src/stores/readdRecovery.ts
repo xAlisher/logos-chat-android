@@ -324,7 +324,8 @@ export function withoutReaddDebt(
   debts: ReaddDebts,
   req: ReaddRequest,
 ): ReaddDebts {
-  const {[readdDebtKey(req)]: _dropped, ...rest} = debts;
+  const rest = {...debts};
+  delete rest[readdDebtKey(req)];
   return rest;
 }
 

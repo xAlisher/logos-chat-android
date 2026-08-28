@@ -11,8 +11,9 @@ import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {encodeReaction} from '../messages/reactions';
-import {displayBody} from '../messages/reply';
-import {isMediaContent, mediaLabel} from '../messages/media';
+import {displayBody, parseReply} from '../messages/reply';
+import {encodeMedia, isMediaContent, mediaLabel, parseMedia} from '../messages/media';
+import {containsSensitiveHostedReference} from '../messages/hostedReference';
 import {encodePin} from '../messages/pins';
 import {encodePfp, encodePfpClear, isPfpClear, isPfpContent, parsePfp} from '../messages/pfp';
 import {encodeGroupCfg, isGroupCfgContent, parseGroupCfg} from '../messages/groupcfg';
@@ -35,7 +36,8 @@ import {isImageContent, parseImageLocal} from '../native/imageMsg';
 import {parseVoiceLocal, isVoiceContent} from '../native/voiceMsg';
 import {isLocationContent} from '../native/locMsg';
 import Storage from '../native/Storage';
-import {encodeMedia} from '../messages/media';
+import AudioRecorder from '../native/Audio';
+
 import ImagePicker, {
   parsePicked,
   parseRawMedia,
@@ -46,7 +48,6 @@ import ImagePicker, {
 import VideoTranscoder from '../native/VideoTranscoder';
 import LocationNative, {parseLocation as parseNativeLocation} from '../native/Location';
 import {buildLocation, type LatLng} from '../native/locMsg';
-import AudioRecorder, {parseRecording} from '../native/Audio';
 import {DeviceEventEmitter, PermissionsAndroid, Platform} from 'react-native';
 
 /** #308: a video send in flight — compressing then uploading, with a 0..1 ring. */
@@ -117,6 +118,18 @@ export interface ConvoPreview {
  */
 /** #207: max photos per album send (matches common apps + our 1-msg-per-image model). */
 export const MAX_ALBUM = 10;
+
+// Storage-off groups may send voice only through the legacy inline wire. Keep
+// the complete marker comfortably below the delivery budget; larger notes fail
+// visibly instead of silently uploading against the group's privacy policy.
+const MAX_INLINE_VOICE_BASE64_CHARS = 48 * 1024;
+
+async function sendHostedMarker(convoPk: number, marker: string): Promise<void> {
+  const result = JSON.parse(await LogosChat.sendMessageTo(convoPk, marker));
+  if (result.status === 'failed') throw new Error('hosted media delivery failed');
+}
+
+const containsHostedMarker = containsSensitiveHostedReference;
 
 /** Request a single Android runtime permission; true if granted (or non-Android). */
 async function ensurePerm(perm: any): Promise<boolean> {
@@ -1098,7 +1111,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         width: raw.width,
         height: raw.height,
       });
-      await get().send(convoPk, marker);
+      await sendHostedMarker(convoPk, marker);
+      await get().loadMessages(convoPk);
+      await get().refreshConversations();
     } catch (e: any) {
       useNodeStore.setState({error: `gif upload failed: ${e?.message ?? e}`});
     }
@@ -1148,7 +1163,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       );
       for (const c of convos) {
         try {
-          await get().send(c.convoPk, marker);
+          await sendHostedMarker(c.convoPk, marker);
         } catch {
           // a single failed convo must not abort the rest of the broadcast
         }
@@ -1215,7 +1230,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
     const clear = () =>
       set(s => {
-        const {[id]: _drop, ...rest} = s.mediaSends;
+        const rest = {...s.mediaSends};
+        delete rest[id];
         return {mediaSends: rest};
       });
     try {
@@ -1245,7 +1261,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         height: enc.height && enc.height > 0 ? enc.height : video.height,
       });
       clear();
-      await get().send(convoPk, marker);
+      await sendHostedMarker(convoPk, marker);
+      await get().loadMessages(convoPk);
+      await get().refreshConversations();
     } catch (e: any) {
       clear();
       useNodeStore.setState({error: `video send failed: ${e?.message ?? e}`});
@@ -1324,7 +1342,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             width: p.width,
             height: p.height,
           });
-          await get().send(convoPk, marker);
+          await sendHostedMarker(convoPk, marker);
+          await get().loadMessages(convoPk);
+          await get().refreshConversations();
         } else {
           // STANDARD: downscale the original to the inline budget, send inline.
           const small = parsePicked(
@@ -1386,30 +1406,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const convo = get().conversations[convoPk];
     if ((convo?.transport ?? 'logos') === 'mesh') {
       useNodeStore.setState({error: 'voice notes are not supported on mesh'});
-      return;
+      throw new Error('voice notes are not supported on mesh');
     }
     if (useNodeStore.getState().status !== 'running') {
       useNodeStore.setState({error: 'Node is off or connecting. Make sure the node is online to send a voice note'});
-      return;
+      throw new Error('node is not online to send a voice note');
     }
     try {
-      const res = JSON.parse(
-        await LogosChat.sendVoiceTo(
-          convoPk,
-          rec.mime,
-          rec.durationMs,
-          rec.waveform.join(','),
-          rec.base64,
-        ),
-      );
-      if (res.status === 'failed') {
-        useNodeStore.setState({error: 'voice send failed — tap to retry'});
+      if (convo?.isGroup && get().storageOff[convoPk] === true) {
+        if (rec.base64.length > MAX_INLINE_VOICE_BASE64_CHARS) {
+          throw new Error('voice note is too long while Storage is off');
+        }
+        const result = JSON.parse(
+          await LogosChat.sendVoiceTo(
+            convoPk,
+            rec.mime,
+            rec.durationMs,
+            rec.waveform.join(','),
+            rec.base64,
+          ),
+        );
+        if (result.status === 'failed') {
+          throw new Error('voice delivery failed');
+        }
+        await get().loadMessages(convoPk);
+        await get().refreshConversations();
+        return;
       }
+      // A voice note can exceed Waku's message budget before the two-minute cap.
+      // Encrypt/upload the local file and send only a padded store2 reference.
+      // For audio markers width carries durationMs; height=1 is the audio sentinel.
+      const path = await AudioRecorder.saveBase64Audio(rec.base64);
+      const {cid, key, cap} = await Storage.uploadEncrypted(path, '');
+      const marker = encodeMedia({
+        cid,
+        key,
+        cap,
+        mime: rec.mime,
+        width: rec.durationMs,
+        height: 1,
+      });
+      // Hosted refs carry a decryption key and fetch capability. Never hand one
+      // to the generic dual-send path: a mirrored group would copy plaintext to
+      // LoRa. Send only through the MLS/Logos leg and verify terminal status.
+      await sendHostedMarker(convoPk, marker);
+      await get().loadMessages(convoPk);
+      await get().refreshConversations();
     } catch (e: any) {
-      useNodeStore.setState({error: String(e?.message ?? e)});
+      useNodeStore.setState({error: `voice send failed: ${e?.message ?? e}`});
+      await get().loadMessages(convoPk);
+      await get().refreshConversations();
+      throw e;
     }
-    await get().loadMessages(convoPk);
-    get().refreshConversations();
   },
 
   forwardMessage: async (content, toConvoPk) => {
@@ -1417,36 +1465,46 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const targetMesh = (target?.transport ?? 'logos') === 'mesh';
     const img = parseImageLocal(content);
     const voc = parseVoiceLocal(content);
-    const isMedia = img != null || voc != null;
+    const hosted = parseMedia(content);
+    const containsHosted = hosted != null || containsHostedMarker(content);
+    const isMedia = img != null || voc != null || containsHosted;
     if (isMedia && targetMesh) {
       useNodeStore.setState({error: 'media cannot be forwarded to a mesh chat'});
-      return;
+      throw new Error('media cannot be forwarded to a mesh chat');
+    }
+    if (containsHosted && target?.isGroup && get().storageOff[toConvoPk] === true) {
+      useNodeStore.setState({error: 'media cannot be forwarded while Storage is off'});
+      throw new Error('media cannot be forwarded while Storage is off');
     }
     try {
       if (img != null) {
         const base64 = await ImagePicker.readFileBase64(img.path);
-        await LogosChat.sendImageTo(
-          toConvoPk,
-          img.meta.mime,
-          img.meta.width,
-          img.meta.height,
-          base64,
+        const result = JSON.parse(
+          await LogosChat.sendImageTo(
+            toConvoPk,
+            img.meta.mime,
+            img.meta.width,
+            img.meta.height,
+            base64,
+          ),
         );
+        if (result.status === 'failed') throw new Error('image forward failed');
       } else if (voc != null) {
         const base64 = await ImagePicker.readFileBase64(voc.path);
-        await LogosChat.sendVoiceTo(
-          toConvoPk,
-          voc.meta.mime,
-          voc.meta.durationMs,
-          voc.meta.waveform.join(','),
-          base64,
-        );
+        await get().sendVoice(toConvoPk, {...voc.meta, base64});
+      } else if (containsHosted) {
+        // Keep the key/capability inside MLS. A mirrored group must not relay the
+        // marker onto LoRa, so bypass the generic dual-transport send path.
+        await sendHostedMarker(toConvoPk, content);
+        await get().loadMessages(toConvoPk);
+        await get().refreshConversations();
       } else {
         // Text or location — re-send the raw content through the normal path.
         await get().send(toConvoPk, content);
       }
     } catch (e: any) {
       useNodeStore.setState({error: String(e?.message ?? e)});
+      throw e;
     }
   },
 
@@ -1467,6 +1525,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // MeshCore radio, wired in #166 (dormant: no mesh conversations exist yet).
     const convo = get().conversations[convoPk];
     const transport = convo?.transport ?? 'logos';
+    // #539: this is the final routing boundary. Hosted refs — including pasted
+    // reply, relay and avatar wrappers — must never enter BLE or MeshCore.
+    if (containsHostedMarker(text)) {
+      if (transport === 'mesh')
+        throw new Error('hosted media cannot be sent to a mesh chat');
+      if (convo?.isGroup && get().storageOff[convoPk] === true)
+        throw new Error('hosted media cannot be sent while Storage is off');
+      if (useNodeStore.getState().status !== 'running')
+        throw new Error('Logos node must be online to send hosted media');
+      await sendHostedMarker(convoPk, text);
+      await get().loadMessages(convoPk);
+      await get().refreshConversations();
+      return;
+    }
     // #168 (Phase 2c): a Logos group switched to its MeshCore mirror — sends ride
     // the private channel, but the conversation stays 'logos' (it IS an MLS group).
     const meshMirror =
@@ -1560,6 +1632,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           if (res.status === 'failed') {
             useNodeStore.setState({error: sendFailedMessage(convo?.isGroup)});
             if (convo?.isGroup) LogosChat.catchupNow();
+            if (!meshOk) throw new Error(sendFailedMessage(convo?.isGroup));
           }
         } else if (meshOk) {
           // Node down but the mesh leg went — record the mesh-only outbound (what
@@ -1580,6 +1653,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (res.status === 'failed') {
           useNodeStore.setState({error: sendFailedMessage(convo?.isGroup)});
           if (convo?.isGroup) LogosChat.catchupNow();
+          throw new Error(sendFailedMessage(convo?.isGroup));
         }
       }
     } catch (e: any) {
@@ -1589,6 +1663,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           [convoPk]: (s.messages[convoPk] ?? []).filter(m => m.msgPk !== temp.msgPk),
         },
       }));
+      await get().loadMessages(convoPk);
+      await get().refreshConversations();
       throw e;
     }
     await get().loadMessages(convoPk);
@@ -2282,7 +2358,8 @@ addLogosChatListener(e => {
       e.detail != null &&
       !isRelay(e.detail) &&
       // #197: images can't fit a LoRa datagram — never mirror them to the mesh.
-      !isImageContent(e.detail)
+      !isImageContent(e.detail) &&
+      !containsHostedMarker(e.detail)
     ) {
       const convo = s.conversations[e.convoPk];
       if (

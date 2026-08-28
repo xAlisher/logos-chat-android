@@ -27,6 +27,12 @@ object StorageRef {
   // still capping abuse. The blob is read with a streaming counter that aborts past this.
   const val MAX_CIPHERTEXT_BYTES = 100L * 1024 * 1024 // 100 MiB
 
+  /** Clamp a trusted per-media ceiling to the process-wide hard maximum. */
+  fun effectiveCiphertextLimit(requestedBytes: Double): Long {
+    if (!requestedBytes.isFinite() || requestedBytes <= 0.0) return MAX_CIPHERTEXT_BYTES
+    return requestedBytes.toLong().coerceIn(1L, MAX_CIPHERTEXT_BYTES)
+  }
+
   // CID: multibase base58btc / base32 are alphanumeric; allow unreserved marks too but NEVER
   // '/', ':', '?', '#', '&', '.', whitespace or control chars (traversal / injection).
   private val CID_RE = Regex("^[A-Za-z0-9_~-]{1,$MAX_CID_LEN}$")

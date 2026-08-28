@@ -13,6 +13,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import android.util.Base64
+import org.json.JSONObject
 
 /**
  * #297/#300 — client side of Logos Storage (Codex) media hosting.
@@ -26,9 +27,9 @@ import android.util.Base64
  *     destPath. Resolves the path.
  *
  * The node only ever sees ciphertext; the KEY is returned to JS and travels E2E in the
- * marker (never to the node). The BuildConfig bearer is a temporary legacy upload credential;
- * capability-bearing downloads do not need or send it. All network/crypto runs off the RN
- * thread.
+ * marker (never to the node). Uploads use anonymous short-lived one-use grants; the legacy
+ * BuildConfig bearer is retained only for capless legacy downloads. All network/crypto runs off
+ * the RN thread.
  */
 class StorageModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -55,7 +56,107 @@ class StorageModule(reactContext: ReactApplicationContext) :
   // wait for the route (bounded) and then fail closed, mirroring the delivery-side gate.
   @Volatile private var privateModePending = false
 
-  private fun uploadConfigured(): Boolean = base.isNotEmpty() && token.isNotEmpty()
+  private fun uploadConfigured(): Boolean = base.isNotEmpty()
+
+
+  private fun readBoundedText(conn: HttpURLConnection, error: Boolean = false): String {
+    val stream = if (error) conn.errorStream else conn.inputStream
+    if (stream == null) return ""
+    return stream.use { input ->
+      val out = java.io.ByteArrayOutputStream()
+      val chunk = ByteArray(1024)
+      while (true) {
+        val n = input.read(chunk)
+        if (n < 0) break
+        if (out.size() + n > 4096) throw RuntimeException("storage response too large")
+        out.write(chunk, 0, n)
+      }
+      out.toString(Charsets.UTF_8.name())
+    }
+  }
+
+  private fun requestUploadGrant(blobBytes: Int): String {
+    val challengeConn = openConn(StorageUploadGrant.challengeUrl(base)).apply {
+      requestMethod = "POST"
+      instanceFollowRedirects = false
+      connectTimeout = 15000
+      readTimeout = 30000
+      setFixedLengthStreamingMode(0)
+      doOutput = true
+    }
+    val challengeBody: String
+    try {
+      challengeConn.outputStream.close()
+      val code = challengeConn.responseCode
+      if (code in 300..399) throw RuntimeException("unexpected grant redirect ($code)")
+      if (code !in 200..299) {
+        readBoundedText(challengeConn, error = true)
+        throw RuntimeException("upload challenge failed ($code)")
+      }
+      challengeBody = readBoundedText(challengeConn)
+    } finally {
+      challengeConn.disconnect()
+    }
+
+    val challenge =
+        try {
+          StorageUploadGrant.parseChallengeJson(challengeBody)
+        } catch (_: Throwable) {
+          throw RuntimeException("invalid upload challenge response")
+        }
+    val nowSeconds = System.currentTimeMillis() / 1000L
+    if (!StorageUploadGrant.validChallenge(
+            challenge.challenge, challenge.difficulty, challenge.expiresAt, nowSeconds)) {
+      throw RuntimeException("invalid or expired upload challenge")
+    }
+    val nonce =
+        StorageUploadGrant.solveProof(challenge.challenge, blobBytes.toLong(), challenge.difficulty)
+    val requestBytes =
+        JSONObject()
+            .put("challenge", challenge.challenge)
+            .put("bytes", blobBytes)
+            .put("nonce", nonce)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+    val grantConn = openConn(StorageUploadGrant.grantUrl(base)).apply {
+      requestMethod = "POST"
+      instanceFollowRedirects = false
+      connectTimeout = 15000
+      readTimeout = 30000
+      doOutput = true
+      setFixedLengthStreamingMode(requestBytes.size)
+      setRequestProperty("Content-Type", "application/json")
+    }
+    val grantBody: String
+    try {
+      grantConn.outputStream.use { it.write(requestBytes) }
+      val code = grantConn.responseCode
+      if (code in 300..399) throw RuntimeException("unexpected grant redirect ($code)")
+      if (code !in 200..299) {
+        readBoundedText(grantConn, error = true)
+        throw RuntimeException("upload grant failed ($code)")
+      }
+      grantBody = readBoundedText(grantConn)
+    } finally {
+      grantConn.disconnect()
+    }
+
+    val parsedGrant =
+        try {
+          StorageUploadGrant.parseGrantJson(grantBody)
+        } catch (_: Throwable) {
+          throw RuntimeException("invalid upload grant response")
+        }
+    if (!StorageUploadGrant.validGrantResponse(
+            parsedGrant.grant,
+            parsedGrant.maxBytes,
+            blobBytes.toLong(),
+            parsedGrant.expiresAt,
+            System.currentTimeMillis() / 1000L)) {
+      throw RuntimeException("invalid upload grant caveats")
+    }
+    return parsedGrant.grant
+  }
 
   /**
    * #318/#363: open a connection, routed through the local Tor SOCKS proxy when Private mode
@@ -63,20 +164,33 @@ class StorageModule(reactContext: ReactApplicationContext) :
    * proxy port is unusable we throw, and if the proxy is down the connect() itself fails.
    * The only direct path is when Tor is explicitly off.
    */
+  private fun persistedPrivateModeEnabled(): Boolean {
+    var faulted = false
+    val value =
+        try {
+          ChatRepo.requireDb().kvGet(NodeRuntime.KV_MEDIA_OVER_TOR)
+        } catch (_: Throwable) {
+          faulted = true
+          null
+        }
+    return TorRelayGate.privateModeFromRead(value, faulted)
+  }
+
   private fun openConn(urlStr: String): HttpURLConnection {
     val url = URL(urlStr)
-    // #517 path 4: Private mode intended but Tor not yet routing → wait for the route
-    // (bounded), then fail closed rather than egress directly during the bootstrap window.
-    if (privateModePending && !torEnabled) {
-      val deadline = System.currentTimeMillis() + PRIVATE_MODE_MEDIA_WAIT_MS
-      while (!torEnabled && System.currentTimeMillis() < deadline) {
-        if (!privateModePending) break // user cancelled Private mode → fall through
-        Thread.sleep(100)
-      }
-      if (privateModePending && !torEnabled) {
-        throw IllegalStateException(
-            "Private mode is on but Tor is not ready yet — not sending media over a direct connection")
-      }
+    // The native persisted read closes the cold-start window before JS hydrates settings and
+    // arms privateModePending. A read fault is unknown, therefore armed. Re-read while waiting
+    // so a healthy "off" value or user cancellation releases promptly instead of timing out.
+    var persistedPrivateMode = !torEnabled && persistedPrivateModeEnabled()
+    val deadline = System.currentTimeMillis() + PRIVATE_MODE_MEDIA_WAIT_MS
+    while (TorRelayGate.mustWaitForMedia(persistedPrivateMode, privateModePending, torEnabled) &&
+        System.currentTimeMillis() < deadline) {
+      Thread.sleep(100)
+      persistedPrivateMode = !torEnabled && persistedPrivateModeEnabled()
+    }
+    if (TorRelayGate.mustWaitForMedia(persistedPrivateMode, privateModePending, torEnabled)) {
+      throw IllegalStateException(
+          "Private mode is on but Tor is not ready yet — not sending media over a direct connection")
     }
     return if (torEnabled) {
       // #363: fail visibly rather than fall back to direct networking.
@@ -145,40 +259,53 @@ class StorageModule(reactContext: ReactApplicationContext) :
         val ct = cipher.doFinal(plain)
         val blob = iv + ct // IV || ciphertext(+tag)
 
+        val uploadGrant = requestUploadGrant(blob.size)
+
         val conn = openConn("$base/data").apply {
           requestMethod = "POST"
+          instanceFollowRedirects = false
           doOutput = true
           connectTimeout = 15000
           readTimeout = 60000
           setFixedLengthStreamingMode(blob.size)
-          setRequestProperty("Authorization", "Bearer $token")
-          setRequestProperty("Content-Type", "application/octet-stream")
-        }
-        // #308: stream in chunks so we can report real byte-level upload progress.
-        conn.outputStream.use { os ->
-          val chunk = 64 * 1024
-          var off = 0
-          emitSending(id, 0.0)
-          while (off < blob.size) {
-            val n = minOf(chunk, blob.size - off)
-            os.write(blob, off, n)
-            off += n
-            emitSending(id, off.toDouble() / blob.size)
+          for ((name, value) in StorageUploadGrant.uploadHeaders(uploadGrant)) {
+            setRequestProperty(name, value)
           }
-          os.flush()
         }
-        val code = conn.responseCode
-        if (code !in 200..299) {
-          val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"
-          throw RuntimeException("upload failed ($code): ${err.take(200)}")
+        val body = try {
+          // #308: stream in chunks so we can report real byte-level upload progress.
+          conn.outputStream.use { os ->
+            val chunk = 64 * 1024
+            var off = 0
+            emitSending(id, 0.0)
+            while (off < blob.size) {
+              val n = minOf(chunk, blob.size - off)
+              os.write(blob, off, n)
+              off += n
+              emitSending(id, off.toDouble() / blob.size)
+            }
+            os.flush()
+          }
+          val code = conn.responseCode
+          if (code in 300..399) throw RuntimeException("unexpected upload redirect ($code)")
+          if (code !in 200..299) {
+            readBoundedText(conn, error = true)
+            throw RuntimeException("upload failed ($code)")
+          }
+          readBoundedText(conn).trim()
+        } finally {
+          conn.disconnect()
         }
         // #302: the capgate proxy returns "cid:cap" (cap = per-blob fetch capability).
-        val body = conn.inputStream.bufferedReader().readText().trim()
-        conn.disconnect()
-        if (body.isEmpty()) throw RuntimeException("empty CID from storage")
         val sep = body.indexOf(':')
-        val cid = if (sep >= 0) body.substring(0, sep) else body
-        val cap = if (sep >= 0) body.substring(sep + 1) else ""
+        if (sep <= 0 || sep != body.lastIndexOf(':')) {
+          throw RuntimeException("invalid hosted-media reference from storage")
+        }
+        val cid = body.substring(0, sep)
+        val cap = body.substring(sep + 1)
+        if (!StorageRef.validCid(cid) || !StorageUploadGrant.validUploadCapability(cap)) {
+          throw RuntimeException("invalid hosted-media reference from storage")
+        }
 
         val out = Arguments.createMap()
         out.putString("cid", cid)
@@ -192,7 +319,14 @@ class StorageModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
-  fun downloadDecrypt(cid: String, keyB64: String, cap: String, padded: Boolean, promise: Promise) {
+  fun downloadDecrypt(
+      cid: String,
+      keyB64: String,
+      cap: String,
+      padded: Boolean,
+      maxCiphertextBytes: Double,
+      promise: Promise,
+  ) {
     Thread {
       try {
         // #388: the CID / key / cap come from an untrusted sender's marker. Validate with a
@@ -205,9 +339,11 @@ class StorageModule(reactContext: ReactApplicationContext) :
         }
 
         // #388: cache filename is SHA-256(cid), never the raw cid → no path traversal / collision.
+        val max = StorageRef.effectiveCiphertextLimit(maxCiphertextBytes)
         val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
         val dest = File(dir, StorageRef.cacheName(cid))
         if (dest.exists() && dest.length() > 0) {
+          if (dest.length() > max) throw RuntimeException("cached media exceeds max size ($max bytes)")
           promise.resolve(dest.absolutePath)
           return@Thread
         }
@@ -222,39 +358,40 @@ class StorageModule(reactContext: ReactApplicationContext) :
           val bearer = StorageAuthorization.bearerHeader(token, cap)
           if (bearer.isNotEmpty()) setRequestProperty("Authorization", bearer)
         }
-        val code = conn.responseCode
-        if (code in 300..399) throw RuntimeException("unexpected redirect ($code)")
-        if (code !in 200..299) {
-          val err = conn.errorStream?.bufferedReader()?.readText() ?: "http $code"
-          throw RuntimeException("download failed ($code): ${err.take(200)}")
-        }
-        // #388: reject an unexpected response type (an HTML error/login page is not media).
-        val ctype = conn.contentType ?: ""
-        if (ctype.startsWith("text/html") || ctype.startsWith("application/json")) {
-          throw RuntimeException("unexpected content-type: $ctype")
-        }
-        // #388: bound the download. Reject up-front on an oversized Content-Length, then read
-        // with a streaming counter that aborts past the ciphertext ceiling (no unbounded read).
-        val max = StorageRef.MAX_CIPHERTEXT_BYTES
-        val declared = conn.contentLengthLong
-        if (declared in 1..Long.MAX_VALUE && declared > max) {
-          throw RuntimeException("media too large ($declared > $max)")
-        }
-        val blob =
-            conn.inputStream.use { ins ->
-              val out = java.io.ByteArrayOutputStream()
-              val chunk = ByteArray(64 * 1024)
-              var total = 0L
-              while (true) {
-                val n = ins.read(chunk)
-                if (n < 0) break
-                total += n
-                if (total > max) throw RuntimeException("media exceeds max size ($max bytes)")
-                out.write(chunk, 0, n)
-              }
-              out.toByteArray()
+        val blob = try {
+          val code = conn.responseCode
+          if (code in 300..399) throw RuntimeException("unexpected redirect ($code)")
+          if (code !in 200..299) {
+            readBoundedText(conn, error = true)
+            throw RuntimeException("download failed ($code)")
+          }
+          // #388: reject an unexpected response type (an HTML error/login page is not media).
+          val ctype = conn.contentType ?: ""
+          if (ctype.startsWith("text/html") || ctype.startsWith("application/json")) {
+            throw RuntimeException("unexpected content-type: $ctype")
+          }
+          // #388: bound the download. Reject up-front on an oversized Content-Length, then read
+          // with a streaming counter that aborts past the ciphertext ceiling (no unbounded read).
+          val declared = conn.contentLengthLong
+          if (declared in 1..Long.MAX_VALUE && declared > max) {
+            throw RuntimeException("media too large ($declared > $max)")
+          }
+          conn.inputStream.use { ins ->
+            val out = java.io.ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0L
+            while (true) {
+              val n = ins.read(chunk)
+              if (n < 0) break
+              total += n
+              if (total > max) throw RuntimeException("media exceeds max size ($max bytes)")
+              out.write(chunk, 0, n)
             }
-        conn.disconnect()
+            out.toByteArray()
+          }
+        } finally {
+          conn.disconnect()
+        }
         if (blob.size <= IV_LEN) throw RuntimeException("blob too short")
 
         val key = Base64.decode(keyB64, Base64.NO_WRAP)

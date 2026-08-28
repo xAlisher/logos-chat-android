@@ -5,7 +5,7 @@ package com.logoschat
  *
  * New downloads use the per-blob capability carried inside the MLS message and do not need a
  * shared application bearer. The legacy bearer remains accepted during the gateway migration.
- * Uploads still require the legacy credential until the gateway issues one-use upload grants.
+ * Upload authorization is separate and uses anonymous short-lived one-use grants.
  */
 object StorageAuthorization {
   fun canDownload(legacyToken: String, capability: String): Boolean =

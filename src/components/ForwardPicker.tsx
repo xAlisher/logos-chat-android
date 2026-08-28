@@ -1,7 +1,7 @@
 // ForwardPicker (#201) — a modal list of conversations to forward a message into.
 // Pick a target → the screen calls chatStore.forwardMessage(content, targetPk).
 import React from 'react';
-import {Modal, Pressable, FlatList, Text, View, StyleSheet} from 'react-native';
+import {Modal, Pressable, FlatList, Text, StyleSheet} from 'react-native';
 import {colors, type, spacing, radii} from '../theme';
 import {HexAvatar, convoKind} from './HexAvatar';
 import {useChatStore} from '../stores/chatStore';

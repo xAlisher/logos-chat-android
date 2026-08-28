@@ -19,7 +19,7 @@ import {useNodeStore} from '../stores/nodeStore';
 import {useMeshStore} from '../stores/meshStore';
 import {useBleStore} from '../stores/bleStore';
 import {useSettingsStore} from '../stores/settingsStore';
-import {type Tri, TRI_COLOR, triColorFor, logosTri, meshTri, bleTri} from './tri';
+import {type Tri, triColorFor, logosTri, meshTri, bleTri} from './tri';
 
 export {type Tri, TRI_COLOR, logosTri, meshTri, bleTri} from './tri';
 
