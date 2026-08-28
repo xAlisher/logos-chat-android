@@ -11,7 +11,7 @@ import MeshCore, {addMeshListener, parseChannels} from '../native/MeshCore';
 import {isRelay, wrapRelay} from '../native/relay';
 import {truncateToBytes, MESH_TEXT_MTU_BYTES} from '../mesh/composerBudget';
 import {encodeReaction} from '../messages/reactions';
-import {displayBody, parseReply} from '../messages/reply';
+import {displayBody} from '../messages/reply';
 import {encodeMedia, isMediaContent, mediaLabel, parseMedia} from '../messages/media';
 import {containsSensitiveHostedReference} from '../messages/hostedReference';
 import {encodePin} from '../messages/pins';
