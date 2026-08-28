@@ -93,4 +93,26 @@ describe('shared media cache entries survive a stricter caller (#543 / Senti P2)
     expect(dropSidecar).toBeLessThan(movePlaintext);
     expect(movePlaintext).toBeLessThan(writeSidecar);
   });
+
+  // Senti P2 on #544. The first cut of publishCacheEntry fell back to
+  // `cachedPlaintext.writeBytes(verifiedPlaintext.readBytes())` when renameTo returned false.
+  // That truncates and rewrites the LIVE cache path in place. Consumers read that path off
+  // downloadDecrypt's resolve WITHOUT taking CACHE_LOCK, so they can observe a partial file,
+  // and a copy that throws part-way destroys the previously valid entry -- reintroducing the
+  // broken media this PR exists to prevent, on the exact error path it handles. The move is
+  // now rename-only: one atomic replace, or an abort with the old bytes untouched.
+  // Behavioural half: StorageRefTest.publishCacheEntry_refusedRenameLeavesTheOldPlaintextIntact.
+  it('THE ORACLE: publication never writes over the live cache path', () => {
+    const src = native('StorageRef.kt');
+    const fn = src.slice(src.indexOf('fun publishCacheEntry'));
+    const body = fn.slice(0, fn.indexOf('\n  }') + 1);
+    // The destination is only ever the TARGET of a rename, never opened for writing.
+    expect(body).not.toMatch(/cachedPlaintext\.(writeBytes|writeText|outputStream|printWriter)/);
+    // ...and it is never unlinked either: a failed publication must leave it readable.
+    expect(body).not.toMatch(/cachedPlaintext\.delete\(\)/);
+    // A refused rename aborts the publication instead of falling back to a copy.
+    expect(body).toMatch(
+      /if\s*\(!verifiedPlaintext\.renameTo\(cachedPlaintext\)\)\s*\{\s*throw\s+IOException/,
+    );
+  });
 });

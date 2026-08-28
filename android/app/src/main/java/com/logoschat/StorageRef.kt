@@ -2,6 +2,7 @@ package com.logoschat
 
 import android.util.Base64
 import java.io.File
+import java.io.IOException
 import java.net.URLEncoder
 import java.security.MessageDigest
 
@@ -131,6 +132,15 @@ object StorageRef {
    * FIRST (the pair now classifies REVALIDATE — fail-closed, worst case a redundant download),
    * then move the verified plaintext into place, then record its ciphertext size. The previous
    * plaintext is only ever overwritten by a complete download — never unlinked speculatively.
+   *
+   * #544 — the plaintext moves by rename ONLY. [verifiedPlaintext] is staged in the cache dir, so
+   * this is a same-directory rename: one atomic replace, or nothing. There is deliberately no
+   * copy fallback — a copy would truncate and rewrite the LIVE path in place, and media consumers
+   * read that path (resolved straight out of `downloadDecrypt`) without holding CACHE_LOCK, so
+   * they could observe a half-written file; a copy that failed part-way would destroy a
+   * previously valid entry outright. If the rename is refused we throw with the old plaintext
+   * byte-for-byte intact: the caller's request fails, but the pair merely reads as REVALIDATE
+   * (sidecar dropped) and the next download republishes it.
    */
   fun publishCacheEntry(
       verifiedPlaintext: File,
@@ -140,9 +150,7 @@ object StorageRef {
   ) {
     ciphertextSizeFile.delete()
     if (!verifiedPlaintext.renameTo(cachedPlaintext)) {
-      // Same directory, so rename is normally atomic; fall back to a copy if the FS refuses.
-      cachedPlaintext.writeBytes(verifiedPlaintext.readBytes())
-      verifiedPlaintext.delete()
+      throw IOException("could not publish media cache entry atomically")
     }
     ciphertextSizeFile.writeText(ciphertextBytes.toString(), Charsets.US_ASCII)
   }

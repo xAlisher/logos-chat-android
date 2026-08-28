@@ -211,6 +211,60 @@ class StorageRefTest {
     }
   }
 
+  /**
+   * Senti P2 on #544 — publication is atomic-or-nothing; a refused rename must never fall back
+   * to rewriting the LIVE cache path.
+   *
+   * The first cut copied into `cachedPlaintext` when `renameTo` returned false. That truncates
+   * and rewrites the destination in place, and every media consumer reads that path (resolved
+   * straight out of `downloadDecrypt`) WITHOUT holding CACHE_LOCK — so a reader can observe a
+   * half-written file, and a copy that throws part-way destroys a previously valid entry
+   * outright: exactly the broken-media state this change exists to prevent, on the very error
+   * path it claims to handle. Publication must abort instead, old bytes untouched.
+   *
+   * The rename is forced to fail by making the destination's directory read-only: rename(2)
+   * needs write permission on the PARENT, while rewriting an EXISTING file does not — precisely
+   * the shape in which the old fallback would have succeeded in destroying the entry.
+   */
+  @Test
+  fun publishCacheEntry_refusedRenameLeavesTheOldPlaintextIntact() {
+    val root = Files.createTempDirectory("storage-cache-norename").toFile()
+    val cacheDir = java.io.File(root, "media").apply { mkdirs() }
+    try {
+      val dest = java.io.File(cacheDir, StorageRef.cacheName(goodCid))
+      val size = java.io.File(cacheDir, StorageRef.cacheCiphertextSizeName(goodCid))
+      dest.writeBytes("old-plaintext".toByteArray())
+      size.writeText("4096", Charsets.US_ASCII)
+      val staged = java.io.File(cacheDir, StorageRef.cacheName(goodCid) + ".part")
+      staged.writeBytes("fresh".toByteArray())
+
+      cacheDir.setWritable(false, false)
+      // Only meaningful where the OS actually enforces directory permissions (i.e. not as root).
+      val enforced =
+          try {
+            !java.io.File(cacheDir, ".probe").createNewFile()
+          } catch (_: java.io.IOException) {
+            true
+          }
+      org.junit.Assume.assumeTrue("filesystem does not enforce dir perms (root?)", enforced)
+      assertFalse(staged.renameTo(dest)) // precondition: the move really is refused
+
+      var threw = false
+      try {
+        StorageRef.publishCacheEntry(staged, dest, size, 4096L)
+      } catch (_: java.io.IOException) {
+        threw = true
+      }
+      assertTrue("a refused rename must abort publication", threw)
+      // THE ORACLE: the live entry is byte-for-byte what it was — never truncated, never
+      // partially overwritten with the replacement.
+      assertEquals("old-plaintext", dest.readText())
+    } finally {
+      cacheDir.setWritable(true, true)
+      root.deleteRecursively()
+    }
+  }
+
   /** A pair whose sidecar is gone mid-swap must read as REVALIDATE, never as a bogus REUSE. */
   @Test
   fun tornPairFailsClosed() {
