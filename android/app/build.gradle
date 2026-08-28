@@ -191,6 +191,8 @@ dependencies {
     // animated-gif artifact must match RN's pinned Fresco (0.86 → 3.6.0).
     implementation("com.facebook.fresco:animated-gif:3.6.0")
 
+    // Pinned at 4.17.0: 4.18.0 requires compileSdk 37+, which AGP 8.12.0 (max
+    // recommended compileSdk 36) does not support. See PR #536 review.
     implementation("net.zetetic:sqlcipher-android:4.17.0")
     implementation("androidx.sqlite:sqlite:2.7.0")
     implementation("androidx.sqlite:sqlite-framework:2.7.0")
