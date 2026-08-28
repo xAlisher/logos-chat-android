@@ -342,10 +342,16 @@ class StorageModule(reactContext: ReactApplicationContext) :
         val max = StorageRef.effectiveCiphertextLimit(maxCiphertextBytes)
         val dir = File(reactApplicationContext.cacheDir, "media").apply { mkdirs() }
         val dest = File(dir, StorageRef.cacheName(cid))
+        val ciphertextSizeFile = File(dir, StorageRef.cacheCiphertextSizeName(cid))
         if (dest.exists() && dest.length() > 0) {
-          if (dest.length() > max) throw RuntimeException("cached media exceeds max size ($max bytes)")
-          promise.resolve(dest.absolutePath)
-          return@Thread
+          if (StorageRef.reusableCacheEntry(dest, ciphertextSizeFile, max)) {
+            promise.resolve(dest.absolutePath)
+            return@Thread
+          }
+          // Legacy, corrupt, or less-restrictively cached entries must be revalidated from the
+          // ciphertext source before reuse under this request's bound.
+          dest.delete()
+          ciphertextSizeFile.delete()
         }
         // #302: present the per-blob capability on GET (proxy 403s without a valid one).
         // #388: URL components are percent-encoded (defence in depth on top of validation).
@@ -405,6 +411,7 @@ class StorageModule(reactContext: ReactApplicationContext) :
         val plain = if (padded) MediaPadding.strip(decrypted) else decrypted
 
         dest.writeBytes(plain)
+        ciphertextSizeFile.writeText(blob.size.toString(), Charsets.US_ASCII)
         promise.resolve(dest.absolutePath)
       } catch (t: Throwable) {
         promise.reject("storage_download", t.message, t)
