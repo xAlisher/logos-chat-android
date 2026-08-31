@@ -48,6 +48,7 @@ module.exports = {
     '<rootDir>/__tests__/nativeProvenance.test.ts',
     '<rootDir>/__tests__/nativeSbomDoc.test.ts',
     '<rootDir>/__tests__/nativeGateRegistration.test.ts',
+    '<rootDir>/__tests__/nativeUpstreamArtifact.test.ts',
     '<rootDir>/__tests__/address-marker.test.ts',
     '<rootDir>/__tests__/metadataPrivacy.test.ts',
     '<rootDir>/__tests__/releaseSigning.test.ts',

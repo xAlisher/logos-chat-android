@@ -35,6 +35,9 @@ const REQUIRED_GATES = [
   'nativeProvenance.test.ts',
   // docs/SBOM.md may not describe a binary we do not ship.
   'nativeSbomDoc.test.ts',
+  // The remote half: the cited revision must serve the BYTES, not just a matching
+  // manifest line (#523 — an upstream "publish" commit that moved only the text).
+  'nativeUpstreamArtifact.test.ts',
 ];
 
 const configText = readFileSync(CONFIG, 'utf8');
